@@ -1,0 +1,1713 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>财务报表勾稽校验系统 - UI Demo v2</title>
+<style>
+/* ==============================
+   Design Tokens (from DESIGN_SYSTEM.md)
+   ============================== */
+:root {
+  /* Brand - Indigo */
+  --brand-50: #eef2ff;
+  --brand-100: #e0e7ff;
+  --brand-200: #c7d2fe;
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
+
+  /* Semantic */
+  --success: #10b981;
+  --success-bg: #ecfdf5;
+  --success-border: #a7f3d0;
+  --error: #ef4444;
+  --error-bg: #fef2f2;
+  --error-border: #fecaca;
+  --warning: #f59e0b;
+  --warning-bg: #fffbeb;
+  --warning-border: #fde68a;
+  --info: #3b82f6;
+  --info-bg: #eff6ff;
+
+  /* Neutral - Light */
+  --bg-app: #f8f9fa;
+  --bg-surface: #ffffff;
+  --bg-surface-hover: #f3f4f6;
+  --bg-surface-active: #e5e7eb;
+  --bg-sidebar: #fafafa;
+  --bg-acrylic: rgba(255,255,255,0.72);
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  --text-disabled: #d1d5db;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+
+  /* Shadow */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -2px rgba(0,0,0,0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.04);
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-ui: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+
+  /* Motion */
+  --transition-fast: 100ms ease-out;
+  --transition-base: 150ms ease-out;
+  --transition-slow: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme="dark"] {
+  --brand-50: #1e1b4b;
+  --brand-100: #312e81;
+  --brand-200: #3730a3;
+  --brand-500: #818cf8;
+  --brand-600: #6366f1;
+  --brand-700: #4f46e5;
+
+  --success: #34d399;
+  --success-bg: #052e1b;
+  --success-border: #065f46;
+  --error: #f87171;
+  --error-bg: #450a0a;
+  --error-border: #991b1b;
+  --warning: #fbbf24;
+  --warning-bg: #422006;
+  --warning-border: #92400e;
+  --info: #60a5fa;
+  --info-bg: #0c1c33;
+
+  --bg-app: #0a0a0b;
+  --bg-surface: #18181b;
+  --bg-surface-hover: #27272a;
+  --bg-surface-active: #3f3f46;
+  --bg-sidebar: #0f0f10;
+  --bg-acrylic: rgba(24,24,27,0.72);
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --text-tertiary: #6b7280;
+  --text-disabled: #4b5563;
+  --border: #27272a;
+  --border-strong: #3f3f46;
+
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.5);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.6);
+}
+
+/* ==============================
+   Reset & Base
+   ============================== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { height: 100%; }
+
+body {
+  font-family: var(--font-ui);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 22px;
+  overflow: hidden;
+  height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background var(--transition-base), color var(--transition-base);
+}
+
+/* ==============================
+   Layout
+   ============================== */
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+/* ---- Sidebar ---- */
+.sidebar {
+  width: 240px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-2);
+  flex-shrink: 0;
+  transition: background var(--transition-base), border-color var(--transition-base);
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.sidebar-logo-icon {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, var(--brand-600), var(--brand-500));
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.sidebar-logo-text {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.sidebar-section {
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.sidebar-section-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+  margin-bottom: 2px;
+  font-size: 13px;
+  font-weight: 500;
+  position: relative;
+  user-select: none;
+}
+
+.nav-item:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--brand-50);
+  color: var(--brand-700);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  background: var(--brand-600);
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+}
+
+.nav-item svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.5;
+  flex-shrink: 0;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-footer-version {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.sidebar-footer-license {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+/* ---- Main Area ---- */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- Topbar ---- */
+.topbar {
+  height: 48px;
+  background: var(--bg-acrylic);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-6);
+  gap: var(--space-4);
+  flex-shrink: 0;
+  transition: border-color var(--transition-base);
+}
+
+.topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.topbar-subtitle {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+  margin-left: var(--space-3);
+}
+
+.topbar-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* ---- Theme Toggle ---- */
+.theme-toggle {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.theme-toggle:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.5;
+}
+
+[data-theme="dark"] .sun-icon { display: block; }
+[data-theme="dark"] .moon-icon { display: none; }
+[data-theme="light"] .sun-icon { display: none; }
+[data-theme="light"] .moon-icon { display: block; }
+
+/* ---- Content Area ---- */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6);
+}
+
+.content-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* ==============================
+   Buttons
+   ============================== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.btn:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+}
+
+.btn:active {
+  background: var(--bg-surface-active);
+}
+
+.btn-primary {
+  background: var(--brand-600);
+  color: white;
+  border-color: var(--brand-600);
+}
+
+.btn-primary:hover {
+  background: var(--brand-700);
+  border-color: var(--brand-700);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+  background: var(--bg-surface);
+  border-color: var(--border);
+}
+
+.btn-primary:disabled:hover {
+  background: var(--brand-600);
+  border-color: var(--brand-600);
+}
+
+.btn svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+/* ==============================
+   Cards
+   ============================== */
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition: all var(--transition-base);
+}
+
+/* ---- Drop Zone ---- */
+.drop-zone {
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--space-12) var(--space-6);
+  text-align: center;
+  background: var(--bg-surface);
+  transition: all var(--transition-base);
+  cursor: pointer;
+}
+
+.drop-zone:hover {
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+}
+
+.drop-zone.dragover {
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+  transform: scale(1.01);
+}
+
+.drop-zone-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto var(--space-4);
+  color: var(--text-tertiary);
+  transition: color var(--transition-base);
+}
+
+.drop-zone:hover .drop-zone-icon {
+  color: var(--brand-500);
+}
+
+.drop-zone-icon svg {
+  width: 48px;
+  height: 48px;
+  stroke-width: 1;
+}
+
+.drop-zone-text {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: var(--space-1);
+}
+
+.drop-zone-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ---- Section Title ---- */
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: var(--space-8) 0 var(--space-4);
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.section-title svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.5;
+  color: var(--text-secondary);
+}
+
+.section-title:first-child {
+  margin-top: 0;
+}
+
+/* ---- Report Cards Grid ---- */
+.report-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-3);
+}
+
+.report-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-xs);
+  transition: all var(--transition-base);
+  position: relative;
+}
+
+.report-card:hover {
+  box-shadow: var(--shadow-sm);
+  border-color: var(--border-strong);
+}
+
+.report-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.report-card-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.report-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--brand-50);
+  color: var(--brand-600);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.report-card-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.5;
+}
+
+.report-card-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.report-card-meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  display: flex;
+  gap: var(--space-4);
+  margin-top: var(--space-1);
+}
+
+.report-card-meta-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ---- Summary Cards ---- */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.summary-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  box-shadow: var(--shadow-xs);
+  border-left: 4px solid var(--border);
+  transition: all var(--transition-base);
+}
+
+.summary-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.summary-card.success { border-left-color: var(--success); }
+.summary-card.error { border-left-color: var(--error); }
+.summary-card.warning { border-left-color: var(--warning); }
+.summary-card.info { border-left-color: var(--info); }
+
+.summary-card-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.summary-card-label svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.5;
+}
+
+.summary-card-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-family: var(--font-mono);
+}
+
+.summary-card.success .summary-card-value { color: var(--success); }
+.summary-card.error .summary-card-value { color: var(--error); }
+.summary-card.warning .summary-card-value { color: var(--warning); }
+.summary-card.info .summary-card-value { color: var(--info); }
+
+.summary-card-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: var(--space-1);
+}
+
+/* ---- Filter Tabs ---- */
+.filter-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.filter-tab {
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition-fast);
+  font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.filter-tab:hover {
+  color: var(--text-primary);
+}
+
+.filter-tab.active {
+  color: var(--brand-600);
+  border-bottom-color: var(--brand-600);
+}
+
+.filter-tab-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-active);
+  color: var(--text-secondary);
+  margin-left: var(--space-1);
+}
+
+.filter-tab.active .filter-tab-count {
+  background: var(--brand-50);
+  color: var(--brand-600);
+}
+
+/* ---- Rule List ---- */
+.rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.rule-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  position: relative;
+  overflow: hidden;
+}
+
+.rule-card:hover {
+  box-shadow: var(--shadow-sm);
+  border-color: var(--border-strong);
+}
+
+.rule-card.error {
+  border-left: 4px solid var(--error);
+  background: var(--error-bg);
+}
+
+.rule-card.warning {
+  border-left: 4px solid var(--warning);
+  background: var(--warning-bg);
+}
+
+.rule-card.success {
+  border-left: 4px solid var(--success);
+}
+
+.rule-card.info {
+  border-left: 4px solid var(--info);
+}
+
+.rule-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-1);
+}
+
+.rule-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.rule-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-active);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.rule-card.error .rule-badge {
+  background: var(--error);
+  color: white;
+}
+
+.rule-card.warning .rule-badge {
+  background: var(--warning);
+  color: #422006;
+}
+
+.rule-card.success .rule-badge {
+  background: var(--success);
+  color: white;
+}
+
+.rule-card-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-card-category {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+  flex-shrink: 0;
+}
+
+.rule-card-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.rule-card-status svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+
+.rule-card.error .rule-card-status { color: var(--error); }
+.rule-card.warning .rule-card-status { color: var(--warning); }
+.rule-card.success .rule-card-status { color: var(--success); }
+
+.rule-card-diff {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  margin-top: var(--space-1);
+}
+
+.rule-card-diff .diff-value {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rule-card-diff .diff-value.negative {
+  color: var(--error);
+}
+
+/* ---- Rule Detail (expanded) ---- */
+.rule-card-detail {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height var(--transition-slow);
+  margin-top: 0;
+}
+
+.rule-card.expanded .rule-card-detail {
+  max-height: 600px;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-1) 0;
+}
+
+.detail-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.detail-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.detail-formula {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow-x: auto;
+}
+
+.detail-trace-title {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.detail-trace-title svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.5;
+}
+
+.trace-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.trace-table th {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-secondary);
+  font-weight: 500;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border);
+}
+
+.trace-table th:first-child { border-radius: var(--radius-sm) 0 0 0; }
+.trace-table th:last-child { border-radius: 0 var(--radius-sm) 0 0; }
+
+.trace-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.trace-table td.amount {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.trace-table td.location {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.trace-table tr:last-child td {
+  border-bottom: none;
+}
+
+.trace-table tr:hover td {
+  background: var(--bg-surface-hover);
+}
+
+/* ---- Empty State ---- */
+.empty-state {
+  text-align: center;
+  padding: var(--space-16) var(--space-6);
+  color: var(--text-tertiary);
+}
+
+.empty-state-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto var(--space-4);
+  color: var(--text-disabled);
+}
+
+.empty-state-icon svg {
+  width: 48px;
+  height: 48px;
+  stroke-width: 1;
+}
+
+.empty-state-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.empty-state-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ---- Progress Bar ---- */
+.progress-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin: var(--space-2) 0;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--brand-600);
+  border-radius: var(--radius-full);
+  transition: width var(--transition-slow);
+}
+
+/* ---- Scrollbar ---- */
+.content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.content::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-full);
+}
+
+.content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* ---- Animations ---- */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn var(--transition-slow);
+}
+</style>
+</head>
+<body>
+
+<!-- SVG Icon Definitions (Lucide) -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none;">
+  <defs>
+    <!-- Upload -->
+    <symbol id="icon-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </symbol>
+    <!-- File Text -->
+    <symbol id="icon-file-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+      <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+      <path d="M10 9H8"/>
+      <path d="M16 13H8"/>
+      <path d="M16 17H8"/>
+    </symbol>
+    <!-- Trending Up -->
+    <symbol id="icon-trending-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
+      <polyline points="16 7 22 7 22 13"/>
+    </symbol>
+    <!-- Banknote -->
+    <symbol id="icon-banknote" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="20" height="12" x="2" y="6" rx="2"/>
+      <circle cx="12" cy="12" r="2"/>
+      <path d="M6 12h.01M18 12h.01"/>
+    </symbol>
+    <!-- Check Circle -->
+    <symbol id="icon-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21.801 10A10 10 0 1 1 17 3.335"/>
+      <path d="m9 11 3 3L22 4"/>
+    </symbol>
+    <!-- X Circle -->
+    <symbol id="icon-x-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="m15 9-6 6"/>
+      <path d="m9 9 6 6"/>
+    </symbol>
+    <!-- Alert Triangle -->
+    <symbol id="icon-alert-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+      <path d="M12 9v4"/>
+      <path d="M12 17h.01"/>
+    </symbol>
+    <!-- Info -->
+    <symbol id="icon-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M12 16v-4"/>
+      <path d="M12 8h.01"/>
+    </symbol>
+    <!-- Search -->
+    <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/>
+      <path d="m21 21-4.3-4.3"/>
+    </symbol>
+    <!-- Download -->
+    <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/>
+      <line x1="12" y1="15" x2="12" y2="3"/>
+    </symbol>
+    <!-- List Checks -->
+    <symbol id="icon-list-checks" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m3 17 2 2 4-4"/>
+      <path d="m3 7 2 2 4-4"/>
+      <path d="M13 6h8"/>
+      <path d="M13 12h8"/>
+      <path d="M13 18h8"/>
+    </symbol>
+    <!-- History -->
+    <symbol id="icon-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+      <path d="M3 3v5h5"/>
+      <path d="M12 7v5l4 2"/>
+    </symbol>
+    <!-- Settings -->
+    <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </symbol>
+    <!-- Play -->
+    <symbol id="icon-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="6 3 20 12 6 21 6 3"/>
+    </symbol>
+    <!-- Rotate Ccw (Reset) -->
+    <symbol id="icon-reset" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+      <path d="M3 3v5h5"/>
+    </symbol>
+    <!-- Moon -->
+    <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+    </symbol>
+    <!-- Sun -->
+    <symbol id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4"/>
+      <path d="M12 2v2"/>
+      <path d="M12 20v2"/>
+      <path d="m4.93 4.93 1.41 1.41"/>
+      <path d="m17.66 17.66 1.41 1.41"/>
+      <path d="M2 12h2"/>
+      <path d="M20 12h2"/>
+      <path d="m6.34 17.66-1.41 1.41"/>
+      <path d="m19.07 4.93-1.41 1.41"/>
+    </symbol>
+    <!-- Shield Check -->
+    <symbol id="icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+      <path d="m9 12 2 2 4-4"/>
+    </symbol>
+    <!-- File Stack (Audit) -->
+    <symbol id="icon-audit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 7h-3a2 2 0 0 1-2-2V2"/>
+      <path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v12a2 2 0 0 1-2 2z"/>
+      <path d="M3 7.6 12 13l9-5.4"/>
+    </symbol>
+    <!-- Chevron Right -->
+    <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m9 18 6-6-6-6"/>
+    </symbol>
+    <!-- Hash -->
+    <symbol id="icon-hash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="4" y1="9" x2="20" y2="9"/>
+      <line x1="4" y1="15" x2="20" y2="15"/>
+      <line x1="10" y1="3" x2="8" y2="21"/>
+      <line x1="16" y1="3" x2="14" y2="21"/>
+    </symbol>
+    <!-- Calendar -->
+    <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 2v4"/>
+      <path d="M16 2v4"/>
+      <rect width="18" height="18" x="3" y="4" rx="2"/>
+      <path d="M3 10h18"/>
+    </symbol>
+    <!-- Layers (Items) -->
+    <symbol id="icon-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/>
+      <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/>
+      <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>
+    </symbol>
+    <!-- File -->
+    <symbol id="icon-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+      <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+    </symbol>
+    <!-- Target -->
+    <symbol id="icon-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <circle cx="12" cy="12" r="6"/>
+      <circle cx="12" cy="12" r="2"/>
+    </symbol>
+    <!-- Clock (Duration) -->
+    <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polyline points="12 6 12 12 16 14"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <!-- ==================== SIDEBAR ==================== -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3h18v18H3z" opacity="0"/>
+          <path d="M3 9h18"/>
+          <path d="M3 15h18"/>
+          <path d="M9 3v18"/>
+          <path d="M15 3v18"/>
+        </svg>
+      </div>
+      <div class="sidebar-logo-text">勾稽校验系统</div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">工作区</div>
+    </div>
+    <div class="nav-item active" onclick="switchNav(this)">
+      <svg><use href="#icon-upload"/></svg>
+      数据导入
+    </div>
+    <div class="nav-item" onclick="switchNav(this)">
+      <svg><use href="#icon-check-circle"/></svg>
+      校验结果
+    </div>
+    <div class="nav-item" onclick="switchNav(this)">
+      <svg><use href="#icon-audit"/></svg>
+      审计底稿
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">系统</div>
+    </div>
+    <div class="nav-item" onclick="switchNav(this)">
+      <svg><use href="#icon-list-checks"/></svg>
+      规则管理
+    </div>
+    <div class="nav-item" onclick="switchNav(this)">
+      <svg><use href="#icon-history"/></svg>
+      历史记录
+    </div>
+    <div class="nav-item" onclick="switchNav(this)">
+      <svg><use href="#icon-settings"/></svg>
+      系统设置
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-version">版本 0.1.0 (MVP)</div>
+      <div class="sidebar-footer-license">MIT 开源 · 内部使用</div>
+    </div>
+  </aside>
+
+  <!-- ==================== MAIN ==================== -->
+  <div class="main">
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="topbar-title">数据导入与校验</div>
+      <div class="topbar-subtitle" id="topbarSubtitle">准备导入报表</div>
+      <div class="topbar-actions">
+        <button class="theme-toggle" onclick="toggleTheme()" title="切换深色/浅色">
+          <svg class="moon-icon"><use href="#icon-moon"/></svg>
+          <svg class="sun-icon"><use href="#icon-sun"/></svg>
+        </button>
+        <button class="btn" onclick="resetAll()" id="btn-reset">
+          <svg><use href="#icon-reset"/></svg>
+          重置
+        </button>
+        <button class="btn btn-primary" onclick="runValidation()" id="btn-validate" disabled>
+          <svg><use href="#icon-play"/></svg>
+          执行校验
+        </button>
+        <button class="btn" onclick="exportReport()" id="btn-export" disabled>
+          <svg><use href="#icon-download"/></svg>
+          导出底稿
+        </button>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="content">
+      <div class="content-inner">
+
+        <!-- Drop Zone (always visible until imported) -->
+        <div class="drop-zone" id="dropZone"
+             onclick="simulateImport()"
+             ondragover="event.preventDefault(); this.classList.add('dragover')"
+             ondragleave="this.classList.remove('dragover')"
+             ondrop="event.preventDefault(); this.classList.remove('dragover'); simulateImport()">
+          <div class="drop-zone-icon">
+            <svg><use href="#icon-upload"/></svg>
+          </div>
+          <div class="drop-zone-text">将财务报表 Excel 文件拖拽到此处</div>
+          <div class="drop-zone-hint">支持 .xlsx / .xls 格式 · 资产负债表、利润表、现金流量表</div>
+        </div>
+
+        <!-- Imported Reports -->
+        <div id="reportsSection" style="display:none;">
+          <div class="section-title">
+            <svg><use href="#icon-file-text"/></svg>
+            已导入报表
+          </div>
+          <div class="report-cards" id="reportCards"></div>
+        </div>
+
+        <!-- Validation Results -->
+        <div id="resultsSection" style="display:none;">
+
+          <!-- Summary Cards -->
+          <div class="section-title">
+            <svg><use href="#icon-target"/></svg>
+            校验概览
+          </div>
+          <div class="summary-cards">
+            <div class="summary-card success">
+              <div class="summary-card-label">
+                <svg style="color: var(--success)"><use href="#icon-check-circle"/></svg>
+                通过
+              </div>
+              <div class="summary-card-value" id="passCount">0</div>
+              <div class="summary-card-sub">校验通过的规则</div>
+            </div>
+            <div class="summary-card error">
+              <div class="summary-card-label">
+                <svg style="color: var(--error)"><use href="#icon-x-circle"/></svg>
+                错误
+              </div>
+              <div class="summary-card-value" id="errorCount">0</div>
+              <div class="summary-card-sub">必须修正的差额</div>
+            </div>
+            <div class="summary-card warning">
+              <div class="summary-card-label">
+                <svg style="color: var(--warning)"><use href="#icon-alert-triangle"/></svg>
+                警告
+              </div>
+              <div class="summary-card-value" id="warningCount">0</div>
+              <div class="summary-card-sub">建议关注的异常</div>
+            </div>
+            <div class="summary-card info">
+              <div class="summary-card-label">
+                <svg style="color: var(--info)"><use href="#icon-hash"/></svg>
+                规则总数
+              </div>
+              <div class="summary-card-value" id="totalCount">0</div>
+              <div class="summary-card-sub" id="durationLabel">--</div>
+            </div>
+          </div>
+
+          <!-- Filter Tabs -->
+          <div class="section-title">
+            <svg><use href="#icon-list-checks"/></svg>
+            校验明细
+          </div>
+          <div class="filter-tabs">
+            <div class="filter-tab active" onclick="filterResults('all', this)">
+              全部 <span class="filter-tab-count" id="count-all">0</span>
+            </div>
+            <div class="filter-tab" onclick="filterResults('error', this)">
+              错误 <span class="filter-tab-count" id="count-error">0</span>
+            </div>
+            <div class="filter-tab" onclick="filterResults('warning', this)">
+              警告 <span class="filter-tab-count" id="count-warning">0</span>
+            </div>
+            <div class="filter-tab" onclick="filterResults('success', this)">
+              通过 <span class="filter-tab-count" id="count-success">0</span>
+            </div>
+          </div>
+
+          <!-- Rule List -->
+          <div class="rule-list" id="ruleList"></div>
+        </div>
+
+        <!-- Empty State (initial) -->
+        <div id="emptyState" class="empty-state">
+          <div class="empty-state-icon">
+            <svg><use href="#icon-shield"/></svg>
+          </div>
+          <div class="empty-state-text">等待导入财务报表</div>
+          <div class="empty-state-hint">导入三大主表后，点击「执行校验」开始勾稽校验</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==============================
+// Mock Data
+// ==============================
+const mockReports = [
+  { name: "资产负债表", type: "BS", period: "2024年12月", items: 35, source: "资产负债表_2024.xlsx" },
+  { name: "利润表", type: "IS", period: "2024年度", items: 22, source: "利润表_2024.xlsx" },
+  { name: "现金流量表", type: "CF", period: "2024年度", items: 40, source: "现金流量表_2024.xlsx" },
+];
+
+const reportIcons = {
+  "BS": "#icon-file-text",
+  "IS": "#icon-trending-up",
+  "CF": "#icon-banknote",
+};
+
+const mockResults = [
+  {
+    ruleId: "BS-BAL-001", ruleName: "资产 = 负债 + 所有者权益", category: "A-表内平衡",
+    severity: "error", passed: true,
+    leftValue: 128560000.00, rightValue: 128560000.00, diff: 0.00, tolerance: 0.01,
+    formula: "asset_total == liability_total + equity_total",
+    trace: [
+      { key: "asset_total", name: "资产总计", amount: 128560000.00, row: 35, column: "期末余额" },
+      { key: "liability_total", name: "负债合计", amount: 78420000.00, row: 20, column: "期末余额" },
+      { key: "equity_total", name: "所有者权益合计", amount: 50140000.00, row: 30, column: "期末余额" },
+    ]
+  },
+  {
+    ruleId: "BS-BAL-002", ruleName: "流动资产 + 非流动资产 = 资产总计", category: "A-表内平衡",
+    severity: "error", passed: false,
+    leftValue: 128560000.00, rightValue: 128540000.00, diff: 20000.00, tolerance: 0.01,
+    formula: "current_assets + non_current_assets == asset_total",
+    trace: [
+      { key: "current_assets", name: "流动资产合计", amount: 85730000.00, row: 10, column: "期末余额" },
+      { key: "non_current_assets", name: "非流动资产合计", amount: 42810000.00, row: 25, column: "期末余额" },
+      { key: "asset_total", name: "资产总计", amount: 128560000.00, row: 35, column: "期末余额" },
+    ]
+  },
+  {
+    ruleId: "BS-BAL-003", ruleName: "流动负债 + 非流动负债 = 负债合计", category: "A-表内平衡",
+    severity: "error", passed: true,
+    leftValue: 78420000.00, rightValue: 78420000.00, diff: 0.00, tolerance: 0.01,
+    formula: "current_liabilities + non_current_liabilities == liability_total",
+    trace: [
+      { key: "current_liabilities", name: "流动负债合计", amount: 52280000.00, row: 15, column: "期末余额" },
+      { key: "non_current_liabilities", name: "非流动负债合计", amount: 26140000.00, row: 18, column: "期末余额" },
+      { key: "liability_total", name: "负债合计", amount: 78420000.00, row: 20, column: "期末余额" },
+    ]
+  },
+  {
+    ruleId: "IS-BAL-001", ruleName: "营业利润公式校验", category: "A-表内平衡",
+    severity: "error", passed: true,
+    leftValue: 15200000.00, rightValue: 15200000.00, diff: 0.00, tolerance: 0.01,
+    formula: "operating_profit == revenue - operating_cost - tax_expense + investment_income",
+    trace: [
+      { key: "operating_profit", name: "营业利润", amount: 15200000.00, row: 8, column: "本期金额" },
+      { key: "revenue", name: "营业收入", amount: 42000000.00, row: 1, column: "本期金额" },
+      { key: "operating_cost", name: "营业成本", amount: 30000000.00, row: 2, column: "本期金额" },
+    ]
+  },
+  {
+    ruleId: "BS-IS-001", ruleName: "未分配利润期末-期初 = 净利润 - 分配", category: "B-表间勾稽",
+    severity: "error", passed: false,
+    leftValue: 10200000.00, rightValue: 8200000.00, diff: 2000000.00, tolerance: 0.01,
+    formula: "undistributed_profit_ending - undistributed_profit_beginning == net_profit - dividends - surplus_withheld",
+    trace: [
+      { key: "undistributed_profit_ending", name: "未分配利润(期末)", amount: 32000000.00, row: 30, column: "期末余额" },
+      { key: "undistributed_profit_beginning", name: "未分配利润(期初)", amount: 21800000.00, row: 30, column: "年初余额" },
+      { key: "net_profit", name: "净利润", amount: 10200000.00, row: 15, column: "本期金额" },
+      { key: "dividends", name: "应付股利", amount: 2000000.00, row: 22, column: "本期金额" },
+    ]
+  },
+  {
+    ruleId: "BS-CF-001", ruleName: "货币资金变动 ≈ 现金净增加额", category: "B-表间勾稽",
+    severity: "warning", passed: false,
+    leftValue: 2400000.00, rightValue: 2380000.00, diff: 20000.00, tolerance: 0.01,
+    formula: "monetary_funds_ending - monetary_funds_beginning == cash_equiv_net_increase",
+    trace: [
+      { key: "monetary_funds_ending", name: "货币资金(期末)", amount: 5600000.00, row: 1, column: "期末余额" },
+      { key: "monetary_funds_beginning", name: "货币资金(期初)", amount: 3200000.00, row: 1, column: "年初余额" },
+      { key: "cash_equiv_net_increase", name: "现金及现金等价物净增加额", amount: 2380000.00, row: 40, column: "本期金额" },
+    ]
+  },
+  {
+    ruleId: "LR-GM-001", ruleName: "毛利率区间合理性检验", category: "C-逻辑合理性",
+    severity: "error", passed: true,
+    leftValue: 0.2857, rightValue: 0, diff: 0.2857, tolerance: 1.0,
+    formula: "0 <= (revenue - operating_cost) / revenue <= 1",
+    trace: [
+      { key: "revenue", name: "营业收入", amount: 42000000.00, row: 1, column: "本期金额" },
+      { key: "operating_cost", name: "营业成本", amount: 30000000.00, row: 2, column: "本期金额" },
+    ]
+  },
+  {
+    ruleId: "LR-GM-002", ruleName: "毛利率同比波动检验", category: "C-逻辑合理性",
+    severity: "warning", passed: false,
+    leftValue: 0.0953, rightValue: 0, diff: 0.0953, tolerance: 0.30,
+    formula: "abs(gm_this - gm_prev) / gm_prev <= 0.30",
+    trace: [
+      { key: "gm_this", name: "本期毛利率", amount: 0.2857, row: 0, column: "计算值" },
+      { key: "gm_prev", name: "上期毛利率", amount: 0.3810, row: 0, column: "计算值" },
+    ]
+  },
+];
+
+let currentFilter = 'all';
+let isImported = false;
+let isValidated = false;
+
+// ==============================
+// Theme Toggle
+// ==============================
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+}
+
+// ==============================
+// Navigation
+// ==============================
+function switchNav(el) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// ==============================
+// Import Simulation
+// ==============================
+function simulateImport() {
+  isImported = true;
+  document.getElementById('dropZone').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('reportsSection').style.display = 'block';
+  document.getElementById('topbarSubtitle').textContent = '已导入 3 张报表';
+  renderReportCards();
+  document.getElementById('btn-validate').disabled = false;
+}
+
+function renderReportCards() {
+  const container = document.getElementById('reportCards');
+  container.innerHTML = mockReports.map(r => `
+    <div class="report-card fade-in">
+      <div class="report-card-header">
+        <div class="report-card-name">
+          <div class="report-card-icon">
+            <svg><use href="${reportIcons[r.type]}"/></svg>
+          </div>
+          ${r.name}
+        </div>
+        <span class="report-card-status">已导入</span>
+      </div>
+      <div class="report-card-meta">
+        <span class="report-card-meta-item">
+          <svg width="14" height="14" style="stroke-width:1.5"><use href="#icon-calendar"/></svg>
+          ${r.period}
+        </span>
+        <span class="report-card-meta-item">
+          <svg width="14" height="14" style="stroke-width:1.5"><use href="#icon-layers"/></svg>
+          ${r.items} 项
+        </span>
+      </div>
+      <div class="report-card-meta" style="margin-top:4px;">
+        <span class="report-card-meta-item">
+          <svg width="14" height="14" style="stroke-width:1.5"><use href="#icon-file"/></svg>
+          ${r.source}
+        </span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ==============================
+// Validation
+// ==============================
+function runValidation() {
+  isValidated = true;
+  const startTime = performance.now();
+
+  document.getElementById('resultsSection').style.display = 'block';
+  document.getElementById('resultsSection').classList.add('fade-in');
+
+  const pass = mockResults.filter(r => r.passed).length;
+  const error = mockResults.filter(r => !r.passed && r.severity === 'error').length;
+  const warning = mockResults.filter(r => !r.passed && r.severity === 'warning').length;
+  const total = mockResults.length;
+
+  // Animate count-up
+  animateCount('passCount', pass);
+  animateCount('errorCount', error);
+  animateCount('warningCount', warning);
+  animateCount('totalCount', total);
+
+  // Filter counts
+  document.getElementById('count-all').textContent = total;
+  document.getElementById('count-error').textContent = error;
+  document.getElementById('count-warning').textContent = warning;
+  document.getElementById('count-success').textContent = pass;
+
+  const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+  document.getElementById('durationLabel').textContent = `耗时 ${duration}s`;
+  document.getElementById('topbarSubtitle').textContent = `校验完成 · ${pass} 通过 / ${error + warning} 异常`;
+  document.getElementById('btn-export').disabled = false;
+
+  renderResults();
+}
+
+function animateCount(id, target) {
+  const el = document.getElementById(id);
+  let current = 0;
+  const step = Math.ceil(target / 10) || 1;
+  const interval = setInterval(() => {
+    current += step;
+    if (current >= target) {
+      current = target;
+      clearInterval(interval);
+    }
+    el.textContent = current;
+  }, 30);
+}
+
+function renderResults() {
+  const container = document.getElementById('ruleList');
+  let filtered = mockResults;
+  if (currentFilter !== 'all') {
+    if (currentFilter === 'success') filtered = mockResults.filter(r => r.passed);
+    else filtered = mockResults.filter(r => !r.passed && r.severity === currentFilter);
+  }
+
+  container.innerHTML = filtered.map((r, i) => {
+    const statusClass = r.passed ? 'success' : r.severity;
+    const statusText = r.passed ? '通过' : (r.severity === 'error' ? '不通过' : '异常');
+    const statusIcon = r.passed ? '#icon-check-circle'
+                    : r.severity === 'error' ? '#icon-x-circle'
+                    : '#icon-alert-triangle';
+    const diffFormatted = r.diff.toLocaleString('zh-CN', { minimumFractionDigits: 2 });
+    const diffClass = r.diff !== 0 ? 'negative' : '';
+
+    return `
+    <div class="rule-card ${statusClass} fade-in" onclick="toggleDetail(${i})">
+      <div class="rule-card-header">
+        <div class="rule-card-title">
+          <span class="rule-badge">${r.ruleId}</span>
+          <span class="rule-card-name">${r.ruleName}</span>
+          <span class="rule-card-category">${r.category}</span>
+        </div>
+        <div class="rule-card-status">
+          <svg><use href="${statusIcon}"/></svg>
+          ${statusText}
+        </div>
+      </div>
+      ${!r.passed ? `
+        <div class="rule-card-diff">
+          差额: <span class="diff-value ${diffClass}">${diffFormatted}</span>
+          · 容差: ${r.tolerance}
+        </div>
+      ` : ''}
+      <div class="rule-card-detail">
+        <div class="detail-grid">
+          <div class="detail-row">
+            <span class="detail-label">左侧计算值</span>
+            <span class="detail-value">${r.leftValue.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">右侧计算值</span>
+            <span class="detail-value">${r.rightValue.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">差额</span>
+            <span class="detail-value ${diffClass}">${diffFormatted}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">容差阈值</span>
+            <span class="detail-value">${r.tolerance}</span>
+          </div>
+        </div>
+        <div class="detail-formula">${r.formula}</div>
+        <div class="detail-trace-title">
+          <svg><use href="#icon-search"/></svg>
+          涉及科目追溯
+        </div>
+        <table class="trace-table">
+          <thead>
+            <tr>
+              <th>科目名称</th>
+              <th>变量</th>
+              <th class="amount">金额 (元)</th>
+              <th>位置</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${r.trace.map(t => `
+              <tr>
+                <td>${t.name}</td>
+                <td class="location">${t.key}</td>
+                <td class="amount">${t.amount.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                <td class="location">第 ${t.row} 行 · ${t.column}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    `;
+  }).join('');
+}
+
+function toggleDetail(index) {
+  let filtered = mockResults;
+  if (currentFilter !== 'all') {
+    if (currentFilter === 'success') filtered = mockResults.filter(r => r.passed);
+    else filtered = mockResults.filter(r => !r.passed && r.severity === currentFilter);
+  }
+  const cards = document.querySelectorAll('.rule-card');
+  if (cards[index]) {
+    cards[index].classList.toggle('expanded');
+  }
+}
+
+function filterResults(filter, el) {
+  currentFilter = filter;
+  document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  renderResults();
+}
+
+function exportReport() {
+  alert('审计底稿导出功能将在后续版本实现');
+}
+
+function resetAll() {
+  isImported = false;
+  isValidated = false;
+  document.getElementById('dropZone').style.display = '';
+  document.getElementById('reportsSection').style.display = 'none';
+  document.getElementById('resultsSection').style.display = 'none';
+  document.getElementById('emptyState').style.display = '';
+  document.getElementById('topbarSubtitle').textContent = '准备导入报表';
+  document.getElementById('btn-validate').disabled = true;
+  document.getElementById('btn-export').disabled = true;
+}
+
+// ==============================
+// Keyboard Shortcut: Ctrl+D toggle theme
+// ==============================
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+    e.preventDefault();
+    toggleTheme();
+  }
+});
+</script>
+
+</body>
+</html>
