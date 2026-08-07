@@ -73,14 +73,14 @@
 
 ### 待办 (下一步)
 
-- [ ] 初始化 git 仓库 + GitHub 仓库
+- [x] 初始化 git 仓库 + GitHub 仓库 (已完成: commit acd14a2, pushed to origin/main)
 - [ ] 创建项目骨架 (src/fsa/ 目录结构)
 - [ ] MVP Week 1-2: 数据模型 + SQLite schema + init_db.py
 - [ ] MVP Week 2-3: ExcelImporter + ReportTypeDetector + AccountMapper
 - [ ] MVP Week 3-4: 规则引擎 (parser+evaluator+runner) + 44规则导入
 - [ ] MVP Week 4-5: GUI 主框架 (qfluentwidgets)
 - [ ] MVP Week 5-6: 结果看板 + 差异追溯 + Excel导出
-- [ ] MVP Week 6-7: 集成测试 + 打包
+- [ ] MVP Week 6-7: 集成测试 + **Inno Setup 安装器** (build_installer.iss)
 - [ ] MVP Week 7-8: 示例文件 + 文档
 
 ### 反思
@@ -94,6 +94,68 @@
 - CAS科目别名字典尚未创建 (MVP Week 2 补)
 - 示例 Excel 文件尚未准备 (MVP Week 7 补)
 - simpleeval 中文标识符兼容性未验证 (MVP Week 3 首先验证)
+
+---
+
+## 2026-08-07 | Phase 0.5: 新增需求设计 (部署更新 + 报表生成)
+
+### 用户需求
+
+#### 需求 1: 部署与自动更新
+- 同事电脑一般为 Win10, 需要安装版 (非便携版)
+- 支持指定路径安装
+- 开发者更新后, 用户启动软件时弹出更新提示
+- 内网环境, 通过 Git 工作流发布
+
+#### 需求 2: 报表自动生成
+- 从余额表 + 序时账自动生成三大财务报表
+- 生成后自动执行勾稽校验
+- 输出审计底稿
+
+### 设计方案
+
+#### 部署与更新 (design.md 附录 A)
+- **打包**: PyInstaller --onedir -> Inno Setup 安装器 (自定义路径/桌面快捷方式/卸载器)
+- **更新机制**: 内网共享目录放置 `version.json` (版本号+下载URL+SHA256+更新说明)
+- **启动检查**: 应用启动时异步读取内网 `version.json`, 有新版本则弹窗提示
+- **更新流程**: 用户确认 -> 下载安装包 -> SHA256校验 -> 静默安装 (Inno Setup /SILENT) -> 重启
+- **Git工作流**: main分支发布release, tag标记版本, CI/CD或手动构建安装包推送到内网
+
+#### 报表自动生成 (design.md 附录 B)
+- **资产负债表+利润表**: 从余额表生成 (科目->报表项目映射, CAS标准映射表~200条)
+- **现金流量表**: 从序时账生成 (直接法, 筛选现金类科目分录, 按对方科目分类)
+- **生成+校验一体化**: 生成后自动运行44条勾稽规则, 一份Excel输出 (报表+底稿+校验结果)
+- **审计底稿**: 科目到报表项目映射底稿 + 现金流分类底稿 (可追溯)
+
+### 文档更新
+
+| 文件 | 更新内容 |
+|---|---|
+| `design.md` | 新增附录 A (部署与更新) + 附录 B (报表自动生成) |
+| `project_structure.md` | 目录树新增 `core/generator/` + `core/updater/`; 脚本新增 `build_installer.iss` + `publish.py`; 新增模块接口 §2.5 生成层 + §2.6 更新层; 开发计划调整 (MVP+安装器, V1.0+自动更新, V1.5+报表生成, V2.0+间接法CF); 依赖新增 Inno Setup |
+| `README.md` | 核心功能新增报表自动生成+自动更新; 开发路线更新 |
+| `scripts/build_installer.iss` | 新建: Inno Setup 安装器模板脚本 |
+
+### 关键决策记录 (续)
+
+| # | 决策 | 理由 | 替代方案(已排除) |
+|---|---|---|---|
+| D11 | Inno Setup (非NSIS/便携版) | Win10成熟稳定, 免费, 支持自定义路径/快捷方式/卸载; 用户要求安装版 | 便携版(用户否决), NSIS(脚本更复杂) |
+| D12 | 内网共享+version.json (非HTTP服务器) | 内网无专用服务器, 文件共享最简单; 无需额外部署 | HTTP更新服务器(过度设计) |
+| D13 | SHA256校验+静默安装 | 确保下载完整性; Inno Setup /SILENT 原生支持 | 无校验(安全风险) |
+| D14 | 余额表->BS/IS, 序时账->CF | BS/IS是时点数据(余额表), CF是流量数据(需要明细); CAS标准做法 | 全部从余额表(CF无法生成) |
+| D15 | 科目映射可自定义覆盖 | 企业科目编码不同, 需支持自定义; 默认映射表覆盖CAS标准 | 硬编码(不灵活) |
+| D16 | 生成后自动校验 (生成+校验一体化) | 用户一键获得"报表+校验结果", 无需手动导入再校验 | 分离(多一步操作) |
+
+### 待办 (更新)
+
+- [x] 初始化 git 仓库 + GitHub 仓库
+- [x] 新增需求设计文档 (design.md 附录 A + B)
+- [x] 更新 project_structure.md (新模块+接口+计划)
+- [x] 创建 build_installer.iss 模板
+- [ ] 提交并推送到 GitHub
+- [ ] 创建项目骨架 (src/fsa/ 目录结构)
+- [ ] MVP Week 1-2: 数据模型 + SQLite schema + init_db.py
 
 ---
 

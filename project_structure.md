@@ -75,6 +75,19 @@
 │       │   │   ├── prompts.py         # Prompt 模板
 │       │   │   └── response_parser.py # 响应解析
 │       │   │
+│       │   ├── generator/             # 报表自动生成 (V1.5)
+│       │   │   ├── __init__.py
+│       │   │   ├── account_mapping.py # 科目->报表项目映射 (CAS默认映射表)
+│       │   │   ├── report_generator.py # BS/IS 从余额表生成
+│       │   │   ├── cash_flow_generator.py # CF 从序时账生成 (直接法+间接法)
+│       │   │   ├── cash_flow_rules.py  # 现金流分类规则
+│       │   │   └── workpaper_generator.py # 审计底稿生成
+│       │   │
+│       │   ├── updater/              # 自动更新 (V1.0)
+│       │   │   ├── __init__.py
+│       │   │   ├── version_checker.py # 版本检查 (读内网version.json)
+│       │   │   └── update_installer.py # 下载+校验+安装更新
+│       │   │
 │       │   ├── exporter/              # 导出层
 │       │   │   ├── __init__.py
 │       │   │   ├── excel_workpaper.py # Excel 审计底稿 (带公式)
@@ -132,7 +145,9 @@
 └── scripts/                           # 脚本
     ├── init_db.py                     # 初始化数据库
     ├── import_rules.py                # 导入规则库
-    └── build.py                      # 打包脚本 (PyInstaller/Nuitka)
+    ├── build.py                       # PyInstaller 打包脚本
+    ├── build_installer.iss            # Inno Setup 安装器脚本 (Win10安装包)
+    └── publish.py                     # 发布脚本 (打包+构建安装器+生成version.json)
 ```
 
 ---
@@ -675,11 +690,201 @@ class ExcelWorkpaperExporter:
 
 ---
 
+### 2.5 报表自动生成层 (V1.5)
+
+```python
+# core/generator/account_mapping.py
+
+from core.models.report import Report, ReportItem
+from core.models.validation import ReportType
+
+class AccountMapping:
+    """CAS 科目 -> 报表项目映射器"""
+
+    # 内置 CAS 标准映射表 (可被用户自定义覆盖)
+    DEFAULT_MAPPINGS: dict[ReportType, dict[str, str]] = {
+        ReportType.BALANCE_SHEET: {
+            "1001": "货币资金", "1002": "货币资金",       # 库存现金+银行存款
+            "1122": "应收账款", "1123": "其他应收款",
+            "1241": "存货", "1601": "固定资产",
+            "2202": "应付账款", "2203": "预收账款",
+            "4001": "实收资本", "4101": "盈余公积",
+            "4103": "本年利润", "4104": "利润分配",
+            # ... ~200 条标准映射
+        },
+        ReportType.INCOME_STATEMENT: {
+            "5001": "营业收入", "5051": "其他业务收入",
+            "5401": "营业成本", "5402": "其他业务成本",
+            "5601": "销售费用", "5602": "管理费用", "5603": "研发费用",
+            "5701": "财务费用", "5801": "资产减值损失",
+            "6101": "公允价值变动收益", "6111": "投资收益",
+            "6301": "营业外收入", "6711": "营业外支出",
+            "6801": "所得税费用",
+        },
+    }
+
+    def map_account(self, account_code: str, report_type: ReportType) -> str | None:
+        """科目代码 -> 报表项目名称 (支持级次: 1001.01 -> 货币资金)"""
+        ...
+
+    def map_all(self, trial_balance: list) -> dict[ReportType, list[ReportItem]]:
+        """批量映射: 余额表 -> 各报表项目聚合"""
+        ...
+
+
+# core/generator/report_generator.py
+
+from core.models.report import Report, ReportItem, ReportType
+from core.generator.account_mapping import AccountMapping
+
+class ReportGenerator:
+    """从余额表自动生成资产负债表 + 利润表"""
+
+    def __init__(self, mapping: AccountMapping):
+        self.mapping = mapping
+
+    def generate_balance_sheet(self, trial_balance: list) -> Report:
+        """
+        余额表 -> 资产负债表
+
+        流程:
+        1. 按科目映射聚合到报表项目
+        2. 计算合计 (流动资产合计、非流动资产合计、资产总计...)
+        3. 校验: 资产总计 == 负债和所有者权益总计
+        4. 生成 Report 对象 (含所有 ReportItem)
+        """
+        ...
+
+    def generate_income_statement(self, trial_balance: list) -> Report:
+        """
+        余额表 -> 利润表
+
+        流程:
+        1. 损益类科目余额 -> 报表项目
+        2. 计算营业收入、营业成本、期间费用、营业利润、利润总额、净利润
+        3. 生成 Report 对象
+        """
+        ...
+
+
+# core/generator/cash_flow_generator.py
+
+from core.models.report import Report
+
+class CashFlowGenerator:
+    """从序时账 (明细账) 自动生成现金流量表 - 直接法"""
+
+    def __init__(self, cash_flow_rules: dict):
+        """
+        cash_flow_rules: 现金流分类规则
+        {
+            "1001": "经营活动",   # 库存现金
+            "1002": "经营活动",   # 银行存款
+            "1002.01": "经营活动",  # 银行存款-活期
+            "1002.02": "投资活动",  # 银行存款-定期(>3月)
+            "1002.03": "筹资活动",  # 银行存款-保证金
+        }
+        """
+        self.rules = cash_flow_rules
+
+    def generate(self, journal_entries: list) -> Report:
+        """
+        序时账 -> 现金流量表 (直接法)
+
+        流程:
+        1. 筛选涉及现金类科目的分录
+        2. 按对方科目分类 (经营/投资/筹资)
+        3. 按具体活动细分 (销售商品收到的现金、购买商品支付的现金...)
+        4. 汇总各活动现金流入流出净额
+        5. 生成 Report 对象
+        """
+        ...
+
+
+# core/generator/workpaper_generator.py
+
+class WorkpaperGenerator:
+    """生成审计底稿 - 与校验报告合并输出"""
+
+    def generate(self, reports: list[Report], validation_results: list) -> str:
+        """
+        输出一份 Excel, 包含:
+        - Sheet 1: 资产负债表 (生成)
+        - Sheet 2: 利润表 (生成)
+        - Sheet 3: 现金流量表 (生成)
+        - Sheet 4: 勾稽校验结果 (44条规则)
+        - Sheet 5: 科目到报表项目映射底稿 (可追溯)
+        - Sheet 6: 现金流分类底稿 (每笔分录的分类依据)
+        """
+        ...
+```
+
+---
+
+### 2.6 自动更新层 (V1.0)
+
+```python
+# core/updater/version_checker.py
+
+from dataclasses import dataclass
+
+@dataclass
+class VersionInfo:
+    version: str           # "1.0.0"
+    download_url: str      # 内网共享路径
+    file_hash: str         # SHA256
+    release_notes: str     # 更新说明
+    min_app_version: str   # 最低兼容版本 (低于此版本必须全量更新)
+
+class VersionChecker:
+    """检查内网更新服务器上的版本"""
+
+    UPDATE_SERVER_URL = r"\\内网服务器\share\fsa-updates\version.json"
+
+    def check_latest(self) -> VersionInfo | None:
+        """读取内网 version.json, 返回最新版本信息"""
+        ...
+
+    def is_update_available(self, current_version: str) -> tuple[bool, VersionInfo | None]:
+        """比较版本号, 返回 (是否需要更新, 最新版本信息)"""
+        ...
+
+
+# core/updater/update_installer.py
+
+class UpdateInstaller:
+    """下载并安装更新"""
+
+    def download(self, version_info: VersionInfo, progress_callback) -> str:
+        """
+        下载安装包到临时目录
+        - 显示下载进度 (通过 progress_callback)
+        - 下载完成后校验 SHA256
+        - 返回下载文件路径
+        """
+        ...
+
+    def install(self, installer_path: str) -> None:
+        """
+        静默安装更新:
+        1. 关闭当前应用
+        2. 运行安装包 (Inno Setup /SILENT /NOCANCEL)
+        3. 重启应用
+        """
+        ...
+
+    def verify_hash(self, file_path: str, expected_hash: str) -> bool:
+        """SHA256 校验"""
+        ...
+```
+
+---
+
 ## 三、分阶段开发计划
 
-### MVP (6-8 周) - Excel 勾稽校验可用
+### MVP (6-8 周) - Excel 勾稽校验可用 + 安装器
 
-**目标**: 非技术财务人员可拖入 Excel，一键获得勾稽校验结果
+**目标**: 非技术财务人员可拖入 Excel，一键获得勾稽校验结果，且可通过安装包部署
 
 | 周 | 任务 | 交付物 |
 |---|---|---|
@@ -688,42 +893,52 @@ class ExcelWorkpaperExporter:
 | 3-4 | 规则引擎 (parser+evaluator+runner) | engine/ 全部、44 条规则导入 SQLite |
 | 4-5 | GUI 主框架 (qfluentwidgets) | main_window.py、drop_zone.py、import_wizard.py |
 | 5-6 | 结果看板 + 差异追溯 + 导出 | result_card.py、diff_trace.py、excel_workpaper.py |
-| 6-7 | 集成测试 + 打包 | tests/、build.py、PyInstaller 配置 |
+| 6-7 | 集成测试 + **Inno Setup 安装器** | tests/、build.py、build_installer.iss、安装包 |
 | 7-8 | 示例文件 + 文档 + 磨合 | examples/、README、DEV_LOG |
 
 **MVP 验收标准**:
-- [ ] 拖入 3 张 Excel (BS+IS+CF) → 3 秒内识别完成
-- [ ] 44 条规则校验 → 5 秒内完成
+- [ ] 拖入 3 张 Excel (BS+IS+CF) -> 3 秒内识别完成
+- [ ] 44 条规则校验 -> 5 秒内完成
 - [ ] 结果看板红/黄/蓝分色展示
-- [ ] 点击差异 → 显示公式 + 涉及科目 + 原始行列
+- [ ] 点击差异 -> 显示公式 + 涉及科目 + 原始行列
 - [ ] 导出 Excel 审计底稿 (带公式可复算)
-- [ ] 安装包 < 120MB
+- [ ] **Inno Setup 安装包** (自定义路径 + 桌面快捷方式 + 卸载器)
+- [ ] 安装包 < 120MB, Win10 兼容
 
-### V1.0 (4-6 周) - PDF + Agent + 权益变动表
+### V1.0 (4-6 周) - PDF + Agent + 自动更新 + 权益变动表
 
 | 周 | 任务 |
 |---|---|
 | 1-2 | PDF 导入 (Camelot lattice + pdfplumber) + HITL 纠正 UI |
 | 2-3 | 所有者权益变动表支持 (规则扩展) |
-| 3-4 | Ollama Agent 集成 (本地 LLM 诊断) |
-| 4-5 | 历史记录对比分析 |
-| 5-6 | 递延所得税/商誉/金融工具/租赁规则增强 |
+| 3-4 | **自动更新机制** (版本检查+下载+安装+更新提示弹窗) |
+| 4-5 | Ollama Agent 集成 (本地 LLM 诊断) |
+| 5-6 | 历史记录对比分析 + 递延所得税/商誉规则增强 |
 
 **V1.0 验收标准**:
 - [ ] PDF 导入 + HITL 纠正 (准确率 > 80%)
 - [ ] 四大报表完整校验
-- [ ] Agent 诊断 (Ollama 本地) → 问题总结 + 根因 + 建议
+- [ ] **启动时自动检查内网更新服务器, 弹窗提示新版本**
+- [ ] **一键更新: 下载安装包 -> 校验SHA256 -> 静默安装 -> 重启**
+- [ ] Agent 诊断 (Ollama 本地) -> 问题总结 + 根因 + 建议
 - [ ] 历史校验结果对比
 
-### V1.5 (4-6 周) - 配置完善
+### V1.5 (4-6 周) - 报表自动生成 + 配置完善
 
 | 周 | 任务 |
 |---|---|
-| 1-2 | 规则编辑器 UI (可视化增删改) |
-| 2-3 | 模板管理器 (Excel 模板可视化编辑) |
-| 3-4 | 科目映射 UI (手动映射 + 别名管理) |
-| 4-5 | 规则导入导出 (JSON/YAML) |
-| 5-6 | 系统设置 UI + 多主题 |
+| 1-2 | **余额表导入 + BS/IS 自动生成** (科目->报表项目映射) |
+| 2-3 | **序时账导入 + CF 直接法自动生成** (现金流分类规则) |
+| 3-4 | **生成+校验一体化** (生成后自动运行44规则验证) |
+| 4-5 | 规则编辑器 UI + 模板管理器 + 科目映射 UI |
+| 5-6 | 规则导入导出 (JSON/YAML) + 多主题 |
+
+**V1.5 验收标准**:
+- [ ] **导入余额表 -> 自动生成资产负债表 + 利润表**
+- [ ] **导入序时账 -> 自动生成现金流量表 (直接法)**
+- [ ] **生成的报表自动通过44条勾稽校验**
+- [ ] **输出: 三大报表 + 审计底稿 + 勾稽校验报告 (一份Excel)**
+- [ ] 规则/模板/科目映射可视化编辑
 
 ### V2.0 (8-12 周) - 高级功能
 
@@ -733,7 +948,7 @@ class ExcelWorkpaperExporter:
 | 3-5 | 合并报表支持 (抵销分录规则库) |
 | 5-7 | IFRS 准则支持 (双规则库 + 切换) |
 | 7-9 | 云端 LLM 支持 (OpenAI/Claude API) |
-| 9-12 | 性能优化 + 国际化 + 发布 |
+| 9-12 | **间接法现金流量表自动生成** + 性能优化 + 国际化 + 发布 |
 
 ---
 
@@ -785,6 +1000,9 @@ build = [
     "pyinstaller>=6.0",                   # 打包
     # "nuitka>=2.0",                      # 可选打包 (更小)
 ]
+# 外部工具 (非pip):
+#   - Inno Setup 6+ (https://jrsoftware.org/isdl.php)  -- Win10安装包构建
+#   - Git (内网发布工作流)
 ml = [
     # V2: ML PDF提取
     "paddleocr>=2.7",

@@ -1552,4 +1552,681 @@ def parse_agent_response(raw: str) -> AgentResponse:
 
 ---
 
+## 附录A：软件部署与自动更新设计
+
+### A.1 内网 Git 工作流
+
+```
+┌──────────────────┐     push      ┌──────────────────┐
+│  个人电脑 (开发)   │ ──────────>  │  GitHub 仓库       │
+│  auto-push 配置    │              │  L-iuhuan/         │
+│                   │ <──────────  │  Financial-Statements│
+└──────────────────┘     pull      └────────┬─────────┘
+                                            │ clone/pull
+                                            ▼
+┌──────────────────┐              ┌──────────────────┐
+│  公司开发电脑      │              │  内网文档服务器     │
+│  - 编辑/修改       │              │  \\server\fsa-     │
+│  - git pull/push   │              │  updates\          │
+│  - 构建安装包       │ ──复制到──>  │  ├── version.json  │
+│  - Inno Setup 打包  │              │  ├── v0.1.0/       │
+│                   │              │  │   └── FSA-       │
+│                   │              │  │       Setup-    │
+│                   │              │  │       0.1.0.exe  │
+│                   │              │  └── v0.1.1/       │
+└──────────────────┘              │      └── FSA-       │
+                                  │          Update-   │
+                                  │          0.1.1.exe  │
+                                  └────────┬─────────┘
+                                           │ 启动时检查
+                                           ▼
+                                  ┌──────────────────┐
+                                  │  同事 Win10 电脑   │
+                                  │  - 启动时读        │
+                                  │    version.json   │
+                                  │  - 版本对比        │
+                                  │  - 弹窗提示更新     │
+                                  │  - 下载安装重启     │
+                                  └──────────────────┘
+```
+
+### A.2 安装器设计 (Inno Setup)
+
+选择 **Inno Setup** 而非 NSIS/MSI 的理由：
+- 免费开源，Win10 完美兼容
+- 脚本驱动（.iss），易于版本控制
+- 支持自定义安装路径、桌面快捷方式、开始菜单、卸载器
+- 可捆绑 VC++ Redistributable
+- 支持多语言（中文界面）
+
+**安装器功能清单**：
+
+| 功能 | 说明 |
+|---|---|
+| 自定义安装路径 | 默认 `C:\Program Files\FSA`，可修改 |
+| 桌面快捷方式 | 可选 |
+| 开始菜单 | `FSA > 财务报表稽核` |
+| 文件关联 | .xlsx 关联到 FSA（可选，默认关） |
+| 注册表 | 版本号、安装路径、卸载信息 |
+| VC++ 运行时 | 捆绑 `vc_redist.x64.exe` 静默安装 |
+| 卸载器 | 控制面板可见，完整卸载 |
+| 静默安装 | `/SILENT` 参数支持（自动更新用） |
+| 版本写入注册表 | `HKLM\SOFTWARE\FSA\Version` |
+
+**Inno Setup 脚本要点**（`scripts/build_installer.iss`）：
+
+```pascal
+[Setup]
+AppName=财务报表勾稽校验系统
+AppVersion={#AppVersion}
+AppPublisher=FSA
+DefaultDirName={autopf}\FSA
+DefaultGroupName=财务报表稽核
+OutputBaseFilename=FSA-Setup-{#AppVersion}
+Compression=lzma2/ultra64
+SolidCompression=yes
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
+LanguageDetectionMethod=none
+ShowLanguageDialog=no
+
+[Languages]
+Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+[Files]
+; PyInstaller 打包结果
+Source: "dist\FSA\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+; VC++ Redistributable
+Source: "redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+
+[Run]
+; 静默安装 VC++ 运行时
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "安装 Visual C++ 运行时..."
+; 安装后启动
+Filename: "{app}\FSA.exe"; Description: "立即启动"; Flags: postinstall nowait skipifsilent
+
+[Registry]
+; 版本信息写入注册表（更新检查用）
+Root: HKLM; Subkey: "SOFTWARE\FSA"; ValueType: string; ValueName: "Version"; ValueData: "{#AppVersion}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "SOFTWARE\FSA"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
+
+[Icons]
+Name: "{group}\财务报表稽核"; Filename: "{app}\FSA.exe"
+Name: "{group}\卸载"; Filename: "{uninstallexe}"
+Name: "{commondesktop}\财务报表稽核"; Filename: "{app}\FSA.exe"; Tasks: desktopicon
+```
+
+### A.3 自动更新机制
+
+#### 版本清单 (version.json)
+
+放在内网共享路径，如 `\\server\fsa-updates\version.json`：
+
+```json
+{
+  "latest_version": "0.1.1",
+  "minimum_version": "0.1.0",
+  "release_date": "2026-08-10",
+  "download_url": "\\\\server\\fsa-updates\\v0.1.1\\FSA-Setup-0.1.1.exe",
+  "changelog": "## v0.1.1\n1. 修复资产负债表合并单元格提取问题\n2. 新增利润表同比波动校验\n3. 优化结果看板分页性能",
+  "checksum": "sha256:a1b2c3d4e5f6...",
+  "file_size": 78643200,
+  "force_update": false
+}
+```
+
+#### 更新检查流程
+
+```python
+# core/updater/version_checker.py
+
+from dataclasses import dataclass
+from typing import Optional
+import json
+import os
+
+@dataclass
+class VersionInfo:
+    """远程版本信息"""
+    latest_version: str
+    minimum_version: str
+    release_date: str
+    download_url: str
+    changelog: str
+    checksum: str
+    file_size: int
+    force_update: bool = False
+
+
+def parse_version(version_str: str) -> tuple[int, int, int]:
+    """解析语义版本号 '0.1.1' -> (0, 1, 1)"""
+    parts = version_str.split(".")
+    return tuple(int(p) for p in parts[:3])
+
+
+def is_newer(remote: str, local: str) -> bool:
+    """判断远程版本是否比本地新"""
+    return parse_version(remote) > parse_version(local)
+
+
+def check_update(
+    local_version: str,
+    update_server_path: str,
+) -> Optional[VersionInfo]:
+    """
+    检查更新
+
+    Args:
+        local_version: 当前版本 (如 "0.1.0")
+        update_server_path: 更新服务器路径 (如 "\\\\server\\fsa-updates")
+
+    Returns:
+        VersionInfo 如果有更新, None 如果已是最新
+    """
+    manifest_path = os.path.join(update_server_path, "version.json")
+    if not os.path.exists(manifest_path):
+        return None  # 服务器不可达, 静默跳过
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    remote_version = data["latest_version"]
+    if not is_newer(remote_version, local_version):
+        return None  # 已是最新
+
+    return VersionInfo(
+        latest_version=remote_version,
+        minimum_version=data.get("minimum_version", "0.0.1"),
+        release_date=data["release_date"],
+        download_url=data["download_url"],
+        changelog=data["changelog"],
+        checksum=data["checksum"],
+        file_size=data.get("file_size", 0),
+        force_update=data.get("force_update", False),
+    )
+```
+
+#### 更新执行流程
+
+```
+1. App 启动 -> 读本地版本 (settings 或 注册表)
+2. 读 update_server_path (settings 配置, 如 \\server\fsa-updates)
+3. check_update(local, server_path) -> VersionInfo 或 None
+4. 如果有更新:
+   ├─ force_update=true -> 强制更新弹窗 (不可跳过)
+   └─ force_update=false -> 普通更新弹窗:
+       ┌─────────────────────────────────────┐
+       │  发现新版本 v0.1.1                     │
+       │                                       │
+       │  更新内容:                             │
+       │  1. 修复资产负债表合并单元格问题         │
+       │  2. 新增利润表同比波动校验               │
+       │  3. 优化结果看板分页性能                 │
+       │                                       │
+       │  大小: 75 MB    发布日期: 2026-08-10   │
+       │                                       │
+       │  [立即更新]  [稍后提醒]  [跳过此版本]    │
+       └─────────────────────────────────────┘
+5. 用户点击"立即更新":
+   a. 下载安装包到 %TEMP%\FSA-Update.exe
+   b. 校验 SHA256 checksum
+   c. 启动安装包: FSA-Update.exe /SILENT /NORESTART
+   d. 退出当前应用
+   e. 安装器替换文件后重启应用
+6. 用户点击"稍后提醒": 下次启动再检查
+7. 用户点击"跳过此版本": 记录 skip_version, 不再提示该版本
+```
+
+#### 设置新增项
+
+```python
+# 在 SystemSettings 中新增:
+update_server_path: str = ""           # 更新服务器路径 (\\server\fsa-updates)
+auto_check_update: bool = True         # 启动时自动检查
+last_check_time: str = ""              # 上次检查时间
+skipped_version: str = ""             # 跳过的版本
+```
+
+### A.4 Win10 兼容性约束
+
+| 约束 | 说明 | 处理 |
+|---|---|---|
+| OS 版本 | Win10 1809+ (17763+) | 安装器检查版本, 不满足拒绝安装 |
+| 架构 | 仅 x64 | Python 3.11+ 无 x86 支持 |
+| VC++ 运行时 | 需 VC++ 2015-2022 x64 | 安装器捆绑静默安装 |
+| .NET | 不需要 (PySide6 不依赖) | - |
+| 权限 | 安装需管理员, 运行无需 | 默认装 Program Files, 运行在用户空间 |
+| 字体 | 系统中文字体 | Win10 自带微软雅黑, 充分 |
+| DPI | 高 DPI 缩放 | PySide6 原生支持高 DPI |
+| 防火墙 | 更新检查需访问共享路径 | UNC 路径, 通常允许; 首次可能弹窗 |
+
+### A.5 构建发布流程
+
+```bash
+# 1. 开发完成, 更新版本号
+# pyproject.toml: version = "0.1.1"
+# build_installer.iss: #define AppVersion "0.1.1"
+
+# 2. PyInstaller 打包
+pyinstaller scripts/build.spec --noconfirm
+# -> dist/FSA/ (含 FSA.exe + 依赖)
+
+# 3. Inno Setup 构建安装器
+iscc scripts/build_installer.iss
+# -> output/FSA-Setup-0.1.1.exe
+
+# 4. 计算校验和
+certutil -hashfile FSA-Setup-0.1.1.exe SHA256
+
+# 5. 更新 version.json
+# 填入 latest_version, download_url, changelog, checksum
+
+# 6. 复制到内网服务器
+Copy-Item FSA-Setup-0.1.1.exe \\server\fsa-updates\v0.1.1\
+Copy-Item version.json \\server\fsa-updates\
+
+# 7. 推送到 GitHub
+git add . && git commit -m "release: v0.1.1" && git push
+```
+
+---
+
+## 附录B：报表自动生成设计
+
+### B.1 可行性分析
+
+**结论：可行，且与现有校验引擎形成独特卖点"生成+校验一体化"。**
+
+| 输入数据 | 生成目标 | 可行性 | 难度 | 核心方法 |
+|---|---|---|---|---|
+| 余额表 | 资产负债表 | ✅ 高 | 低 | 科目编码->报表项目映射, 汇总求和 |
+| 余额表 | 利润表 | ✅ 高 | 低 | 同上 (收入费用类科目) |
+| 序时账 | 现金流量表(直接法) | ✅ 高 | 中 | 筛选现金科目分录, 按活动分类汇总 |
+| BS+IS | 现金流量表(间接法) | ✅ 高 | 中 | 净利润+非现金调整项 (IS-CF-003逆向) |
+| 余额表+校验结果 | 审计底稿 | ✅ 高 | 中 | 审定表+计算表+勾稽校验底稿 |
+
+**关键洞察**：我们的 44 条勾稽规则定义了"正确的报表应该满足什么关系"。因此：
+- **校验**：给定报表，检查规则是否成立
+- **生成**：给定数据，按规则约束生成报表
+- **验证**：生成后用同一套规则验证 → "生成+校验一体化"
+
+这是商用软件（金蝶/用友）不做、开源项目也没人做的差异化能力。
+
+### B.2 架构设计
+
+新增 `core/generator/` 模块：
+
+```mermaid
+graph LR
+    subgraph "输入数据"
+        A[余额表<br/>Trial Balance]
+        B[序时账<br/>Journal Entries]
+    end
+
+    subgraph "core/generator/"
+        C[AccountMapping<br/>科目->报表项目映射]
+        D[BalanceSheetGenerator<br/>资产负债表生成]
+        E[IncomeStatementGenerator<br/>利润表生成]
+        F[CashFlowGenerator<br/>现金流量表生成]
+        G[WorkpaperGenerator<br/>审计底稿生成]
+    end
+
+    subgraph "校验 (复用现有)"
+        H[44条勾稽规则<br/>生成后自动校验]
+    end
+
+    A --> C --> D
+    A --> C --> E
+    B --> F
+    D --> H
+    E --> H
+    F --> H
+    A --> G
+    H --> G
+```
+
+### B.3 资产负债表 + 利润表生成 (从余额表)
+
+#### 科目->报表项目映射
+
+```python
+# core/generator/account_mapping.py
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+@dataclass
+class AccountToReportItem:
+    """科目到报表项目的映射规则"""
+    account_code_pattern: str       # 科目编码模式 (如 "1001*" 匹配 1001, 100101, 100102)
+    account_name_keyword: str = ""    # 科目名称关键词 (辅助匹配)
+    report_type: str = ""             # 报表类型 (balance_sheet / income_statement)
+    report_item_name: str = ""        # 报表项目标准名 (如 "货币资金")
+    direction: str = "debit"          # 借/贷方向 (资产=借, 负债/权益=贷, 收入=贷, 费用=借)
+    is_subtraction: bool = False      # 是否为减项 (如坏账准备是应收账款的减项)
+    notes: str = ""
+
+
+# 默认 CAS 科目映射表 (部分示例)
+DEFAULT_CAS_MAPPING: list[AccountToReportItem] = [
+    # 资产负债表 - 资产
+    AccountToReportItem("1001*", "", "balance_sheet", "货币资金", "debit"),
+    AccountToReportItem("1002*", "", "balance_sheet", "货币资金", "debit"),
+    AccountToReportItem("1012*", "", "balance_sheet", "货币资金", "debit"),
+    AccountToReportItem("1122*", "", "balance_sheet", "应收账款", "debit"),
+    AccountToReportItem("1231*", "", "balance_sheet", "应收账款", "debit", True, "坏账准备为减项"),
+    AccountToReportItem("1123*", "", "balance_sheet", "预付款项", "debit"),
+    AccountToReportItem("1401*", "", "balance_sheet", "存货", "debit"),
+    AccountToReportItem("1601*", "", "balance_sheet", "固定资产", "debit"),
+    AccountToReportItem("1602*", "", "balance_sheet", "固定资产", "debit", True, "累计折旧为减项"),
+    # 资产负债表 - 负债
+    AccountToReportItem("2202*", "", "balance_sheet", "应付账款", "credit"),
+    AccountToReportItem("2203*", "", "balance_sheet", "预收款项", "credit"),
+    AccountToReportItem("2241*", "", "balance_sheet", "其他应付款", "credit"),
+    AccountToReportItem("2501*", "", "balance_sheet", "长期借款", "credit"),
+    # 资产负债表 - 权益
+    AccountToReportItem("4001*", "", "balance_sheet", "实收资本", "credit"),
+    AccountToReportItem("4002*", "", "balance_sheet", "资本公积", "credit"),
+    AccountToReportItem("4101*", "", "balance_sheet", "盈余公积", "credit"),
+    AccountToReportItem("4104*", "", "balance_sheet", "未分配利润", "credit"),
+    # 利润表
+    AccountToReportItem("6001*", "", "income_statement", "营业收入", "credit"),
+    AccountToReportItem("6051*", "", "income_statement", "营业收入", "credit"),
+    AccountToReportItem("6401*", "", "income_statement", "营业成本", "debit"),
+    AccountToReportItem("6405*", "", "income_statement", "税金及附加", "debit"),
+    AccountToReportItem("6601*", "", "income_statement", "销售费用", "debit"),
+    AccountToReportItem("6602*", "", "income_statement", "管理费用", "debit"),
+    AccountToReportItem("6604*", "", "income_statement", "研发费用", "debit"),
+    AccountToReportItem("6603*", "", "income_statement", "财务费用", "debit"),
+    AccountToReportItem("6701*", "", "income_statement", "资产减值损失", "debit"),
+    AccountToReportItem("6111*", "", "income_statement", "投资收益", "credit"),
+    AccountToReportItem("6301*", "", "income_statement", "营业外收入", "credit"),
+    AccountToReportItem("6711*", "", "income_statement", "营业外支出", "debit"),
+    AccountToReportItem("6801*", "", "income_statement", "所得税费用", "debit"),
+]
+```
+
+#### 生成逻辑
+
+```python
+# core/generator/report_generator.py
+
+from core.models.report import Report, ReportItem, ReportType
+from core.generator.account_mapping import AccountToReportItem
+from typing import List
+import fnmatch
+
+class ReportGenerator:
+    """报表生成器 - 从余额表/序时账生成报表"""
+
+    def __init__(self, mappings: list[AccountToReportItem]):
+        self._mappings = mappings
+
+    def generate_balance_sheet(
+        self,
+        trial_balance: list[dict],  # [{account_code, account_name, ending_balance, ...}]
+    ) -> Report:
+        """
+        从余额表生成资产负债表
+
+        流程:
+        1. 遍历余额表每个科目
+        2. 按 account_code_pattern 匹配映射规则
+        3. 汇总到报表项目 (加减项处理)
+        4. 计算合计行 (资产总计/负债合计/权益合计)
+        5. 构建 Report 对象
+        """
+        items = []
+        # 按 report_item_name 分组汇总
+        item_map: dict[str, float] = {}
+        for tb_entry in trial_balance:
+            code = tb_entry["account_code"]
+            balance = tb_entry["ending_balance"]
+            for mapping in self._mappings:
+                if mapping.report_type != "balance_sheet":
+                    continue
+                if fnmatch.fnmatch(code, mapping.account_code_pattern.replace("*", "*")):
+                    name = mapping.report_item_name
+                    if mapping.is_subtraction:
+                        item_map[name] = item_map.get(name, 0) - abs(balance)
+                    else:
+                        item_map[name] = item_map.get(name, 0) + balance
+                    break
+
+        # 构建 ReportItem 列表
+        for name, amount in item_map.items():
+            items.append(ReportItem(
+                account_name=name,
+                standard_name=name,
+                amount=amount,
+            ))
+
+        # 计算合计
+        # 资产总计 = 流动资产合计 + 非流动资产合计
+        # 负债合计 = 流动负债合计 + 非流动负债合计
+        # ... (按标准项目层级计算)
+
+        return Report(
+            id=str(uuid4()),
+            report_type=ReportType.BALANCE_SHEET,
+            items=items,
+            # ...
+        )
+
+    def generate_income_statement(
+        self,
+        trial_balance: list[dict],
+    ) -> Report:
+        """从余额表生成利润表 (同上逻辑, report_type=income_statement)"""
+        ...
+
+    def generate_cash_flow_direct(
+        self,
+        journal_entries: list[dict],  # [{date, account_code, account_name, debit, credit, summary}]
+    ) -> Report:
+        """
+        从序时账生成现金流量表 (直接法)
+
+        流程:
+        1. 识别现金科目 (1001/1002/1012)
+        2. 筛选涉及现金科目的分录
+        3. 按对方科目分类:
+           - 6001/6051(收入) -> 销售商品收到现金 (经营)
+           - 1122(应收) -> 销售商品收到现金 (经营)
+           - 6401(成本) -> 购买商品支付现金 (经营)
+           - 2202(应付) -> 购买商品支付现金 (经营)
+           - 6601/6602/6604(费用) -> 支付职工/其他经营 (经营)
+           - 1601(固定资产) -> 购建固定资产 (投资)
+           - 2501/2001(借款) -> 借款收到/偿还 (筹资)
+           - 4104(利润分配) -> 分配股利 (筹资)
+        4. 汇总到 CF 行项目
+        """
+        ...
+
+    def generate_cash_flow_indirect(
+        self,
+        balance_sheet: Report,
+        income_statement: Report,
+        prior_balance_sheet: Report,
+    ) -> Report:
+        """
+        生成现金流量表 (间接法)
+
+        流程 (逆向 IS-CF-003 规则):
+        经营活动净额 = 净利润
+            + 折旧 + 摊销 + 减值                    (非现金费用)
+            - 投资收益 + 财务费用调整                  (非经营活动损益)
+            ± 递延所得税变动                          (递延税款)
+            - 存货增加 (+减少)                       (经营性资产变动)
+            - 经营性应收增加 (+减少)                   (经营性资产变动)
+            + 经营性应付增加 (-减少)                   (经营性负债变动)
+        """
+        ...
+```
+
+### B.4 现金流量表分类规则
+
+```python
+# core/generator/cash_flow_rules.py
+
+from dataclasses import dataclass
+
+@dataclass
+class CashFlowRule:
+    """现金流分类规则"""
+    counter_account_pattern: str    # 对方科目编码模式
+    activity: str                   # operating / investing / financing
+    cf_item_name: str              # 现金流量表项目名 (如 "销售商品提供劳务收到的现金")
+    direction: str = "inflow"      # inflow(流入) / outflow(流出)
+    notes: str = ""
+
+
+DEFAULT_CF_RULES: list[CashFlowRule] = [
+    # 经营活动 - 流入
+    CashFlowRule("6001*", "operating", "销售商品提供劳务收到的现金", "inflow", "直接确认收入"),
+    CashFlowRule("6051*", "operating", "销售商品提供劳务收到的现金", "inflow", "其他业务收入"),
+    CashFlowRule("1122*", "operating", "销售商品提供劳务收到的现金", "inflow", "收回应收"),
+    CashFlowRule("2203*", "operating", "销售商品提供劳务收到的现金", "inflow", "预收款项"),
+    CashFlowRule("2221*01*", "operating", "收到的税费返还", "inflow", "税费返还"),
+    CashFlowRule("6603*", "operating", "收到其他与经营活动有关的现金", "inflow", "利息收入"),
+    # 经营活动 - 流出
+    CashFlowRule("6401*", "operating", "购买商品接受劳务支付的现金", "outflow", "直接确认成本"),
+    CashFlowRule("2202*", "operating", "购买商品接受劳务支付的现金", "outflow", "支付应付"),
+    CashFlowRule("1123*", "operating", "购买商品接受劳务支付的现金", "outflow", "预付款项"),
+    CashFlowRule("6601*", "operating", "支付给职工以及为职工支付的现金", "outflow", "销售费用-薪酬"),
+    CashFlowRule("6602*", "operating", "支付给职工以及为职工支付的现金", "outflow", "管理费用-薪酬"),
+    CashFlowRule("6604*", "operating", "支付给职工以及为职工支付的现金", "outflow", "研发费用-薪酬"),
+    CashFlowRule("2221*", "operating", "支付的各项税费", "outflow", "税费支出"),
+    CashFlowRule("6601*", "operating", "支付其他与经营活动有关的现金", "outflow", "其他经营流出"),
+    CashFlowRule("6602*", "operating", "支付其他与经营活动有关的现金", "outflow", "其他经营流出"),
+    # 投资活动
+    CashFlowRule("1601*", "investing", "购建固定资产无形资产和其他长期资产支付的现金", "outflow", "购建长期资产"),
+    CashFlowRule("1606*", "investing", "处置固定资产无形资产和其他长期资产收回的现金净额", "inflow", "处置长期资产"),
+    CashFlowRule("1511*", "investing", "投资支付的现金", "outflow", "投资支付"),
+    CashFlowRule("6111*", "investing", "取得投资收益收到的现金", "inflow", "投资收益"),
+    # 筹资活动
+    CashFlowRule("2001*", "financing", "取得借款收到的现金", "inflow", "短期借款"),
+    CashFlowRule("2501*", "financing", "取得借款收到的现金", "inflow", "长期借款"),
+    CashFlowRule("2001*", "financing", "偿还债务支付的现金", "outflow", "偿还短期借款"),
+    CashFlowRule("2501*", "financing", "偿还债务支付的现金", "outflow", "偿还长期借款"),
+    CashFlowRule("6603*", "financing", "分配股利利润或偿付利息支付的现金", "outflow", "利息支出"),
+    CashFlowRule("4104*", "financing", "分配股利利润或偿付利息支付的现金", "outflow", "分配股利"),
+]
+```
+
+### B.5 审计底稿生成
+
+```python
+# core/generator/workpaper_generator.py
+
+class WorkpaperGenerator:
+    """审计底稿生成器"""
+
+    def generate_lead_schedule(
+        self,
+        account_name: str,
+        trial_balance: list[dict],
+        report_item: ReportItem,
+        validation_results: list[ValidationResult],
+    ) -> dict:
+        """
+        生成审定表 (Lead Schedule)
+
+        结构:
+        ┌─────────────────────────────────────┐
+        │ 审定表 - 应收账款                     │
+        ├─────────────────────────────────────┤
+        │ 期初余额:              1,000,000.00   │
+        │ 借方发生额:            3,500,000.00   │
+        │ 贷方发生额:            2,800,000.00   │
+        │ 期末余额:              1,700,000.00   │
+        │ 审定数:                1,700,000.00   │
+        │ 调整数:                      0.00     │
+        │ 审定后余额:            1,700,000.00   │
+        ├─────────────────────────────────────┤
+        │ 勾稽校验:                             │
+        │ ✅ BS-BAL-001 资产=负债+权益 通过      │
+        │ ⚠️ LR-ART-001 应收账款周转率异常       │
+        └─────────────────────────────────────┘
+        """
+        return {
+            "account_name": account_name,
+            "opening_balance": ...,
+            "debit_total": ...,
+            "credit_total": ...,
+            "closing_balance": report_item.amount,
+            "adjustments": [],
+            "audited_amount": report_item.amount,
+            "reconciliation_status": [
+                {"rule_id": r.rule_id, "passed": r.passed, "detail": r.formula}
+                for r in validation_results
+                if account_name in str(r.involved_items)
+            ],
+        }
+```
+
+### B.6 "生成+校验一体化"工作流
+
+```
+用户导入 余额表 + 序时账
+    │
+    ▼
+[1] 余额表 -> BS 生成 (科目映射汇总)
+[2] 余额表 -> IS 生成 (科目映射汇总)
+[3] 序时账 -> CF 生成 (现金流分类)
+    │
+    ▼
+[4] 44 条勾稽规则校验生成的三表
+    │
+    ├─ 全部通过 -> 报表可信, 输出审计底稿
+    ├─ 有 ERROR -> 报表有误, 定位差异, 提示检查源数据
+    └─ 有 WARNING -> 可能有误, 输出底稿+标注异常项
+    │
+    ▼
+[5] 输出: 三大报表 + 审计底稿 + 勾稽校验报告 (一份 Excel)
+```
+
+### B.7 数据模型补充
+
+```python
+# core/models/trial_balance.py
+
+@dataclass
+class TrialBalanceEntry:
+    """余额表条目"""
+    account_code: str           # 科目编码
+    account_name: str           # 科目名称
+    level: int = 1              # 层级
+    opening_balance: float = 0  # 期初余额 (借方为正)
+    debit_total: float = 0      # 本期借方发生额
+    credit_total: float = 0     # 本期贷方发生额
+    ending_balance: float = 0   # 期末余额 (借方为正)
+    direction: str = "debit"   # 余额方向
+
+
+@dataclass
+class JournalEntry:
+    """序时账条目"""
+    entry_date: str             # 日期
+    voucher_number: str         # 凭证号
+    account_code: str           # 科目编码
+    account_name: str           # 科目名称
+    summary: str = ""           # 摘要
+    debit: float = 0            # 借方金额
+    credit: float = 0           # 贷方金额
+    counterpart_code: str = ""  # 对方科目 (如有)
+```
+
+### B.8 阶段规划
+
+| 阶段 | 功能 | 复杂度 |
+|---|---|---|
+| **V1.5** | BS + IS 从余额表生成 | 低 (科目映射汇总) |
+| **V1.5** | CF 直接法从序时账生成 | 中 (现金流分类规则) |
+| **V2.0** | CF 间接法 (净利润+调整项) | 中 (IS-CF-003 逆向) |
+| **V2.0** | 审计底稿 (审定表+计算表) | 中 (扩展导出模块) |
+| **V2.0** | 科目映射 UI (可视化配置) | 中 |
+
+---
+
 *文档结束。后续更新记录于 DEV_LOG.md。*
