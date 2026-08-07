@@ -27,6 +27,7 @@ class ValidationResult:
         tolerance: 使用的容差
         formula: 公式原文（用于显示）
         message: 面向财务用户的中文消息
+        errored: 是否因异常而未能完成校验（缺失科目、公式错误等）
     """
 
     rule_id: str
@@ -39,6 +40,68 @@ class ValidationResult:
     tolerance: float
     formula: str
     message: str
+    errored: bool = False
+
+    @classmethod
+    def from_error(
+        cls, rule: ReconciliationRule, error_message: str
+    ) -> ValidationResult:
+        """从异常创建校验结果（规则未能完成执行）。"""
+        return cls(
+            rule_id=rule.rule_id,
+            rule_name=rule.name,
+            passed=False,
+            severity=rule.severity,
+            left_value=0.0,
+            right_value=0.0,
+            diff=0.0,
+            tolerance=rule.tolerance,
+            formula=rule.formula,
+            message=f"{rule.name}: 无法执行校验 — {error_message}",
+            errored=True,
+        )
+
+
+@dataclass
+class ValidationSummary:
+    """一次校验运行的汇总结果。
+
+    Attributes:
+        period: 报告期间
+        total: 实际执行的规则数
+        passed: 通过数
+        failed: 不通过数（差额超容差）
+        errored: 异常数（缺失科目、公式错误等）
+        skipped: 跳过数（所需报表未导入）
+        results: 所有校验结果明细
+        report_types: 本次校验涉及的报表类型
+    """
+
+    period: str = ""
+    total: int = 0
+    passed: int = 0
+    failed: int = 0
+    errored: int = 0
+    skipped: int = 0
+    results: list[ValidationResult] = field(default_factory=list)
+    report_types: list[ReportType] = field(default_factory=list)
+
+    @property
+    def all_passed(self) -> bool:
+        """是否全部通过（无不通过、无异常）。"""
+        return self.failed == 0 and self.errored == 0
+
+    @property
+    def success_rate(self) -> float:
+        """通过率（异常不计入分母）。无规则执行时返回 1.0。"""
+        if self.total == 0:
+            return 1.0
+        return self.passed / self.total
+
+    @property
+    def failed_results(self) -> list[ValidationResult]:
+        """仅不通过的结果（含异常）。"""
+        return [r for r in self.results if not r.passed]
 
 
 @dataclass
