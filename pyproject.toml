@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fsa"
+version = "0.1.0"
+description = "财务报表勾稽关系自动校验桌面软件"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    # GUI (MVP)
+    "PySide6>=6.7,<7",
+    "PySide6-Fluent-Widgets>=1.0",
+
+    # 数据处理
+    "pandas>=2.2,<3",
+    "openpyxl>=3.1,<4",
+
+    # 规则引擎
+    "simpleeval>=1.0",
+
+    # 存储
+    # sqlite3 (标准库)
+
+    # 工具
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.coverage.run]
+source = ["src/fsa"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
