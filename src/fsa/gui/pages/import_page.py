@@ -11,19 +11,18 @@ from __future__ import annotations
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton, PushButton
+from qfluentwidgets import InfoBar, InfoBarPosition
 
 from fsa.core.importer.importer import ImportService
 from fsa.gui.app_state import AppState
-from fsa.gui.theme import get_mono_font
 from fsa.gui.widgets.drop_zone import DropZone
 from fsa.gui.widgets.result_card import ResultCard
 from fsa.gui.widgets.summary_card import SummaryCard
@@ -40,6 +39,7 @@ class ImportPage(QWidget):
         self.setObjectName("ImportPage")
         self._state = state
         self._importer = ImportService()
+        self._current_filter = "all"
         self._setup_ui()
         self._connect_signals()
 
@@ -93,6 +93,31 @@ class ImportPage(QWidget):
             cards_row.addWidget(card)
         summary_layout.addLayout(cards_row)
         layout.addWidget(self._summary_section)
+
+        # 筛选标签栏
+        self._filter_section = QFrame()
+        self._filter_section.setVisible(False)
+        filter_layout = QHBoxLayout(self._filter_section)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+        filter_layout.setSpacing(8)
+
+        self._filter_buttons: dict[str, QPushButton] = {}
+        for key, label in [
+            ("all", "全部"),
+            ("fail", "不通过"),
+            ("error", "异常"),
+            ("pass", "通过"),
+        ]:
+            btn = QPushButton(f"{label} (0)")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(30)
+            btn.clicked.connect(lambda checked, k=key: self._on_filter(k))
+            self._filter_buttons[key] = btn
+            filter_layout.addWidget(btn)
+
+        filter_layout.addStretch()
+        layout.addWidget(self._filter_section)
 
         # 校验明细
         self._detail_section = QFrame()
@@ -193,6 +218,7 @@ class ImportPage(QWidget):
             return
 
         self._summary_section.setVisible(True)
+        self._filter_section.setVisible(True)
         self._detail_section.setVisible(True)
 
         self._card_pass.set_data("通过", summary.passed, "校验通过")
@@ -200,9 +226,67 @@ class ImportPage(QWidget):
         self._card_error.set_data("异常", summary.errored, "无法执行")
         self._card_total.set_data("总数", summary.total, f"成功率 {summary.success_rate:.0%}")
 
+        # 更新筛选标签计数
+        counts = {
+            "all": summary.total,
+            "fail": summary.failed,
+            "error": summary.errored,
+            "pass": summary.passed,
+        }
+        labels = {"all": "全部", "fail": "不通过", "error": "异常", "pass": "通过"}
+        for key, btn in self._filter_buttons.items():
+            btn.setText(f"{labels[key]} ({counts[key]})")
+
+        # 默认选中"全部"
+        if self._current_filter not in counts:
+            self._current_filter = "all"
+        self._update_filter_styles()
+        self._render_cards()
+
+    def _on_filter(self, key: str) -> None:
+        """切换筛选标签。"""
+        self._current_filter = key
+        self._update_filter_styles()
+        self._render_cards()
+
+    def _update_filter_styles(self) -> None:
+        """更新筛选按钮的选中/未选中样式。"""
+        active_qss = (
+            "QPushButton { background-color: #4f46e5; color: white; "
+            "border: none; border-radius: 6px; "
+            "padding: 4px 14px; font-size: 12px; font-weight: 500; }"
+        )
+        inactive_qss = (
+            "QPushButton { background-color: #ffffff; color: #6b7280; "
+            "border: 1px solid #e5e7eb; border-radius: 6px; "
+            "padding: 4px 14px; font-size: 12px; }"
+            "QPushButton:hover { background-color: #f3f4f6; }"
+        )
+        for key, btn in self._filter_buttons.items():
+            btn.setChecked(key == self._current_filter)
+            btn.setStyleSheet(active_qss if key == self._current_filter else inactive_qss)
+
+    def _render_cards(self) -> None:
+        """根据当前筛选条件渲染结果卡片。"""
+        summary = self._state.results
+        if summary is None:
+            return
+
         self._clear_cards()
         for result in summary.results:
-            self._cards_layout.addWidget(ResultCard(result))
+            if self._current_filter == "all":
+                show = True
+            elif self._current_filter == "pass":
+                show = result.passed and not result.errored
+            elif self._current_filter == "fail":
+                show = not result.passed and not result.errored
+            elif self._current_filter == "error":
+                show = result.errored
+            else:
+                show = True
+
+            if show:
+                self._cards_layout.addWidget(ResultCard(result))
 
     def _clear_cards(self) -> None:
         while self._cards_layout.count():
