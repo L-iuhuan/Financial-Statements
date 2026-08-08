@@ -1,0 +1,87 @@
+"""顶栏: 页面标题 + 副标题 + 操作按钮组。
+
+匹配 Demo v4 设计: 半透明毛玻璃背景, 右侧操作按钮。
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QWidget,
+)
+
+
+class Topbar(QFrame):
+    """顶栏组件: 标题 + 副标题 + 操作按钮。"""
+
+    theme_clicked = Signal()
+    reset_clicked = Signal()
+    validate_clicked = Signal()
+    export_clicked = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Topbar")
+        self.setFixedHeight(48)
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(24, 0, 24, 0)
+        layout.setSpacing(16)
+
+        self._title = QLabel("数据导入与校验")
+        self._title.setObjectName("TopbarTitle")
+        layout.addWidget(self._title)
+
+        self._subtitle = QLabel("准备导入报表")
+        self._subtitle.setObjectName("TopbarSubtitle")
+        layout.addWidget(self._subtitle)
+
+        layout.addStretch()
+
+        # 操作按钮
+        self._theme_btn = QPushButton("🌙")
+        self._theme_btn.setObjectName("BtnIcon")
+        self._theme_btn.setFixedSize(36, 36)
+        self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._theme_btn.setToolTip("切换深色/浅色 (Ctrl+D)")
+        self._theme_btn.clicked.connect(self.theme_clicked.emit)
+        layout.addWidget(self._theme_btn)
+
+        self._reset_btn = QPushButton("↻ 重置")
+        self._reset_btn.setObjectName("BtnSecondary")
+        self._reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._reset_btn.clicked.connect(self.reset_clicked.emit)
+        layout.addWidget(self._reset_btn)
+
+        self._validate_btn = QPushButton("▶ 执行校验")
+        self._validate_btn.setObjectName("BtnPrimary")
+        self._validate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._validate_btn.setEnabled(False)
+        self._validate_btn.clicked.connect(self.validate_clicked.emit)
+        layout.addWidget(self._validate_btn)
+
+        self._export_btn = QPushButton("↓ 导出底稿")
+        self._export_btn.setObjectName("BtnSecondary")
+        self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._export_btn.setEnabled(False)
+        self._export_btn.clicked.connect(self.export_clicked.emit)
+        layout.addWidget(self._export_btn)
+
+    def set_title(self, title: str, subtitle: str = "") -> None:
+        self._title.setText(title)
+        self._subtitle.setText(subtitle)
+
+    def set_validate_enabled(self, enabled: bool) -> None:
+        self._validate_btn.setEnabled(enabled)
+
+    def set_export_enabled(self, enabled: bool) -> None:
+        self._export_btn.setEnabled(enabled)
+
+    def set_theme_icon(self, dark: bool) -> None:
+        self._theme_btn.setText("☀" if dark else "🌙")

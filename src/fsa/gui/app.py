@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication
 
 from fsa.gui.app_state import AppState
 from fsa.gui.main_window import MainWindow
-from fsa.gui.theme import apply_theme
+from fsa.gui.theme import apply_theme, get_qss
 
 
 def main() -> None:
@@ -29,6 +29,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setFont(QFont("Microsoft YaHei UI", 10))
     apply_theme()
+    app.setStyleSheet(get_qss(False))
 
     state = AppState()
     ok, msg = state.load_registry()
