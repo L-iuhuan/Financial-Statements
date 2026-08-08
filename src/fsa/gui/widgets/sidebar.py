@@ -131,3 +131,4 @@ class Sidebar(QFrame):
     def set_active_nav(self, nav_id: str) -> None:
         for nid, btn in self._nav_buttons.items():
             btn.set_active(nid == nav_id)
+        self.nav_changed.emit(nav_id)

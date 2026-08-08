@@ -12,10 +12,9 @@ from __future__ import annotations
 
 from loguru import logger
 from PySide6.QtCore import Qt, QEvent
-from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QMainWindow,
     QStackedWidget,
@@ -25,6 +24,8 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import InfoBar, InfoBarPosition
 
 from fsa.gui.app_state import AppState
+from fsa.gui.pages.audit_page import AuditPage
+from fsa.gui.pages.history_page import HistoryPage
 from fsa.gui.pages.import_page import ImportPage
 from fsa.gui.pages.rule_page import RulePage
 from fsa.gui.pages.settings_page import SettingsPage
@@ -93,12 +94,10 @@ class MainWindow(QMainWindow):
         # 内容区 (QStackedWidget)
         self._stack = QStackedWidget()
         self._import_page = ImportPage(self._state)
+        self._audit_page = AuditPage(self._state)
         self._rule_page = RulePage(self._state)
+        self._history_page = HistoryPage(self._state)
         self._settings_page = SettingsPage(self._state)
-
-        # 审计底稿和历史记录页面占位
-        self._audit_page = self._create_placeholder("审计底稿", "校验结果审计底稿 - 待实现")
-        self._history_page = self._create_placeholder("历史记录", "校验历史记录 - 待实现")
 
         self._stack.addWidget(self._import_page)
         self._stack.addWidget(self._audit_page)
@@ -124,22 +123,6 @@ class MainWindow(QMainWindow):
         self._overlay.setStyleSheet("background-color: rgba(0,0,0,0.2);")
         self._overlay.hide()
         self._overlay.installEventFilter(self)
-
-    def _create_placeholder(self, title: str, desc: str) -> QWidget:
-        """创建占位页面。"""
-        from PySide6.QtWidgets import QLabel
-
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 24, 24, 24)
-
-        label = QLabel(f"{title}\n{desc}")
-        label.setStyleSheet("font-size: 16px; color: #9ca3af;")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
-        layout.addStretch()
-
-        return page
 
     def _connect_signals(self) -> None:
         # 侧边栏导航
