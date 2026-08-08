@@ -527,3 +527,177 @@
 | Fluent Design 2 | Mica 材质、Acrylic 半透明、窗口圆角 |
 | Capital One FS | 变量化设计令牌、2px 描边图标 |
 | shadcn/ui | 组件 API 设计、Tailwind 变量映射 |
+
+---
+
+## 14. 设计修正：去除"AI 味" (v2.1 修订)
+
+> 用户反馈：校验概览和明细卡片设计过于"AI 味"，与财务软件的专业风格不符。
+> 本节定义修正方案，替换原有设计中过于花哨的元素。
+
+### 14.1 设计问题诊断
+
+| 问题 | 原设计 | 修正方向 |
+|------|--------|----------|
+| 汇总卡片大数字 | 28px 700 字重 + 语义色文字，过于醒目 | 降至 22px 600 字重，用深色文字 + 小色标 |
+| 渐变浮动按钮 | `linear-gradient(135deg, brand-600, brand-500)` | 纯色 `brand-600`，无渐变 |
+| "Sparkles" 图标 | ✨ 闪烁星星，消费应用风格 | 改用 `message-circle` 对话气泡，专业风格 |
+| 卡片彩色背景 | 通过/失败/异常用大面积彩色背景 | 改用白色/深色背景 + 左侧 3px 色条，克制 |
+| 规则徽章彩色填充 | 通过=绿底白字、失败=红底白字 | 改用浅色底 + 深色文字（如 `bg-success/10 text-success`） |
+| 整体视觉过载 | 大量圆角 + 阴影 + 彩色 + 渐变叠加 | 减少层次：卡片去阴影（仅 hover 有），色条更细 |
+
+### 14.2 修正后的汇总卡片
+
+```
+┌──────────────────────────────┐
+│  ● 通过                       │  ← 12px 标签, 左侧 8px 圆点指示色
+│                              │
+│  42                          │  ← 22px 600 字重, 深色文字 (不用语义色)
+│  规则                        │  ← 11px 辅助文本
+└──────────────────────────────┘
+背景: var(--bg-surface)
+边框: 1px solid var(--border) (无阴影, hover 才有 shadow-xs)
+圆角: var(--radius-lg) = 8px
+左上角色点: 8px 圆, var(--success/error/warning/info)
+```
+
+> **关键变化**: 数字不再用彩色。用左侧小色点指示类别，数字保持深色。
+> 这样卡片看起来像财务报表的摘要行，而非仪表盘 widget。
+
+### 14.3 修正后的规则明细卡片
+
+```
+┌─│──────────────────────────────────────────────┐
+│  [BS-BAL-001]  资产 = 负债 + 所有者权益  ✓ 通过 │
+│  ────────────────────────────────────────────  │
+│  左侧值    128,560,000.00 元                   │
+│  右侧值    128,560,000.00 元                   │
+│  差额              0.00 元 (容差 0.01)          │
+│  公式: asset_total == liability_total + ...   │
+│                                    [AI 诊断]   │
+└───────────────────────────────────────────────┘
+左侧 3px 色条 (不是 4px): var(--success/error/warning)
+背景: var(--bg-surface) (不是彩色背景)
+边框: 1px solid var(--border)
+圆角: var(--radius-lg)
+hover: 边框变 var(--border-strong), shadow-xs
+展开后: 底部显示追溯表 (trace table)
+```
+
+> **关键变化**: 
+> - 背景不用彩色（原来的 `--success-bg` 等），改为纯白/深色背景
+> - 左边框从 4px 减到 3px，更细更克制
+> - 状态标识用图标 + 文字（如 `✓ 通过`），不用彩色徽章
+> - 规则 ID 用浅色底 + 深色文字，不用彩色底 + 白色文字
+
+### 14.4 修正后的浮动按钮
+
+```css
+/* 旧: 渐变 + 缩放动画 */
+.agent-fab {
+    background: linear-gradient(135deg, var(--brand-600), var(--brand-500));
+    /* hover: transform: scale(1.05) */
+}
+
+/* 新: 纯色 + 阴影变化 */
+.agent-fab {
+    background: var(--brand-600);
+    /* hover: box-shadow: var(--shadow-md) -> var(--shadow-lg), 无 scale */
+}
+```
+
+图标从 `sparkles` (✨) 改为 `message-circle` (💬)，或直接用文字 "AI"。
+
+---
+
+## 15. AI 助手抽屉规范 (新增)
+
+> 用户需求：抽屉可左右拖动缩放、点击外部收起再点击打开、问答内容持久化、跨页面保持、内网同步。
+
+### 15.1 布局与交互
+
+```
+┌────────────────────────────┬──┬──────────────────────┐
+│                            │  │  AI 诊断助手          │
+│  主内容区                   │拖│  ─────────────────    │
+│  (点击此处 → 抽屉收起)      │拽│  [当前上下文: BS-001]  │
+│                            │手│  ─────────────────    │
+│                            │  │  用户: 差额为什么...   │
+│                            │栏│  AI: 根据公式...      │
+│                            │  │                       │
+│                            │  │  ─────────────────    │
+│                            │  │  [输入框]      [发送]  │
+└────────────────────────────┴──┴──────────────────────┘
+                              ↑
+                     可拖拽调整宽度
+                     min 280px, max 600px, default 380px
+```
+
+### 15.2 交互行为
+
+| 行为 | 触发方式 | 效果 |
+|------|----------|------|
+| 打开抽屉 | 点击浮动按钮 | 抽屉从右侧滑入，遮罩层半透明覆盖主内容区 |
+| 收起抽屉 | 点击遮罩层 / 按 ESC / 点击关闭按钮 | 抽屉滑出，主内容区恢复交互 |
+| 调整宽度 | 拖拽左侧边缘手柄 | 实时调整宽度，最小 280px，最大 600px |
+| 跨页面保持 | 切换页面 | 抽屉状态保持（打开/收起），对话内容不丢失 |
+| 每卡片诊断 | 点击规则卡片"AI 诊断"按钮 | 打开抽屉 + 设置当前上下文为该规则 + 自动发送诊断请求 |
+
+### 15.3 数据持久化
+
+**SQLite 表结构**:
+
+```sql
+CREATE TABLE ai_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,          -- 会话 ID (UUID)
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content TEXT NOT NULL,             -- 消息内容
+    context_rule_id TEXT,             -- 关联的规则 ID (可空)
+    context_report_type TEXT,         -- 关联的报表类型 (可空)
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (context_rule_id) REFERENCES rules(rule_id)
+);
+
+CREATE INDEX idx_ai_session ON ai_conversations(session_id);
+CREATE INDEX idx_ai_created ON ai_conversations(created_at);
+```
+
+**会话管理**:
+- 每次应用启动创建新会话 (UUID)
+- 用户可在抽屉中切换历史会话
+- 会话列表持久化，跨应用重启保持
+
+### 15.4 内网同步
+
+**同步机制**:
+- 应用设置中配置"内网共享路径"（如 `\\server\fsa-updates\`）
+- 用户可选择"导出对话" -> 导出为 JSON 文件到共享路径
+- 导出格式: `{ session_id, created_at, messages: [...], context: {...} }`
+- 其他用户可"导入对话" -> 从共享路径加载 JSON
+- 用途：财务团队共享诊断经验，针对常见问题做指导参考
+
+### 15.5 抽屉组件结构 (PySide6)
+
+```
+AgentDrawer (QFrame, 浮动在主窗口右侧)
+├── resize_handle (QFrame, 4px 宽, cursor: SizeHorCursor)
+├── header (QFrame, 48px 高)
+│   ├── title_label ("AI 诊断助手")
+│   ├── session_selector (ComboBox, 切换历史会话)
+│   └── close_button (IconButton)
+├── context_bar (QFrame, 可选, 显示当前规则上下文)
+├── messages_scroll (QScrollArea)
+│   └── messages_layout (VBoxLayout)
+│       └── MessageBubble (自定义 Widget, 区分 user/assistant)
+├── suggestions_bar (QFrame, 快捷问题)
+└── input_area (QFrame)
+    ├── text_input (PlainTextEdit, 自适应高度)
+    └── send_button (IconButton)
+```
+
+---
+
+*设计语言文档版本: v2.1*
+*最后更新: 2026-08-08*
+*修订原因: 用户反馈去除"AI味" + 新增 AI 抽屉规范*
