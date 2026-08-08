@@ -18,7 +18,7 @@ class DropZone(QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setAcceptDrops(True)
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(140)
         self.setObjectName("DropZone")
         self._setup_ui()
 
@@ -26,10 +26,15 @@ class DropZone(QFrame):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        hint = QLabel("拖拽 Excel 文件到此处")
+        hint = QLabel("将财务报表 Excel 文件拖拽到此处")
+        hint.setObjectName("DropZoneText")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet("color: #64748b; font-size: 14px;")
         layout.addWidget(hint)
+
+        sub_hint = QLabel("支持 .xlsx / .xls 格式 · 资产负债表、利润表、现金流量表")
+        sub_hint.setObjectName("DropZoneHint")
+        sub_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(sub_hint)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
