@@ -1,4 +1,4 @@
-"""AI 助手抽屉: 可拖拽缩放 + 遮罩点击收起 + 会话管理。
+"""AI 助手抽屉: 可拖拽缩放 + 遮罩点击收起 + 会话持久化。
 
 匹配 Demo v4 设计:
 - 左侧 4px 拖拽手柄 (min 280px, max 600px, default 380px)
@@ -6,10 +6,14 @@
 - 会话选择器
 - 上下文栏
 - 导出/导入按钮
+- 消息持久化到 SQLite (通过 ChatRepo)
 """
 
 from __future__ import annotations
 
+import sqlite3
+
+from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
@@ -21,6 +25,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from fsa.storage.chat_repo import ChatRepo
 
 
 class AgentDrawer(QFrame):
@@ -34,11 +40,17 @@ class AgentDrawer(QFrame):
     MAX_WIDTH = 600
     DEFAULT_WIDTH = 380
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        chat_repo: ChatRepo | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("AgentDrawer")
         self.setFixedWidth(self.DEFAULT_WIDTH)
         self._dragging = False
+        self._chat_repo = chat_repo
+        self._session_id: int | None = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -227,6 +239,7 @@ class AgentDrawer(QFrame):
         if not text:
             return
         self._add_message("user", text)
+        self._persist_message("user", text)
         self._input.clear()
         self.send_requested.emit(text)
 
@@ -265,3 +278,33 @@ class AgentDrawer(QFrame):
 
     def add_assistant_message(self, text: str) -> None:
         self._add_message("assistant", text)
+        self._persist_message("assistant", text)
+
+    def _ensure_session(self) -> None:
+        """确保已创建对话会话 (首次发消息时创建)。"""
+        if self._session_id is not None:
+            return
+        if self._chat_repo is None:
+            return
+        try:
+            self._session_id = self._chat_repo.create_session()
+        except sqlite3.DatabaseError:
+            logger.exception("创建对话会话失败")
+        except RuntimeError:
+            logger.exception("创建对话会话失败")
+
+    def _persist_message(self, role: str, content: str) -> None:
+        """将消息持久化到 SQLite (如果可用)。"""
+        self._ensure_session()
+        if self._session_id is None or self._chat_repo is None:
+            return
+        try:
+            self._chat_repo.add_message(
+                self._session_id, role, content
+            )
+        except sqlite3.DatabaseError:
+            logger.exception("保存对话消息失败")
+        except RuntimeError:
+            logger.exception("保存对话消息失败")
+        except ValueError as e:
+            logger.error(f"保存对话消息失败: {e}")

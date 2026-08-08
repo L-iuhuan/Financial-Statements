@@ -1,12 +1,15 @@
 """历史记录页面: 展示历次校验记录。
 
 匹配 Demo v4 设计: 历史卡片列表 + 空状态。
-当前 MVP 阶段无 SQLite 持久化，显示空状态。
+从 SQLite 加载校验历史, 通过 history_changed 信号自动刷新。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+import sqlite3
+
+from loguru import logger
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,8 +26,11 @@ from fsa.gui.app_state import AppState
 class HistoryCard(QFrame):
     """单条历史记录卡片。"""
 
+    view_clicked = Signal(int)
+
     def __init__(
         self,
+        history_id: int,
         date: str,
         period: str,
         total: int,
@@ -33,6 +39,7 @@ class HistoryCard(QFrame):
         errored: int,
     ) -> None:
         super().__init__()
+        self._history_id = history_id
         self.setStyleSheet(
             "QFrame { background-color: #ffffff; border: 1px solid #e5e7eb; "
             "border-radius: 8px; }"
@@ -94,17 +101,26 @@ class HistoryCard(QFrame):
             "border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; }"
             "QPushButton:hover { background-color: #f3f4f6; }"
         )
+        view_btn.clicked.connect(self._on_view_clicked)
         layout.addWidget(view_btn)
+
+    def _on_view_clicked(self) -> None:
+        self.view_clicked.emit(self._history_id)
 
 
 class HistoryPage(QWidget):
-    """历史记录页面。"""
+    """历史记录页面: 从 SQLite 加载校验历史并展示。"""
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self.setObjectName("HistoryPage")
         self._state = state
+        self._cards: list[HistoryCard] = []
         self._setup_ui()
+        self._connect_signals()
+
+    def _connect_signals(self) -> None:
+        self._state.history_changed.connect(self._load_history)
 
     def _setup_ui(self) -> None:
         scroll = QScrollArea()
@@ -151,7 +167,14 @@ class HistoryPage(QWidget):
         empty_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(empty_desc)
 
+        # 卡片容器
+        self._cards_container = QWidget()
+        self._cards_layout = QVBoxLayout(self._cards_container)
+        self._cards_layout.setSpacing(8)
+        self._cards_layout.setContentsMargins(0, 0, 0, 0)
+
         layout.addWidget(self._empty_container)
+        layout.addWidget(self._cards_container)
         layout.addStretch()
 
         scroll.setWidget(content)
@@ -159,3 +182,53 @@ class HistoryPage(QWidget):
         main = QVBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
         main.addWidget(scroll)
+
+        self._load_history()
+
+    def _load_history(self) -> None:
+        """从 SQLite 加载校验历史, 刷新卡片列表。"""
+        repo = self._state.history_repo
+        if repo is None:
+            self._show_empty()
+            return
+
+        try:
+            records = repo.get_recent(limit=50)
+        except sqlite3.DatabaseError:
+            logger.exception("加载校验历史失败")
+            self._show_empty()
+            return
+        except RuntimeError:
+            logger.exception("数据库未连接, 无法加载历史")
+            self._show_empty()
+            return
+
+        # 清空旧卡片
+        for card in self._cards:
+            card.deleteLater()
+        self._cards.clear()
+
+        if not records:
+            self._show_empty()
+            return
+
+        # 创建新卡片
+        self._empty_container.hide()
+        self._cards_container.show()
+        for record in records:
+            card = HistoryCard(
+                history_id=record["id"],
+                date=record["created_at"],
+                period=record["period"] or "未设置",
+                total=record["total"],
+                passed=record["passed"],
+                failed=record["failed"],
+                errored=record["errored"],
+            )
+            self._cards_layout.addWidget(card)
+            self._cards.append(card)
+
+    def _show_empty(self) -> None:
+        """显示空状态。"""
+        self._empty_container.show()
+        self._cards_container.hide()

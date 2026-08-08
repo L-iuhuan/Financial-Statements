@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
         self._agent_fab.raise_()
 
         # AI 抽屉 (默认隐藏)
-        self._agent_drawer = AgentDrawer(self)
+        self._agent_drawer = AgentDrawer(self._state.chat_repo, self)
         self._agent_drawer.hide()
 
         # 遮罩层 (点击收起抽屉)
@@ -279,3 +279,8 @@ class MainWindow(QMainWindow):
                 self._close_drawer()
                 return True
         return super().eventFilter(obj, event)
+
+    def closeEvent(self, event) -> None:
+        """窗口关闭时释放数据库连接。"""
+        self._state.close()
+        super().closeEvent(event)
