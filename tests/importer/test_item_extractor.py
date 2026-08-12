@@ -316,3 +316,406 @@ class TestRowTraceability:
         )
         items = extract_items(raw, ReportType.BALANCE_SHEET)
         assert items[0].column == "期末余额"
+
+
+class TestRowSkipping:
+    """测试非数据行的跳过逻辑。"""
+
+    def test_category_row_with_full_colon_skipped(self) -> None:
+        """以全角冒号：结尾的分类行被跳过。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[
+                {"_row": 2, "项目": "流动资产：", "期末余额": None},
+                {"_row": 3, "项目": "货币资金", "期末余额": 1000000.0},
+                {"_row": 4, "项目": "流动资产合计", "期末余额": 1000000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        keys = {item.key for item in items}
+        assert "monetary_funds" in keys
+        assert "current_assets" in keys
+        assert len(items) == 2
+
+    def test_category_row_with_half_colon_skipped(self) -> None:
+        """以半角冒号:结尾的分类行被跳过。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[
+                {"_row": 2, "项目": "流动资产:", "期末余额": None},
+                {"_row": 3, "项目": "资产总计", "期末余额": 2000000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].key == "asset_total"
+
+    def test_note_row_skipped(self) -> None:
+        """以"注"开头的备注行被跳过。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0},
+                {"_row": 3, "项目": "注: 以上数据未经审计", "期末余额": None},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].key == "asset_total"
+
+    def test_empty_name_row_skipped(self) -> None:
+        """空名称行被跳过。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0},
+                {"_row": 3, "项目": "", "期末余额": 999.0},
+                {"_row": 4, "项目": "负债合计", "期末余额": 1000000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 2
+
+    def test_prefixed_section_header_skipped(self) -> None:
+        """带数字前缀的分类行(如 一、经营活动...)被跳过。"""
+        raw = RawSheetData(
+            name="现金流量表",
+            headers=["项目", "本期金额"],
+            rows=[
+                {"_row": 2, "项目": "一、经营活动产生的现金流量：", "本期金额": None},
+                {"_row": 3, "项目": "销售商品、提供劳务收到的现金", "本期金额": 500000.0},
+                {"_row": 4, "项目": "二、投资活动产生的现金流量：", "本期金额": None},
+                {"_row": 5, "项目": "投资活动产生的现金流量净额", "本期金额": -200000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
+        keys = {item.key for item in items}
+        assert "cash_received_from_sales" in keys
+        assert "investing_net" in keys
+        assert len(items) == 2
+
+
+class TestSupplementarySection:
+    """测试现金流量表补充资料区域的提取（不再跳过，改为 cf_notes_ 前缀）。"""
+
+    def test_supplementary_items_extracted_with_cf_notes_prefix(self) -> None:
+        """补充资料中的项目提取为 cf_notes_ 前缀的 key。"""
+        raw = RawSheetData(
+            name="现金流量表",
+            headers=["项目", "本期金额"],
+            rows=[
+                {"_row": 2, "项目": "经营活动产生的现金流量净额", "本期金额": 500000.0},
+                {"_row": 3, "项目": "期末现金及现金等价物余额", "本期金额": 2000000.0},
+                {"_row": 4, "项目": "补充资料：", "本期金额": None},
+                {"_row": 5, "项目": "净利润", "本期金额": 705000.0},
+                {"_row": 6, "项目": "固定资产折旧", "本期金额": 200000.0},
+                {"_row": 7, "项目": "经营活动产生的现金流量净额", "本期金额": 830000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
+        keys = {item.key for item in items}
+        # 主表项目保留原始 key
+        assert "operating_net" in keys
+        assert "ending_cash_equiv" in keys
+        # 补充资料中的项目使用 cf_notes_ 前缀
+        assert "cf_notes_net_profit" in keys
+        assert "cf_notes_depreciation" in keys
+        assert "cf_notes_operating_net" in keys
+        # 主表 operating_net 取第一个出现的值
+        operating_items = [i for i in items if i.key == "operating_net"]
+        assert len(operating_items) == 1
+        assert operating_items[0].amount == 500000.0
+
+    def test_unknown_supplementary_item_skipped(self) -> None:
+        """不在补充资料映射表中的项目在补充资料区被跳过。"""
+        raw = RawSheetData(
+            name="现金流量表",
+            headers=["项目", "本期金额"],
+            rows=[
+                {"_row": 2, "项目": "补充资料：", "本期金额": None},
+                {"_row": 3, "项目": "某个不在映射表中的科目", "本期金额": 999.0},
+                {"_row": 4, "项目": "净利润", "本期金额": 705000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
+        keys = {item.key for item in items}
+        assert "cf_notes_net_profit" in keys
+        # 不在映射表中的被跳过
+        assert len(items) == 1
+
+    def test_no_supplementary_section_normal_extraction(self) -> None:
+        """无补充资料时正常提取所有项目。"""
+        raw = RawSheetData(
+            name="现金流量表",
+            headers=["项目", "本期金额"],
+            rows=[
+                {"_row": 2, "项目": "经营活动产生的现金流量净额", "本期金额": 500000.0},
+                {"_row": 3, "项目": "投资活动产生的现金流量净额", "本期金额": -200000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
+        assert len(items) == 2
+
+    def test_supplementary_category_row_skipped(self) -> None:
+        """补充资料中的分类行（以:或无映射）被跳过。"""
+        raw = RawSheetData(
+            name="现金流量表",
+            headers=["项目", "本期金额"],
+            rows=[
+                {"_row": 2, "项目": "补充资料：", "本期金额": None},
+                {"_row": 3, "项目": "1.将净利润调节为经营活动现金流量：", "本期金额": None},
+                {"_row": 4, "项目": "净利润", "本期金额": 705000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
+        keys = {item.key for item in items}
+        assert "cf_notes_net_profit" in keys
+        assert len(items) == 1
+
+
+class TestPrefixStrippedExtraction:
+    """测试带前缀的科目名被正确提取。"""
+
+    def test_is_items_with_chinese_num_prefix_extracted(self) -> None:
+        """利润表中带 一、二、等前缀的科目名被正确提取。"""
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额"],
+            rows=[
+                {"_row": 2, "项目": "一、营业收入", "本期金额": 5000000.0},
+                {"_row": 3, "项目": "减：营业成本", "本期金额": 3000000.0},
+                {"_row": 4, "项目": "二、营业利润", "本期金额": 920000.0},
+                {"_row": 5, "项目": "三、利润总额", "本期金额": 940000.0},
+                {"_row": 6, "项目": "四、净利润", "本期金额": 705000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        key_to_amount = {item.key: item.amount for item in items}
+        assert key_to_amount["revenue"] == 5000000.0
+        assert key_to_amount["operating_cost"] == 3000000.0
+        assert key_to_amount["operating_profit"] == 920000.0
+        assert key_to_amount["total_profit"] == 940000.0
+        assert key_to_amount["net_profit"] == 705000.0
+
+    def test_bs_items_with_alias_extracted(self) -> None:
+        """资产负债表中别名科目名被正确提取。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[
+                {"_row": 2, "项目": "  现金及银行存款", "期末余额": 2000000.0},
+                {"_row": 3, "项目": "  应收账款净额", "期末余额": 800000.0},
+                {"_row": 4, "项目": "  预付账款", "期末余额": 200000.0},
+                {"_row": 5, "项目": "  股本", "期末余额": 3000000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        key_to_amount = {item.key: item.amount for item in items}
+        assert key_to_amount["monetary_funds"] == 2000000.0
+        assert key_to_amount["accounts_receivable"] == 800000.0
+        assert key_to_amount["prepayments"] == 200000.0
+        assert key_to_amount["paid_in_capital"] == 3000000.0
+
+
+class TestColumnNameVariants:
+    """测试不同金额列名变体。"""
+
+    def test_bs_期末数_column_found(self) -> None:
+        """资产负债表使用"期末数"列名。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "行次", "期末数", "年初数"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "行次": 20, "期末数": 2000000.0, "年初数": 1850000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 2000000.0
+        assert items[0].column == "期末数"
+
+    def test_is_本期数_column_found(self) -> None:
+        """利润表使用"本期数"列名。"""
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "行次", "本期数", "上期数"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "行次": 1, "本期数": 5000000.0, "上期数": 4500000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        assert len(items) == 1
+        assert items[0].amount == 5000000.0
+        assert items[0].column == "本期数"
+
+
+class TestNameColumnFallback:
+    """测试项目名称列查找的容错。"""
+
+    def test_name_column_项目名称_found(self) -> None:
+        """表头为"项目名称"时能正确识别。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目名称", "行次", "期末余额"],
+            rows=[
+                {"_row": 2, "项目名称": "资产总计", "行次": 20, "期末余额": 2000000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].key == "asset_total"
+
+    def test_name_column_科目_found(self) -> None:
+        """表头为"科目"时能正确识别。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["科目", "期末余额"],
+            rows=[
+                {"_row": 2, "科目": "资产总计", "期末余额": 2000000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].key == "asset_total"
+
+    def test_name_column_fallback_first_column(self) -> None:
+        """无已知列名时回退到第一列作为名称列。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["报表项目", "期末余额"],
+            rows=[
+                {"_row": 2, "报表项目": "资产总计", "期末余额": 2000000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].key == "asset_total"
+        assert items[0].amount == 2000000.0
+
+
+class TestDualColumnExtraction:
+    """测试双金额列提取（期末/期初 或 本期/上期）。"""
+
+    def test_bs_extracts_both_ending_and_beginning(self) -> None:
+        """资产负债表同时提取期末余额和年初余额。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额", "年初余额"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0, "年初余额": 1850000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 2000000.0
+        assert items[0].beginning_amount == 1850000.0
+
+    def test_bs_beginning_amount_none_when_column_missing(self) -> None:
+        """资产负债表无年初余额列时 beginning_amount 为 None。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert items[0].beginning_amount is None
+
+    def test_bs_beginning_amount_none_when_cell_empty(self) -> None:
+        """年初余额列为空时 beginning_amount 为 None。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额", "年初余额"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0, "年初余额": None},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert items[0].beginning_amount is None
+
+    def test_bs_beginning_amount_negative_ok(self) -> None:
+        """年初余额为负数正常。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额", "年初余额"],
+            rows=[
+                {"_row": 2, "项目": "未分配利润", "期末余额": 500000.0, "年初余额": -100000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert items[0].key == "undistributed_profit"
+        assert items[0].beginning_amount == -100000.0
+
+    def test_bs_beginning_amount_zero_ok(self) -> None:
+        """年初余额为 0 正常。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额", "年初余额"],
+            rows=[
+                {"_row": 2, "项目": "库存股", "期末余额": 0.0, "年初余额": 0.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert items[0].beginning_amount == 0.0
+
+    def test_is_extracts_both_current_and_prior_period(self) -> None:
+        """利润表同时提取本期金额和上期金额。"""
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额": 3000000.0, "上期金额": 2800000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        assert items[0].amount == 3000000.0
+        assert items[0].beginning_amount == 2800000.0
+
+    def test_cf_extracts_both_current_and_prior_period(self) -> None:
+        """现金流量表同时提取本期金额和上期金额。"""
+        raw = RawSheetData(
+            name="现金流量表",
+            headers=["项目", "本期金额", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "经营活动产生的现金流量净额",
+                 "本期金额": 500000.0, "上期金额": 450000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
+        assert items[0].amount == 500000.0
+        assert items[0].beginning_amount == 450000.0
+
+    def test_bs_alternate_column_names_初_num(self) -> None:
+        """资产负债表使用"期末数"和"年初数"列名。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末数", "年初数"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末数": 2000000.0, "年初数": 1850000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert items[0].amount == 2000000.0
+        assert items[0].column == "期末数"
+        assert items[0].beginning_amount == 1850000.0
+
+    def test_supplementary_items_also_get_beginning_amount(self) -> None:
+        """补充资料中的项目也提取期初金额。"""
+        raw = RawSheetData(
+            name="现金流量表",
+            headers=["项目", "本期金额", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "补充资料：", "本期金额": None, "上期金额": None},
+                {"_row": 3, "项目": "净利润", "本期金额": 705000.0, "上期金额": 650000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
+        cf_notes = [i for i in items if i.key == "cf_notes_net_profit"]
+        assert len(cf_notes) == 1
+        assert cf_notes[0].amount == 705000.0
+        assert cf_notes[0].beginning_amount == 650000.0

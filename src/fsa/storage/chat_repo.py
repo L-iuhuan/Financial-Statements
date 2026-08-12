@@ -154,6 +154,19 @@ class ChatRepo:
         conn.commit()
         logger.info(f"删除对话会话 #{session_id}")
 
+    def clear_messages(self, session_id: int) -> None:
+        """清空指定会话的全部消息 (保留会话本身)。
+
+        Args:
+            session_id: 会话 ID
+        """
+        conn = self._db.connection
+        conn.execute(
+            "DELETE FROM chat_messages WHERE session_id = ?", (session_id,)
+        )
+        conn.commit()
+        logger.info(f"清空会话 #{session_id} 的全部消息")
+
     def update_title(self, session_id: int, title: str) -> None:
         """更新会话标题。
 

@@ -225,3 +225,30 @@ class TestReport:
         # NaN passes construction (it's a float, not None)
         item = ReportItem(key="test", name="测试", amount=float("nan"))
         assert math.isnan(item.amount)
+
+    def test_beginning_amount_defaults_to_none(self) -> None:
+        """beginning_amount 默认值为 None。"""
+        item = ReportItem(key="asset_total", name="资产总计", amount=100.0)
+        assert item.beginning_amount is None
+
+    def test_beginning_amount_set_explicitly(self) -> None:
+        """beginning_amount 可显式设置。"""
+        item = ReportItem(
+            key="asset_total", name="资产总计", amount=100.0,
+            beginning_amount=90.0, row=5, column="期末余额"
+        )
+        assert item.beginning_amount == 90.0
+
+    def test_beginning_amount_zero_succeeds(self) -> None:
+        """beginning_amount 为 0 时正常。"""
+        item = ReportItem(
+            key="asset_total", name="资产总计", amount=100.0, beginning_amount=0.0
+        )
+        assert item.beginning_amount == 0.0
+
+    def test_beginning_amount_negative_succeeds(self) -> None:
+        """beginning_amount 为负数正常。"""
+        item = ReportItem(
+            key="asset_total", name="资产总计", amount=100.0, beginning_amount=-50.0
+        )
+        assert item.beginning_amount == -50.0

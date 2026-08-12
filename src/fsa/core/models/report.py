@@ -29,6 +29,7 @@ class ReportItem:
         key: 公式变量名，与规则公式中的变量一一对应，如 "asset_total"
         name: 显示名称（中文），如 "资产总计"
         amount: 金额（元）。用 float 存储，容差比较处理精度问题。
+        beginning_amount: 期初/上期金额（元）。None 表示报表无第二列金额。
         row: 在源文件中的行号（从1开始），用于差异追溯
         column: 在源文件中的列名，如 "期末余额"
     """
@@ -36,6 +37,7 @@ class ReportItem:
     key: str
     name: str
     amount: float
+    beginning_amount: float | None = None
     row: int = 0
     column: str = ""
 

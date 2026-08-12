@@ -14,17 +14,15 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import FluentIcon
 
-from PySide6.QtGui import QFont
-
-# 导航项配置: (object_name, label, icon_text)
-_NAV_ITEMS: list[tuple[str, str, str, str]] = [
-    # (section, object_name, label, icon)
-    ("工作区", "navImport", "数据导入", "📥"),
-    ("工作区", "navAudit", "审计底稿", "📋"),
-    ("系统", "navRules", "规则管理", "📐"),
-    ("系统", "navHistory", "历史记录", "🕐"),
-    ("系统", "navSettings", "系统设置", "⚙"),
+# 导航项配置: (section, object_name, label, icon)
+_NAV_ITEMS: list[tuple[str, str, str, FluentIcon]] = [
+    ("工作区", "navImport", "数据导入", FluentIcon.DOWNLOAD),
+    ("工作区", "navAudit", "审计底稿", FluentIcon.DOCUMENT),
+    ("系统", "navRules", "规则管理", FluentIcon.LIBRARY),
+    ("系统", "navHistory", "历史记录", FluentIcon.HISTORY),
+    ("系统", "navSettings", "系统设置", FluentIcon.SETTING),
 ]
 
 
@@ -33,11 +31,13 @@ class NavButton(QPushButton):
 
     clicked_nav = Signal(str)
 
-    def __init__(self, object_name: str, label: str, icon: str = "") -> None:
+    def __init__(self, object_name: str, label: str, icon: FluentIcon | None = None) -> None:
         super().__init__()
         self.setObjectName("NavItem")
         self._nav_id = object_name
-        self.setText(f"  {icon}  {label}" if icon else f"  {label}")
+        if icon is not None:
+            self.setIcon(icon.icon())
+        self.setText(f"  {label}")
         self.setFixedHeight(36)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setProperty("active", False)
@@ -45,6 +45,7 @@ class NavButton(QPushButton):
 
     def set_active(self, active: bool) -> None:
         self.setProperty("active", active)
+        self.style().unpolish(self)
         self.style().polish(self)
 
 
@@ -72,14 +73,25 @@ class Sidebar(QFrame):
         logo_layout.setContentsMargins(12, 4, 12, 4)
         logo_layout.setSpacing(12)
 
-        logo_icon = QLabel("稽")
+        # 应用 logo (resources/logo_32.png), 加载失败时回退到文字
+        logo_icon = QLabel()
         logo_icon.setObjectName("SidebarLogoIcon")
         logo_icon.setFixedSize(32, 32)
         logo_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo_icon.setStyleSheet(
-            "background-color: #4f46e5; color: white; "
-            "border-radius: 6px; font-size: 16px; font-weight: bold;"
-        )
+        from PySide6.QtGui import QPixmap
+
+        from fsa.core.resources import resource_path
+        pixmap = QPixmap(str(resource_path("resources/logo_32.png")))
+        if not pixmap.isNull():
+            logo_icon.setPixmap(
+                pixmap.scaled(
+                    32, 32,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        else:
+            logo_icon.setText("稽")
         logo_layout.addWidget(logo_icon)
 
         logo_text = QLabel("勾稽校验系统")

@@ -1,16 +1,17 @@
-"""系统设置页面: 外观/校验参数/数据存储/关于。
+"""系统设置页面: 外观/校验参数/数据存储/关于/软件更新。
 
 匹配 Demo v4 设计: 多分区设置面板。
+支持 QSettings 持久化: theme_mode, default_tolerance, gross_margin_threshold,
+history_retention_days, update_manifest_url。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -18,18 +19,29 @@ from PySide6.QtWidgets import (
 )
 
 from fsa.gui.app_state import AppState
+from fsa.gui.pages.settings_sections import (
+    build_about_section,
+    build_appearance_section,
+    build_llm_section,
+    build_storage_section,
+    build_update_section,
+    build_validation_section,
+)
 from fsa.gui.theme import apply_theme, get_qss
 
 
 class SettingsPage(QWidget):
     """系统设置页面。"""
 
+    theme_changed = Signal(bool)  # type: ignore[name-defined]
+
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self.setObjectName("SettingsPage")
         self._state = state
-        self._dark = False
+        self._settings = QSettings("FSA", "FinancialAudit")
         self._setup_ui()
+        self._load_settings()
 
     def _setup_ui(self) -> None:
         scroll = QScrollArea()
@@ -37,14 +49,35 @@ class SettingsPage(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content = QWidget()
+        content.setObjectName("PageContent")
         layout = QVBoxLayout(content)
         layout.setSpacing(16)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        layout.addWidget(self._build_appearance())
-        layout.addWidget(self._build_validation_params())
-        layout.addWidget(self._build_storage())
-        layout.addWidget(self._build_about())
+        # 自动保存提示条 (默认隐藏, 保存时短暂显示)
+        self._save_hint = QLabel("已自动保存")
+        self._save_hint.setObjectName("SaveHintLabel")
+        self._save_hint.setVisible(False)
+        layout.addWidget(self._save_hint)
+        self._save_hint_timer = None
+
+        layout.addWidget(build_appearance_section(self, self._settings, self._state))
+        layout.addWidget(build_validation_section(self, self._settings, self._state))
+        layout.addWidget(build_storage_section(self, self._settings, self._state))
+        layout.addWidget(build_llm_section(self, self._settings, self._state))
+        layout.addWidget(build_update_section(self, self._settings, self._state))
+        layout.addWidget(build_about_section(self, self._settings, self._state))
+
+        # 恢复默认按钮
+        reset_row = QVBoxLayout()
+        reset_btn = QPushButton("恢复默认设置")
+        reset_btn.setObjectName("BtnSecondary")
+        reset_btn.setFixedHeight(36)
+        reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        reset_btn.clicked.connect(self._reset_to_defaults)
+        reset_row.addWidget(reset_btn)
+        layout.addLayout(reset_row)
+
         layout.addStretch()
 
         scroll.setWidget(content)
@@ -52,161 +85,217 @@ class SettingsPage(QWidget):
         main.setContentsMargins(0, 0, 0, 0)
         main.addWidget(scroll)
 
-    def _section(self, title: str) -> tuple[QFrame, QVBoxLayout]:
-        """创建设置分区。"""
-        frame = QFrame()
-        frame.setStyleSheet(
-            "QFrame { background-color: #ffffff; border: 1px solid #e5e7eb; "
-            "border-radius: 8px; }"
-        )
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(12)
+    # ── 加载与保存 ──
 
-        label = QLabel(title)
-        label.setStyleSheet("font-size: 14px; font-weight: 600;")
-        layout.addWidget(label)
+    def _load_settings(self) -> None:
+        """从 QSettings 加载并应用到 UI。"""
+        import contextlib
 
-        return frame, layout
+        mode = str(self._settings.value("theme_mode", "light"))
+        self._update_theme_buttons(mode)
 
-    def _row(self, label_text: str, desc: str = "") -> tuple[QHBoxLayout, QLabel]:
-        """创建设置行: 标签 + 描述 + 右侧控件区。"""
-        row = QHBoxLayout()
-        row.setSpacing(8)
+        tol = str(self._settings.value("default_tolerance", "0.01"))
+        self._tolerance_input.setText(tol)
+        with contextlib.suppress(ValueError):
+            self._state.set_default_tolerance(float(tol))
 
-        info = QVBoxLayout()
-        info.setSpacing(2)
-        label = QLabel(label_text)
-        label.setStyleSheet("font-size: 13px; font-weight: 500;")
-        info.addWidget(label)
-        if desc:
-            d = QLabel(desc)
-            d.setStyleSheet("font-size: 12px; color: #9ca3af;")
-            info.addWidget(d)
-        row.addLayout(info)
-        row.addStretch()
+        thr = str(self._settings.value("gross_margin_threshold", "30"))
+        self._threshold_input.setText(thr)
 
-        return row, label
+        days = str(self._settings.value("history_retention_days", "90"))
+        self._days_input.setText(days)
 
-    def _build_appearance(self) -> QFrame:
-        frame, layout = self._section("外观")
-
-        row, _ = self._row("主题模式", "选择浅色、深色或跟随系统")
-
-        self._light_btn = QPushButton("浅色")
-        self._dark_btn = QPushButton("深色")
-        for btn in [self._light_btn, self._dark_btn]:
-            btn.setCheckable(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(32)
-            btn.setFixedSize(64, 32)
-
-        self._light_btn.setChecked(True)
-        self._light_btn.clicked.connect(lambda: self._set_theme(False))
-        self._dark_btn.clicked.connect(lambda: self._set_theme(True))
-        row.addWidget(self._light_btn)
-        row.addWidget(self._dark_btn)
-        layout.addLayout(row)
-
-        self._update_theme_btns()
-        return frame
-
-    def _build_validation_params(self) -> QFrame:
-        frame, layout = self._section("校验参数")
-
-        # 默认容差
-        row1, _ = self._row("默认容差 (绝对值)", "平衡类规则使用的默认容差，单位: 元")
-        self._tolerance_input = QLineEdit("0.01")
-        self._tolerance_input.setFixedSize(100, 32)
-        self._tolerance_input.setStyleSheet(
-            "QLineEdit { border: 1px solid #e5e7eb; border-radius: 6px; "
-            "padding: 8px; font-family: 'Consolas', monospace; font-size: 12px; }"
-        )
-        row1.addWidget(self._tolerance_input)
-        layout.addLayout(row1)
-
-        # 毛利率波动阈值
-        row2, _ = self._row("毛利率波动阈值", "同比波动超过此比例触发警告")
-        threshold_row = QHBoxLayout()
-        threshold_row.setSpacing(4)
-        self._threshold_input = QLineEdit("30")
-        self._threshold_input.setFixedSize(60, 32)
-        self._threshold_input.setStyleSheet(self._tolerance_input.styleSheet())
-        threshold_row.addWidget(self._threshold_input)
-        pct = QLabel("%")
-        pct.setStyleSheet("font-size: 12px; color: #9ca3af;")
-        threshold_row.addWidget(pct)
-        row2.addLayout(threshold_row)
-        layout.addLayout(row2)
-
-        return frame
-
-    def _build_storage(self) -> QFrame:
-        frame, layout = self._section("数据存储")
-
-        # 数据库位置
-        row1, _ = self._row("数据库位置", "SQLite 数据库文件路径")
-        db_path = QLabel("C:\\Users\\...\\fsa_data.db (待初始化)")
-        db_path.setStyleSheet(
-            "font-size: 13px; color: #6b7280; "
-            "font-family: 'Consolas', monospace;"
-        )
-        row1.addWidget(db_path)
-        layout.addLayout(row1)
-
-        # 历史保留天数
-        row2, _ = self._row("历史记录保留", "自动清理超过此天数的校验记录")
-        days_row = QHBoxLayout()
-        days_row.setSpacing(4)
-        self._days_input = QLineEdit("90")
-        self._days_input.setFixedSize(60, 32)
-        self._days_input.setStyleSheet(self._tolerance_input.styleSheet())
-        days_row.addWidget(self._days_input)
-        days_label = QLabel("天")
-        days_label.setStyleSheet("font-size: 12px; color: #9ca3af;")
-        days_row.addWidget(days_label)
-        row2.addLayout(days_row)
-        layout.addLayout(row2)
-
-        return frame
-
-    def _build_about(self) -> QFrame:
-        frame, layout = self._section("关于")
-
-        for label_text, value in [
-            ("软件版本", "0.1.0 (MVP)"),
-            ("开源许可", "MIT License"),
-            ("规则库版本", "CAS v1.0.0 (44 条规则)"),
-        ]:
-            row, _ = self._row(label_text)
-            val = QLabel(value)
-            val.setStyleSheet(
-                "font-size: 13px; color: #6b7280; "
-                "font-family: 'Consolas', monospace;"
-            )
-            row.addWidget(val)
-            layout.addLayout(row)
-
-        return frame
-
-    def _set_theme(self, dark: bool) -> None:
-        self._dark = dark
+    def _set_theme(self, mode: str) -> None:
+        self._settings.setValue("theme_mode", mode)
+        self._settings.sync()
+        self._update_theme_buttons(mode)
+        dark = self._detect_system_dark() if mode == "auto" else mode == "dark"
         apply_theme(dark=dark)
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         if isinstance(app, QApplication):
             app.setStyleSheet(get_qss(dark))
-        self._update_theme_btns()
+        self.theme_changed.emit(dark)
 
-    def _update_theme_btns(self) -> None:
-        active_qss = (
-            "QPushButton { background-color: #4f46e5; color: white; "
-            "border: none; border-radius: 6px; font-size: 12px; font-weight: 500; }"
+    def _update_theme_buttons(self, mode: str) -> None:
+        for btn, target in [
+            (self._light_btn, "light"),
+            (self._dark_btn, "dark"),
+            (self._auto_btn, "auto"),
+        ]:
+            active = mode == target
+            btn.setProperty("active", active)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _detect_system_dark(self) -> bool:
+        """检测系统是否为暗色模式。"""
+        try:
+            from PySide6.QtGui import QGuiApplication
+            style_hints = QGuiApplication.styleHints()
+            if hasattr(style_hints, "colorScheme"):
+                from PySide6.QtCore import Qt
+                return style_hints.colorScheme() == Qt.ColorScheme.Dark
+        except Exception:
+            pass
+        return False
+
+    def _save_tolerance(self) -> None:
+        text = self._tolerance_input.text().strip()
+        try:
+            value = float(text)
+            self._settings.setValue("default_tolerance", text)
+            self._state.set_default_tolerance(value)
+            self._notify_saved()
+        except ValueError:
+            pass
+
+    def _save_threshold(self) -> None:
+        text = self._threshold_input.text().strip()
+        self._settings.setValue("gross_margin_threshold", text)
+        self._notify_saved()
+
+    def _save_days(self) -> None:
+        text = self._days_input.text().strip()
+        self._settings.setValue("history_retention_days", text)
+        self._notify_saved()
+
+    def _notify_saved(self) -> None:
+        """显示"已自动保存"提示条, 2 秒后自动隐藏。"""
+        from PySide6.QtCore import QTimer
+        self._save_hint.setVisible(True)
+        if self._save_hint_timer is not None:
+            self._save_hint_timer.stop()
+        self._save_hint_timer = QTimer(self)
+        self._save_hint_timer.setSingleShot(True)
+        self._save_hint_timer.timeout.connect(
+            lambda: self._save_hint.setVisible(False)
         )
-        inactive_qss = (
-            "QPushButton { background-color: #ffffff; color: #6b7280; "
-            "border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; }"
-            "QPushButton:hover { background-color: #f3f4f6; }"
+        self._save_hint_timer.start(2000)
+
+    def _save_llm_provider(self) -> None:
+        """保存 LLM provider 类型。"""
+        provider = self._llm_provider_combo.currentData()
+        self._settings.setValue("llm_provider", provider or "")
+        self._settings.sync()
+        self._notify_saved()
+
+    def _save_llm_config(self) -> None:
+        """保存 LLM 连接配置 (base_url/model/api_key)。"""
+        self._settings.setValue("llm_base_url", self._llm_base_url_input.text().strip())
+        self._settings.setValue("llm_model", self._llm_model_input.text().strip())
+        self._settings.setValue("llm_api_key", self._llm_api_key_input.text().strip())
+        self._settings.sync()
+        self._notify_saved()
+
+    def _reset_to_defaults(self) -> None:
+        """恢复所有设置为默认值并立即生效。"""
+        defaults = {
+            "theme_mode": "auto",
+            "default_tolerance": "0.01",
+            "gross_margin_threshold": "30",
+            "history_retention_days": "90",
+            "update_manifest_url": "http://localhost:8000/version.json",
+        }
+        for key, value in defaults.items():
+            self._settings.setValue(key, value)
+        self._settings.sync()
+        self._load_settings()
+        self._update_url_input.setText(defaults["update_manifest_url"])
+        self._set_theme("auto")  # 应用主题
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        InfoBar.success(
+            "已恢复默认", "所有设置已重置为默认值",
+            orient=Qt.Orientation.Horizontal, isClosable=True,
+            position=InfoBarPosition.TOP, duration=2500, parent=self,
         )
-        self._light_btn.setStyleSheet(active_qss if not self._dark else inactive_qss)
-        self._dark_btn.setStyleSheet(active_qss if self._dark else inactive_qss)
+
+    def get_theme_mode(self) -> str:
+        """返回当前设置的主题模式。"""
+        return str(self._settings.value("theme_mode", "light"))
+
+    def is_dark_theme(self) -> bool:
+        """返回当前是否为暗色主题。"""
+        mode = self.get_theme_mode()
+        if mode == "auto":
+            return self._detect_system_dark()
+        return mode == "dark"
+
+    # ── 软件更新 ──
+
+    def _save_update_url(self) -> None:
+        """保存更新清单 URL 到 QSettings。"""
+        url = self._update_url_input.text().strip()
+        self._settings.setValue("update_manifest_url", url)
+        self._notify_saved()
+
+    def _check_for_update(self) -> None:
+        """检查是否有新版本可用。"""
+        from fsa.core.version import APP_VERSION
+        from fsa.updater.updater import UpdateError, Updater
+
+        url = self._update_url_input.text().strip()
+        if not url:
+            self._update_status_label.setText("请先输入更新清单地址")
+            return
+
+        self._update_check_btn.setEnabled(False)
+        self._update_check_btn.setText("检查中...")
+        self._update_status_label.setText("正在检查更新...")
+
+        try:
+            updater = Updater(
+                manifest_url=url,
+                current_version=APP_VERSION,
+                timeout=10.0,
+            )
+            info = updater.check_for_update()
+
+            if info.has_update:
+                self._update_status_label.setText(
+                    f"发现新版本 {info.latest_version}，可下载更新"
+                )
+                self._update_download_url = info.download_url
+                self._update_download_btn.setVisible(True)
+            else:
+                self._update_status_label.setText("已是最新版本")
+                self._update_download_btn.setVisible(False)
+        except UpdateError as e:
+            self._update_status_label.setText(f"检查更新失败: {e}")
+            self._update_download_btn.setVisible(False)
+        finally:
+            self._update_check_btn.setEnabled(True)
+            self._update_check_btn.setText("检查更新")
+
+    def _download_update(self) -> None:
+        """下载更新包到用户选择的路径。"""
+        from fsa.updater.updater import UpdateError, Updater
+
+        if not self._update_download_url:
+            self._update_status_label.setText("没有可用的下载地址")
+            return
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存更新包",
+            "fsa_update.exe",
+            "可执行文件 (*.exe)",
+        )
+        if not save_path:
+            return
+
+        self._update_download_btn.setEnabled(False)
+        self._update_status_label.setText("正在下载更新...")
+
+        try:
+            updater = Updater(
+                manifest_url=self._update_url_input.text().strip(),
+                current_version="",
+                timeout=120.0,
+            )
+            updater.download(self._update_download_url, save_path)
+            self._update_status_label.setText(f"下载完成: {save_path}")
+        except UpdateError as e:
+            self._update_status_label.setText(f"下载失败: {e}")
+        finally:
+            self._update_download_btn.setEnabled(True)

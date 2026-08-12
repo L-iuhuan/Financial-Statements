@@ -145,10 +145,14 @@ class TestMissingReport:
 
 
 class TestErrorHandling:
-    """规则执行异常时记录为 errored。"""
+    """规则执行异常时记录为 errored 或 skipped。"""
 
-    def test_validate_rule_with_missing_variable_returns_errored(self):
-        """报表缺少 liability_total -> MissingItemError -> errored。"""
+    def test_validate_rule_with_missing_variable_defaults_zero_fails(self):
+        """报表缺少 liability_total -> 预填充为 0，公式 100 != 0+0 -> 不通过。
+
+        build_namespace 将已知科目预填充为 0，
+        缺失的 liability_total 默认 0，公式求值 100 == 0 不成立。
+        """
         bs = Report(
             report_type=ReportType.BALANCE_SHEET,
             period="2024-12",
@@ -159,9 +163,10 @@ class TestErrorHandling:
         summary = service.validate([bs])
 
         assert summary.total == 1
-        assert summary.errored == 1
+        assert summary.errored == 0
         assert summary.passed == 0
-        assert summary.failed == 0
+        assert summary.failed == 1
+        assert summary.skipped == 0
         assert summary.all_passed is False
 
     def test_validate_rule_with_bad_formula_returns_errored(self):
@@ -178,8 +183,8 @@ class TestErrorHandling:
 
         assert summary.errored == 1
 
-    def test_validate_error_result_has_errored_flag(self):
-        """异常结果的 errored 标志为 True。"""
+    def test_validate_missing_variable_evaluates_not_skipped(self):
+        """缺少变量的规则会预填充 0 并求值，不标记为 skipped。"""
         bs = Report(
             report_type=ReportType.BALANCE_SHEET,
             items=[make_item("asset_total", "资产总计", 100.0)],
@@ -189,7 +194,9 @@ class TestErrorHandling:
         summary = service.validate([bs])
 
         assert len(summary.results) == 1
-        assert summary.results[0].errored is True
+        assert summary.results[0].skipped is False
+        assert summary.results[0].errored is False
+        assert summary.results[0].passed is False
 
 
 # ────────────────────── 多规则 ──────────────────────

@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session
     ON chat_messages(session_id);
+
+-- 规则容差覆写表
+CREATE TABLE IF NOT EXISTS rule_overrides (
+    rule_id   TEXT PRIMARY KEY,
+    tolerance REAL NOT NULL
+);
 """
 
 

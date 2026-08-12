@@ -1,6 +1,7 @@
 """顶栏: 页面标题 + 副标题 + 操作按钮组。
 
 匹配 Demo v4 设计: 半透明毛玻璃背景, 右侧操作按钮。
+图标使用 FluentIcon (离线可用), 不使用 Emoji。
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QWidget,
 )
+from qfluentwidgets import FluentIcon
 
 
 class Topbar(QFrame):
@@ -44,29 +46,33 @@ class Topbar(QFrame):
 
         layout.addStretch()
 
-        # 操作按钮
-        self._theme_btn = QPushButton("🌙")
+        # 主题切换按钮 (图标)
+        self._theme_btn = QPushButton()
         self._theme_btn.setObjectName("BtnIcon")
         self._theme_btn.setFixedSize(36, 36)
         self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._theme_btn.setToolTip("切换深色/浅色 (Ctrl+D)")
         self._theme_btn.clicked.connect(self.theme_clicked.emit)
+        self.set_theme_icon(False)
         layout.addWidget(self._theme_btn)
 
-        self._reset_btn = QPushButton("↻ 重置")
+        self._reset_btn = QPushButton(" 重置")
+        self._reset_btn.setIcon(FluentIcon.ROTATE.icon())
         self._reset_btn.setObjectName("BtnSecondary")
         self._reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._reset_btn.clicked.connect(self.reset_clicked.emit)
         layout.addWidget(self._reset_btn)
 
-        self._validate_btn = QPushButton("▶ 执行校验")
+        self._validate_btn = QPushButton(" 执行校验")
+        self._validate_btn.setIcon(FluentIcon.PLAY.icon())
         self._validate_btn.setObjectName("BtnPrimary")
         self._validate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._validate_btn.setEnabled(False)
         self._validate_btn.clicked.connect(self.validate_clicked.emit)
         layout.addWidget(self._validate_btn)
 
-        self._export_btn = QPushButton("↓ 导出底稿")
+        self._export_btn = QPushButton(" 导出底稿")
+        self._export_btn.setIcon(FluentIcon.DOWNLOAD.icon())
         self._export_btn.setObjectName("BtnSecondary")
         self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._export_btn.setEnabled(False)
@@ -84,4 +90,6 @@ class Topbar(QFrame):
         self._export_btn.setEnabled(enabled)
 
     def set_theme_icon(self, dark: bool) -> None:
-        self._theme_btn.setText("☀" if dark else "🌙")
+        # 深色模式显示太阳(切到浅色), 浅色模式显示月亮(切到深色)
+        icon = FluentIcon.QUIET_HOURS if dark else FluentIcon.BRIGHTNESS
+        self._theme_btn.setIcon(icon.icon())

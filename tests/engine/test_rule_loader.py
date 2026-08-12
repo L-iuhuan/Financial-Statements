@@ -25,9 +25,9 @@ def _write_json(tmp_path: Path, payload: dict) -> Path:
 class TestLoadFromRealFile:
     """从真实规则库文件加载。"""
 
-    def test_load_all_44_rules(self) -> None:
+    def test_load_all_39_rules(self) -> None:
         rules = load_rules_from_json(RULE_LIBRARY)
-        assert len(rules) == 44
+        assert len(rules) == 37
 
     def test_first_rule_fields(self) -> None:
         rules = load_rules_from_json(RULE_LIBRARY)
@@ -50,7 +50,6 @@ class TestLoadFromRealFile:
             "BS-BAL-002",
             "BS-BAL-003",
             "BS-BAL-004",
-            "BS-BAL-005",
             "IS-BAL-001",
             "IS-BAL-002",
             "IS-BAL-003",
@@ -63,11 +62,8 @@ class TestLoadFromRealFile:
             "SCE-BAL-001",
             "SCE-BAL-002",
             "BS-IS-001",
-            "BS-IS-002",
-            "BS-CF-001",
             "IS-CF-001",
             "IS-CF-002",
-            "IS-CF-003",
             "SCE-IS-001",
             "SCE-IS-002",
             "SCE-IS-003",
@@ -75,13 +71,11 @@ class TestLoadFromRealFile:
             "IS-TAX-001",
             "NOTES-001",
             "NOTES-002",
-            "NOTES-003",
             "LR-GM-001",
             "LR-GM-002",
             "LR-DAR-001",
             "LR-OCF-001",
             "LR-ART-001",
-            "LR-INV-001",
             "LR-FLUC-001",
             "LR-RE-001",
             "LR-RE-002",
@@ -89,16 +83,15 @@ class TestLoadFromRealFile:
             "LR-QUICK-001",
             "LR-OCF-002",
             "LR-NONREC-001",
-            "LR-FIX-001",
         }
         assert {r.rule_id for r in rules} == expected_ids
 
     def test_tolerance_types_present(self) -> None:
         rules = load_rules_from_json(RULE_LIBRARY)
         types = {r.tolerance_type for r in rules}
+        # v1.1.1 删除了唯一的 ABSOLUTE 规则 (BS-CF-001)
         assert types == {
             ToleranceType.EXACT,
-            ToleranceType.ABSOLUTE,
             ToleranceType.RELATIVE,
             ToleranceType.THRESHOLD,
         }
@@ -106,14 +99,14 @@ class TestLoadFromRealFile:
     def test_severities_present(self) -> None:
         rules = load_rules_from_json(RULE_LIBRARY)
         sevs = {r.severity for r in rules}
-        assert sevs == {Severity.ERROR, Severity.WARNING, Severity.INFO}
+        assert sevs == {Severity.ERROR, Severity.WARNING}
 
     def test_float_tolerance_conversion(self) -> None:
-        """NOTES-003 的 default_tolerance=0.2 应转为 float。"""
+        """LR-ART-001 的 default_tolerance=0.2 应转为 float。"""
         rules = load_rules_from_json(RULE_LIBRARY)
         by_id = {r.rule_id: r for r in rules}
-        assert by_id["NOTES-003"].tolerance == 0.2
-        assert isinstance(by_id["NOTES-003"].tolerance, float)
+        assert by_id["LR-ART-001"].tolerance == 0.2
+        assert isinstance(by_id["LR-ART-001"].tolerance, float)
 
 
 class TestLoadEdgeCases:

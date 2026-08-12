@@ -164,11 +164,11 @@ class TestBSBAL001FloatPrecision:
 class TestBSBAL001MissingData:
     """缺失数据测试。"""
 
-    def test_missing_asset_raises(self) -> None:
-        """缺少 asset_total -> 报错。
+    def test_missing_asset_defaults_zero_fails(self) -> None:
+        """缺少 asset_total -> 预填充为 0，公式 0 != 60+40 -> 不通过。
 
-        由于 build_namespace 不包含 asset_total，
-        simpleeval 的 NameNotDefined 被转为 EvaluationError。
+        build_namespace 将已知科目预填充为 0，
+        缺失的 asset_total 默认 0，公式求值 0 == 100 不成立。
         """
         bs = Report(
             report_type=ReportType.BALANCE_SHEET,
@@ -180,11 +180,12 @@ class TestBSBAL001MissingData:
         )
         ctx = ValidationContext(period="2024-12")
         ctx.add_report(bs)
-        with pytest.raises(Exception, match="asset_total"):
-            RuleRunner.run(make_rule(), ctx)
+        result = RuleRunner.run(make_rule(), ctx)
+        assert result.passed is False
+        assert result.left_value == 0.0
 
-    def test_missing_liability_raises(self) -> None:
-        """缺少 liability_total -> 报错。"""
+    def test_missing_liability_defaults_zero_fails(self) -> None:
+        """缺少 liability_total -> 预填充为 0，公式 100 != 0+40 -> 不通过。"""
         bs = Report(
             report_type=ReportType.BALANCE_SHEET,
             period="2024-12",
@@ -195,11 +196,11 @@ class TestBSBAL001MissingData:
         )
         ctx = ValidationContext(period="2024-12")
         ctx.add_report(bs)
-        with pytest.raises(Exception, match="liability_total"):
-            RuleRunner.run(make_rule(), ctx)
+        result = RuleRunner.run(make_rule(), ctx)
+        assert result.passed is False
 
-    def test_missing_equity_raises(self) -> None:
-        """缺少 equity_total -> 报错。"""
+    def test_missing_equity_defaults_zero_fails(self) -> None:
+        """缺少 equity_total -> 预填充为 0，公式 100 != 60+0 -> 不通过。"""
         bs = Report(
             report_type=ReportType.BALANCE_SHEET,
             period="2024-12",
@@ -210,16 +211,16 @@ class TestBSBAL001MissingData:
         )
         ctx = ValidationContext(period="2024-12")
         ctx.add_report(bs)
-        with pytest.raises(Exception, match="equity_total"):
-            RuleRunner.run(make_rule(), ctx)
+        result = RuleRunner.run(make_rule(), ctx)
+        assert result.passed is False
 
-    def test_empty_report_raises(self) -> None:
-        """空报表 -> 报错 (变量未定义)。"""
+    def test_empty_report_defaults_zero_passes(self) -> None:
+        """空报表 -> 所有已知科目预填充为 0，公式 0 == 0+0 -> 通过。"""
         bs = Report(report_type=ReportType.BALANCE_SHEET, period="2024-12")
         ctx = ValidationContext(period="2024-12")
         ctx.add_report(bs)
-        with pytest.raises(Exception):
-            RuleRunner.run(make_rule(), ctx)
+        result = RuleRunner.run(make_rule(), ctx)
+        assert result.passed is True
 
 
 class TestBSBAL001DuplicateKey:

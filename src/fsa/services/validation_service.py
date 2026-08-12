@@ -15,7 +15,7 @@ from loguru import logger
 
 from fsa.core.engine.registry import RuleRegistry
 from fsa.core.engine.runner import RuleRunner
-from fsa.core.exceptions import FSAError
+from fsa.core.exceptions import EvaluationError, FormulaParseError, FSAError
 from fsa.core.models.report import Report, ReportType
 from fsa.core.models.result import (
     ValidationContext,
@@ -103,13 +103,21 @@ class ValidationService:
     def _run_rule_safe(
         rule: ReconciliationRule, context: ValidationContext
     ) -> ValidationResult:
-        """执行单条规则, 捕获异常转为 errored 结果。
+        """执行单条规则, 捕获异常转为跳过/异常结果。
 
-        FSAError 是预期内的业务异常 (缺失科目、公式错误等)。
-        其他异常是未预期的编程错误, 同样捕获以防止单条规则崩溃整个校验。
+        EvaluationError (变量未定义/除零) -> 跳过 (缺少数据, 不算不通过)
+        FormulaParseError (公式语法错误) -> 异常 (规则定义有误)
+        其他 FSAError -> 异常
+        其他异常 -> 异常 (未预期错误)
         """
         try:
             return RuleRunner.run(rule, context)
+        except EvaluationError as e:
+            logger.info(f"规则 {rule.rule_id} 跳过 (缺少变量): {e}")
+            return ValidationResult.from_skip(rule, str(e))
+        except FormulaParseError as e:
+            logger.warning(f"规则 {rule.rule_id} 公式错误: {e}")
+            return ValidationResult.from_error(rule, str(e))
         except FSAError as e:
             logger.warning(f"规则 {rule.rule_id} 执行异常: {e}")
             return ValidationResult.from_error(rule, str(e))
@@ -124,18 +132,24 @@ class ValidationService:
         period: str,
         skipped: int,
     ) -> ValidationSummary:
-        """从结果列表构建汇总。"""
-        passed = sum(1 for r in results if r.passed)
+        """从结果列表构建汇总。
+
+        skipped 参数来自缺少所需报表的规则 (未放入 results)。
+        results 中可能有 skipped=True 的结果 (来自 EvaluationError)。
+        """
+        skipped_from_results = sum(1 for r in results if r.skipped)
+        passed = sum(1 for r in results if r.passed and not r.skipped)
         failed = sum(1 for r in results if not r.passed and not r.errored)
         errored = sum(1 for r in results if r.errored)
+        total = len(results) - skipped_from_results
 
         return ValidationSummary(
             period=period,
-            total=len(results),
+            total=total,
             passed=passed,
             failed=failed,
             errored=errored,
-            skipped=skipped,
+            skipped=skipped + skipped_from_results,
             results=results,
             report_types=list(context.reports.keys()),
         )

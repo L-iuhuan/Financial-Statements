@@ -14,19 +14,29 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import FluentIcon, IconWidget
 
 from fsa.gui.app_state import AppState
+from fsa.gui.theme import get_mono_font
 
 
 class HistoryCard(QFrame):
-    """单条历史记录卡片。"""
+    """单条历史记录卡片 (Demo v4)。
+
+    - 40x40 图标 (brand-50 背景)
+    - 日期 + 期间信息
+    - 统计: 通过/不通过/异常 (primary 色值)
+    - 查看 + 删除 按钮
+    """
 
     view_clicked = Signal(int)
+    delete_clicked = Signal(int)
 
     def __init__(
         self,
@@ -40,76 +50,88 @@ class HistoryCard(QFrame):
     ) -> None:
         super().__init__()
         self._history_id = history_id
-        self.setStyleSheet(
-            "QFrame { background-color: #ffffff; border: 1px solid #e5e7eb; "
-            "border-radius: 8px; }"
-            "QFrame:hover { border-color: #c7d2fe; }"
-        )
-        self.setFixedHeight(80)
+        self.setObjectName("HistoryCard")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
 
-        # 左侧: 日期 + 期间
+        # 左侧: 40x40 图标
+        icon_frame = QFrame()
+        icon_frame.setObjectName("IconFrame")
+        icon_frame.setFixedSize(40, 40)
+        icon_layout = QHBoxLayout(icon_frame)
+        icon_layout.setContentsMargins(0, 0, 0, 0)
+        icon_widget = IconWidget(FluentIcon.HISTORY)
+        icon_widget.setFixedSize(20, 20)
+        icon_layout.addWidget(icon_widget)
+        layout.addWidget(icon_frame)
+
+        # 中间: 日期 + 期间 (允许压缩, 避免小窗口出现水平滚动条)
         info = QVBoxLayout()
         info.setSpacing(2)
         date_label = QLabel(date)
-        date_label.setStyleSheet(
-            "font-size: 14px; font-weight: 600; color: #111827;"
-        )
+        date_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+        date_label.setMinimumWidth(0)
         info.addWidget(date_label)
 
         period_label = QLabel(f"报告期间: {period}")
-        period_label.setStyleSheet("font-size: 12px; color: #6b7280;")
+        period_label.setObjectName("MetaLabel")
+        period_label.setMinimumWidth(0)
         info.addWidget(period_label)
-        layout.addLayout(info)
-        layout.addStretch()
+        layout.addLayout(info, stretch=1)
 
-        # 右侧: 统计
+        # 右侧: 统计 (通过/不通过/异常)
         stats = QHBoxLayout()
-        stats.setSpacing(20)
+        stats.setSpacing(12)
 
-        for label_text, count, color in [
-            ("通过", passed, "#10b981"),
-            ("不通过", failed, "#ef4444"),
-            ("异常", errored, "#f59e0b"),
+        for label_text, count in [
+            ("通过", passed),
+            ("不通过", failed),
+            ("异常", errored),
         ]:
             stat = QVBoxLayout()
             stat.setSpacing(0)
             num = QLabel(str(count))
-            num.setStyleSheet(
-                f"font-size: 18px; font-weight: 700; color: {color};"
-            )
+            num.setFont(get_mono_font(14))
+            num.setStyleSheet("font-size: 20px; font-weight: 700;")
             num.setAlignment(Qt.AlignmentFlag.AlignCenter)
             stat.addWidget(num)
 
             lbl = QLabel(label_text)
-            lbl.setStyleSheet("font-size: 11px; color: #9ca3af;")
+            lbl.setObjectName("MetaLabel")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             stat.addWidget(lbl)
             stats.addLayout(stat)
 
         layout.addLayout(stats)
 
-        # 操作按钮
+        # 操作按钮: 查看 + 删除 (最小尺寸, 允许按文字扩展避免截断)
         view_btn = QPushButton("查看")
         view_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        view_btn.setFixedSize(56, 32)
-        view_btn.setStyleSheet(
-            "QPushButton { background-color: #ffffff; color: #6b7280; "
-            "border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; }"
-            "QPushButton:hover { background-color: #f3f4f6; }"
-        )
+        view_btn.setMinimumSize(56, 28)
+        view_btn.setObjectName("TextBtn")
         view_btn.clicked.connect(self._on_view_clicked)
         layout.addWidget(view_btn)
+
+        delete_btn = QPushButton("删除")
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.setMinimumSize(56, 28)
+        delete_btn.setObjectName("DangerBtn")
+        delete_btn.clicked.connect(self._on_delete_clicked)
+        layout.addWidget(delete_btn)
 
     def _on_view_clicked(self) -> None:
         self.view_clicked.emit(self._history_id)
 
+    def _on_delete_clicked(self) -> None:
+        self.delete_clicked.emit(self._history_id)
+
 
 class HistoryPage(QWidget):
     """历史记录页面: 从 SQLite 加载校验历史并展示。"""
+
+    view_requested = Signal(int)  # history_id -> 主窗口加载并跳转
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -128,6 +150,7 @@ class HistoryPage(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content = QWidget()
+        content.setObjectName("PageContent")
         layout = QVBoxLayout(content)
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -139,23 +162,17 @@ class HistoryPage(QWidget):
 
         # 空状态
         self._empty_container = QFrame()
-        self._empty_container.setStyleSheet(
-            "QFrame { background-color: #ffffff; "
-            "border: 2px dashed #e5e7eb; border-radius: 8px; }"
-        )
+        self._empty_container.setObjectName("EmptyContainer")
         empty_layout = QVBoxLayout(self._empty_container)
         empty_layout.setContentsMargins(24, 48, 24, 48)
         empty_layout.setSpacing(8)
 
-        empty_icon = QLabel("📋")
-        empty_icon.setStyleSheet("font-size: 48px;")
-        empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_icon = IconWidget(FluentIcon.HISTORY)
+        empty_icon.setFixedSize(48, 48)
         empty_layout.addWidget(empty_icon)
 
         empty_title = QLabel("暂无校验记录")
-        empty_title.setStyleSheet(
-            "font-size: 15px; font-weight: 600; color: #6b7280;"
-        )
+        empty_title.setObjectName("EmptyTitle")
         empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(empty_title)
 
@@ -163,7 +180,7 @@ class HistoryPage(QWidget):
             "完成校验后，历史记录将自动保存至此处。\n"
             "您可以随时回溯查看历次校验结果。"
         )
-        empty_desc.setStyleSheet("font-size: 13px; color: #9ca3af;")
+        empty_desc.setObjectName("EmptyLabel")
         empty_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(empty_desc)
 
@@ -203,8 +220,9 @@ class HistoryPage(QWidget):
             self._show_empty()
             return
 
-        # 清空旧卡片
+        # 清空旧卡片 (先隐藏再删除, 避免闪现为独立窗口)
         for card in self._cards:
+            card.hide()
             card.deleteLater()
         self._cards.clear()
 
@@ -225,8 +243,35 @@ class HistoryPage(QWidget):
                 failed=record["failed"],
                 errored=record["errored"],
             )
+            card.delete_clicked.connect(self._on_delete_history)
+            card.view_clicked.connect(self.view_requested.emit)
             self._cards_layout.addWidget(card)
             self._cards.append(card)
+
+    def _on_delete_history(self, history_id: int) -> None:
+        """删除历史记录 (带二次确认) 并刷新列表。"""
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            "确定要删除这条校验记录吗？此操作不可撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        repo = self._state.history_repo
+        if repo is None:
+            return
+        try:
+            repo.delete(history_id)
+        except sqlite3.DatabaseError:
+            logger.exception("删除校验历史失败")
+            return
+        except RuntimeError:
+            logger.exception("数据库未连接, 无法删除历史")
+            return
+        self._load_history()
 
     def _show_empty(self) -> None:
         """显示空状态。"""

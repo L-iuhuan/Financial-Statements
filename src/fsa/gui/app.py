@@ -9,12 +9,34 @@ from __future__ import annotations
 import sys
 
 from loguru import logger
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from fsa.gui.app_state import AppState
 from fsa.gui.main_window import MainWindow
 from fsa.gui.theme import apply_theme, get_qss
+
+
+def _is_system_dark() -> bool:
+    """检测系统是否为暗色模式。"""
+    try:
+        from PySide6.QtGui import QGuiApplication
+        style_hints = QGuiApplication.styleHints()
+        if hasattr(style_hints, "colorScheme"):
+            return style_hints.colorScheme() == Qt.ColorScheme.Dark
+    except Exception:
+        pass
+    return False
+
+
+def _get_startup_theme() -> tuple[bool, str]:
+    """返回启动时应使用的主题 (dark?, mode)。"""
+    settings = QSettings("FSA", "FinancialAudit")
+    mode = str(settings.value("theme_mode", "light"))
+    if mode == "auto":
+        return _is_system_dark(), mode
+    return mode == "dark", mode
 
 
 def main() -> None:
@@ -28,15 +50,24 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setFont(QFont("Microsoft YaHei UI", 10))
-    apply_theme()
-    app.setStyleSheet(get_qss(False))
+
+    dark, mode = _get_startup_theme()
+    apply_theme(dark=dark)
+    app.setStyleSheet(get_qss(dark))
 
     state = AppState()
     ok, msg = state.load_registry()
     if not ok:
         logger.warning(f"规则库加载失败: {msg}")
 
-    window = MainWindow(state)
+    # 加载存储的默认容差
+    import contextlib
+    settings = QSettings("FSA", "FinancialAudit")
+    tol_str = str(settings.value("default_tolerance", "0.01"))
+    with contextlib.suppress(ValueError):
+        state.set_default_tolerance(float(tol_str))
+
+    window = MainWindow(state, initial_dark=dark, theme_mode=mode)
     window.show()
 
     sys.exit(app.exec())

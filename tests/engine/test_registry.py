@@ -64,8 +64,8 @@ class TestConstruction:
 
     def test_from_json_loads_real_file(self) -> None:
         reg = RuleRegistry.from_json(RULE_LIBRARY)
-        assert reg.count() == 44
-        assert reg.active_count() == 44
+        assert reg.count() == 37
+        assert reg.active_count() == 37
 
     def test_empty_registry(self) -> None:
         reg = RuleRegistry([])
@@ -240,11 +240,12 @@ class TestSummary:
     def test_summary_real_file(self) -> None:
         reg = RuleRegistry.from_json(RULE_LIBRARY)
         summary = reg.summary()
-        assert summary["total"] == 44
-        assert summary["active"] == 44
+        assert summary["total"] == 37
+        assert summary["active"] == 37
         assert summary["error"] > 0
         assert summary["warning"] > 0
-        assert summary["info"] > 0
+        # v1.1 规则库删除了唯一的 INFO 规则 (LR-FIX-001), 当前无 INFO 级规则
+        assert summary["info"] == 0
         assert (
-            summary["error"] + summary["warning"] + summary["info"] == 44
+            summary["error"] + summary["warning"] + summary["info"] == 37
         )

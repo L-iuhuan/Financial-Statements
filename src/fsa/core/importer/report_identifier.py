@@ -14,12 +14,17 @@ from fsa.core.models.report import ReportType
 
 # 工作表名关键词 -> 报表类型
 _SHEET_NAME_PATTERNS: dict[str, ReportType] = {
+    "合并资产负债表": ReportType.BALANCE_SHEET,
     "资产负债表": ReportType.BALANCE_SHEET,
     "Balance Sheet": ReportType.BALANCE_SHEET,
+    "合并利润表": ReportType.INCOME_STATEMENT,
     "利润表": ReportType.INCOME_STATEMENT,
     "Income Statement": ReportType.INCOME_STATEMENT,
+    "合并现金流量表": ReportType.CASH_FLOW_STATEMENT,
     "现金流量表": ReportType.CASH_FLOW_STATEMENT,
     "Cash Flow": ReportType.CASH_FLOW_STATEMENT,
+    "合并所有者权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
+    "所有者权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
 }
 
 # 内容关键词 -> 报表类型（当工作表名无法识别时使用）

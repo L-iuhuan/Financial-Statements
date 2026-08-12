@@ -167,6 +167,27 @@ class HistoryRepo:
         conn.commit()
         logger.info(f"删除校验历史 #{history_id}")
 
+    def delete_older_than(self, days: int) -> int:
+        """删除超过指定天数的历史记录（含明细，CASCADE）。
+
+        Args:
+            days: 保留天数，删除 created_at 早于此天数的记录
+
+        Returns:
+            被删除的历史记录条数
+        """
+        conn = self._db.connection
+        cursor = conn.execute(
+            """DELETE FROM validation_history
+               WHERE created_at < datetime('now', 'localtime', ?)""",
+            (f"-{days} days",),
+        )
+        conn.commit()
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info(f"清理过期校验历史: {deleted} 条 (保留 {days} 天)")
+        return deleted
+
     def count(self) -> int:
         """返回历史记录总数。"""
         conn = self._db.connection

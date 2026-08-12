@@ -1,0 +1,104 @@
+=== 校验结果 ===
+总执行: 36
+通过: 7
+不通过: 1
+异常: 28
+跳过: 8
+
+[PASS] BS-BAL-001   资产=负债+所有者权益
+[PASS] BS-BAL-002   流动资产+非流动资产=资产总计
+[PASS] BS-BAL-003   流动负债+非流动负债=负债合计
+[ERR] BS-BAL-004   权益组成项=所有者权益合计
+  L=0.0 R=0.0 diff=0.0
+  权益组成项=所有者权益合计: 无法执行校验 — 表达式求值失败: 「paid_in_capital + capital_reserve + other_comprehensive_income + surplus_reserve + undistributed_profit - treasury_stock」(变量「treasury_stock」未定义。请检查报表中是否包含该项目。)
+[ERR] BS-BAL-005   期初-期末衔接(本期变动)
+  L=0.0 R=0.0 diff=0.0
+  期初-期末衔接(本期变动): 无法执行校验 — 表达式求值失败: 「ending_balance」(变量「ending_balance」未定义。请检查报表中是否包含该项目。)
+[FAIL] IS-BAL-001   营业利润公式
+  L=920000.0 R=1060000.0 diff=-140000.0
+  营业利润公式: 校验不通过 [错误]
+  左侧值: 920,000.00 元
+  右侧值: 1,060,000.00 元
+  差额: -140,000.00 元 (超出容差 0.01 元)
+[PASS] IS-BAL-002   利润总额=营业利润±营业外
+[PASS] IS-BAL-003   净利润=利润总额-所得税费用
+[ERR] IS-BAL-004   营业收入=主营+其他
+  L=0.0 R=0.0 diff=0.0
+  营业收入=主营+其他: 无法执行校验 — 表达式求值失败: 「primary_revenue + other_revenue」(变量「primary_revenue」未定义。请检查报表中是否包含该项目。)
+[PASS] IS-BAL-005   综合收益总额=净利润+其他综合收益
+[ERR] CF-BAL-001   现金净增加额=三活动净额合计
+  L=0.0 R=0.0 diff=0.0
+  现金净增加额=三活动净额合计: 无法执行校验 — 表达式求值失败: 「operating_net + investing_net + financing_net + fx_effect」(变量「fx_effect」未定义。请检查报表中是否包含该项目。)
+[ERR] CF-BAL-002   直接法=间接法经营净额
+  L=0.0 R=0.0 diff=0.0
+  直接法=间接法经营净额: 无法执行校验 — 表达式求值失败: 「operating_net_direct」(变量「operating_net_direct」未定义。请检查报表中是否包含该项目。)
+[ERR] CF-BAL-003   正表=附注现金净变动
+  L=0.0 R=0.0 diff=0.0
+  正表=附注现金净变动: 无法执行校验 — 表达式求值失败: 「net_increase_cash_main」(变量「net_increase_cash_main」未定义。请检查报表中是否包含该项目。)
+[PASS] CF-BAL-004   期末余额=期初+净增加
+[ERR] BS-IS-001    未分配利润期末-期初=净利润
+  L=0.0 R=0.0 diff=0.0
+  未分配利润期末-期初=净利润: 无法执行校验 — 表达式求值失败: 「undistributed_profit_ending - undistributed_profit_beginning」(变量「undistributed_profit_ending」未定义。请检查报表中是否包含该项目。)
+[ERR] BS-IS-002    期末未分配利润滚动
+  L=0.0 R=0.0 diff=0.0
+  期末未分配利润滚动: 无法执行校验 — 表达式求值失败: 「re_ending」(变量「re_ending」未定义。请检查报表中是否包含该项目。)
+[ERR] BS-CF-001    货币资金变动≈现金净增加额
+  L=0.0 R=0.0 diff=0.0
+  货币资金变动≈现金净增加额: 无法执行校验 — 表达式求值失败: 「monetary_funds_ending - monetary_funds_beginning」(变量「monetary_funds_ending」未定义。请检查报表中是否包含该项目。)
+[ERR] IS-CF-001    附注净利润=利润表净利润
+  L=0.0 R=0.0 diff=0.0
+  附注净利润=利润表净利润: 无法执行校验 — 表达式求值失败: 「cf_notes_net_profit」(变量「cf_notes_net_profit」未定义。请检查报表中是否包含该项目。)
+[ERR] IS-CF-002    附注减值/折旧=相关科目
+  L=0.0 R=0.0 diff=0.0
+  附注减值/折旧=相关科目: 无法执行校验 — 公式解析失败: 「cf_notes_impairment == impairment_in_IS; cf_notes_depreciation == accumulated_depreciation_change_adj」(公式包含 2 个 '=='，应为 1 个)
+[ERR] IS-CF-003    间接法调节经营现金流
+  L=0.0 R=0.0 diff=0.0
+  间接法调节经营现金流: 无法执行校验 — 表达式求值失败: 「net_profit + depreciation + amortization + impairment - investment_income + finance_expense_adjust +- deferred_tax +- inventory_change +- operating_receivable_change +- operating_payable_change + other」(变量「depreciation」未定义。请检查报表中是否包含该项目。)
+[ERR] IS-TAX-001   所得税费用=当期+递延
+  L=0.0 R=0.0 diff=0.0
+  所得税费用=当期+递延: 无法执行校验 — 表达式求值失败: 「current_income_tax + (deferred_tax_liab_change - deferred_tax_asset_change)」(变量「current_income_tax」未定义。请检查报表中是否包含该项目。)
+[ERR] NOTES-003    收入增长与应收增长配比
+  L=0.0 R=0.0 diff=0.0
+  收入增长与应收增长配比: 无法执行校验 — 公式解析失败: 「if revenue_growth<0 and ar_growth>0 -> abnormal; revenue_growth/ar_growth>120% -> abnormal」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-GM-001    毛利率区间检验
+  L=0.0 R=0.0 diff=0.0
+  毛利率区间检验: 无法执行校验 — 公式解析失败: 「0 <= (revenue - operating_cost)/revenue <= 1」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-GM-002    毛利率同比波动
+  L=0.0 R=0.0 diff=0.0
+  毛利率同比波动: 无法执行校验 — 公式解析失败: 「abs(gm_this - gm_prev)/gm_prev <= 0.30」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-DAR-001   资产负债率合理性
+  L=0.0 R=0.0 diff=0.0
+  资产负债率合理性: 无法执行校验 — 公式解析失败: 「liability_total/asset_total < 1 (资不抵债) ; 提示>0.7」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-OCF-001   经营现金流/净利润比率(净现比)
+  L=0.0 R=0.0 diff=0.0
+  经营现金流/净利润比率(净现比): 无法执行校验 — 公式解析失败: 「if net_profit>0 and operating_net<0 -> warning; ratio<1 提示」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-ART-001   应收账款周转率异常
+  L=0.0 R=0.0 diff=0.0
+  应收账款周转率异常: 无法执行校验 — 公式解析失败: 「ar_turnover_days > industry_avg*1.2 ; ar/revenue > 0.30」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-INV-001   存货周转率异常
+  L=0.0 R=0.0 diff=0.0
+  存货周转率异常: 无法执行校验 — 公式解析失败: 「inv_turnover_days > industry_avg*1.2 or consecutive_decline」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-FLUC-001  关键科目同比/环比波动>30%
+  L=0.0 R=0.0 diff=0.0
+  关键科目同比/环比波动>30%: 无法执行校验 — 公式解析失败: 「abs(yoy_change) > 0.30 or abs(qoq_change) > 0.30」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-RE-001    重分类: 应收账款贷方->预收; 应付借方->预付
+  L=0.0 R=0.0 diff=0.0
+  重分类: 应收账款贷方->预收; 应付借方->预付: 无法执行校验 — 公式解析失败: 「if accounts_receivable<0 -> reclass to advance_from_customers; if accounts_payable<0 -> reclass to prepayments」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-RE-002    重分类: 其他应收/应付负数
+  L=0.0 R=0.0 diff=0.0
+  重分类: 其他应收/应付负数: 无法执行校验 — 公式解析失败: 「if other_receivable<0 -> reclass to other_payable; if other_payable<0 -> reclass to other_receivable」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-SALES-001 销售收现比率
+  L=0.0 R=0.0 diff=0.0
+  销售收现比率: 无法执行校验 — 公式解析失败: 「cash_received_from_sales / revenue >= 0.8」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-QUICK-001 流动比率<1 偿债风险
+  L=0.0 R=0.0 diff=0.0
+  流动比率<1 偿债风险: 无法执行校验 — 公式解析失败: 「current_assets/current_liabilities >= 1」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-OCF-002   经营活动现金流连续为负
+  L=0.0 R=0.0 diff=0.0
+  经营活动现金流连续为负: 无法执行校验 — 公式解析失败: 「operating_net < 0 for 3 consecutive years」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-NONREC-001 扣非净利润为负但净利润为正
+  L=0.0 R=0.0 diff=0.0
+  扣非净利润为负但净利润为正: 无法执行校验 — 公式解析失败: 「if net_profit>0 and non_recurring_net_profit<0 -> warning」(公式必须包含 '==' 进行相等校验)
+[ERR] LR-FIX-001   在建工程长期不转固
+  L=0.0 R=0.0 diff=0.0
+  在建工程长期不转固: 无法执行校验 — 公式解析失败: 「construction_in_progress age > 3 years and no transfer」(公式必须包含 '==' 进行相等校验)

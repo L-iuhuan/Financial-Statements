@@ -57,7 +57,7 @@ class ToleranceComparator:
                 if left == 0:
                     return True, 0.0
                 raise ValueError(
-                    f"相对容差比较失败: 基准值(right)为0，无法计算相对差异"
+                    "相对容差比较失败: 基准值(right)为0，无法计算相对差异"
                 )
             relative_diff = abs(diff) / abs(right)
             return relative_diff <= tolerance, diff

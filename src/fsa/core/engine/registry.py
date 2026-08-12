@@ -22,9 +22,10 @@ class RuleRegistry:
     def __init__(self, rules: list[ReconciliationRule]) -> None:
         self._rules: dict[str, ReconciliationRule] = {r.rule_id: r for r in rules}
         self._disabled: set[str] = set()
+        self._custom_ids: set[str] = set()
 
     @classmethod
-    def from_json(cls, file_path: str | Path) -> "RuleRegistry":
+    def from_json(cls, file_path: str | Path) -> RuleRegistry:
         """从 JSON 规则库文件创建注册表。"""
         return cls(load_rules_from_json(file_path))
 
@@ -88,6 +89,40 @@ class RuleRegistry:
             return False
         self._rules[rule_id] = replace(rule, tolerance=tolerance)
         return True
+
+    def add_rule(self, rule: ReconciliationRule, custom: bool = True) -> bool:
+        """添加一条规则。rule_id 已存在时拒绝并返回 False。
+
+        Args:
+            rule: 待添加的规则
+            custom: 是否为自定义规则 (自定义规则可删除, 内置规则不可)
+
+        Returns:
+            添加成功返回 True, rule_id 冲突返回 False
+        """
+        if rule.rule_id in self._rules:
+            return False
+        self._rules[rule.rule_id] = rule
+        if custom:
+            self._custom_ids.add(rule.rule_id)
+        return True
+
+    def remove_rule(self, rule_id: str) -> bool:
+        """删除一条规则。仅允许删除自定义规则, 内置规则返回 False。"""
+        if rule_id not in self._custom_ids:
+            return False
+        self._rules.pop(rule_id, None)
+        self._disabled.discard(rule_id)
+        self._custom_ids.discard(rule_id)
+        return True
+
+    def is_custom(self, rule_id: str) -> bool:
+        """判断是否为自定义规则。"""
+        return rule_id in self._custom_ids
+
+    def get_custom_ids(self) -> set[str]:
+        """返回所有自定义规则的 rule_id 集合。"""
+        return set(self._custom_ids)
 
     def count(self) -> int:
         """规则总数。"""

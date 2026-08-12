@@ -3,7 +3,7 @@
 验证完整管线:
 1. Excel 文件读取 -> 识别三大报表 -> 提取科目数据
 2. 导入的 Report 对象包含正确的科目和金额
-3. ValidationService 执行 44 条规则 -> 产出 ValidationSummary
+3. ValidationService 执行 37 条规则 -> 产出 ValidationSummary
 4. 校验结果中: 表内平衡规则全部通过, 部分跨表规则因缺项异常
 """
 
@@ -211,8 +211,8 @@ class TestValidationPipeline:
         """汇总中的 passed + failed + errored = total (skipped 单独计)。"""
         s = validation_summary
         assert s.passed + s.failed + s.errored == s.total
-        # skipped + total = 规则库总数 (44)
-        assert s.skipped + s.total == 44
+        # skipped + total = 规则库总数 (39)
+        assert s.skipped + s.total == 37
 
 
 # ── 数据一致性测试 ──

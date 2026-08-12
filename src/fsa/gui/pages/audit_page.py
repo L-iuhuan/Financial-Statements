@@ -1,12 +1,17 @@
 """审计底稿页面: 表格形式展示全部校验结果。
 
-匹配 Demo v4 设计: 审计表格 + 导出按钮。
+匹配 Demo v4 设计: 审计表格 + 导出按钮 + 打印预览。
 """
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
+from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -20,7 +25,10 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import InfoBar, InfoBarPosition
 
+from fsa.core.exporter.audit_exporter import AuditExporter
+from fsa.core.models.rule import Severity
 from fsa.gui.app_state import AppState
+from fsa.gui.theme import current_palette, get_mono_font
 
 
 class AuditPage(QWidget):
@@ -40,6 +48,7 @@ class AuditPage(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content = QWidget()
+        content.setObjectName("PageContent")
         layout = QVBoxLayout(content)
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -53,14 +62,15 @@ class AuditPage(QWidget):
 
         export_btn = QPushButton("导出 Excel")
         export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        export_btn.setStyleSheet(
-            "QPushButton { background-color: #ffffff; color: #111827; "
-            "border: 1px solid #e5e7eb; border-radius: 6px; "
-            "padding: 8px 16px; font-size: 13px; font-weight: 500; }"
-            "QPushButton:hover { background-color: #f3f4f6; }"
-        )
+        export_btn.setObjectName("BtnSecondary")
         export_btn.clicked.connect(self._on_export)
         title_row.addWidget(export_btn)
+
+        print_btn = QPushButton("打印预览")
+        print_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        print_btn.setObjectName("BtnSecondary")
+        print_btn.clicked.connect(self._on_print_preview)
+        title_row.addWidget(print_btn)
         layout.addLayout(title_row)
 
         # 表格
@@ -75,24 +85,11 @@ class AuditPage(QWidget):
         )
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
-        self._table.setStyleSheet(
-            "QTableWidget { background-color: #ffffff; "
-            "border: 1px solid #e5e7eb; border-radius: 8px; }"
-            "QHeaderView::section { background-color: #f3f4f6; "
-            "color: #6b7280; font-weight: 600; font-size: 12px; "
-            "padding: 8px 12px; border: none; "
-            "border-bottom: 1px solid #e5e7eb; }"
-            "QTableWidget::item { padding: 8px 12px; "
-            "border-bottom: 1px solid #e5e7eb; }"
-        )
         layout.addWidget(self._table)
 
         # 空状态
         self._empty = QLabel("暂无校验结果，请先在「数据导入」页面执行校验")
-        self._empty.setStyleSheet(
-            "font-size: 14px; color: #9ca3af; text-align: center; "
-            "padding: 48px;"
-        )
+        self._empty.setObjectName("EmptyLabel")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setVisible(True)
         layout.addWidget(self._empty)
@@ -117,41 +114,52 @@ class AuditPage(QWidget):
         self._empty.setVisible(False)
         results = summary.results
         self._table.setRowCount(len(results))
+        p = current_palette()
 
         for i, result in enumerate(results):
             self._table.setItem(i, 0, QTableWidgetItem(result.rule_id))
             self._table.setItem(i, 1, QTableWidgetItem(result.rule_name))
 
-            cat = result.rule_id.split("-")[0] if "-" in result.rule_id else ""
-            cat_name = {
-                "BS": "表内平衡", "IS": "表内平衡", "CF": "表内平衡",
-                "SCE": "表间勾稽", "NOTES": "表间勾稽",
-                "LR": "逻辑合理性",
-            }.get(cat, "")
-            self._table.setItem(i, 2, QTableWidgetItem(cat_name))
+            # 使用引擎提供的真实分类
+            cat_text = result.category if result.category else ""
+            self._table.setItem(i, 2, QTableWidgetItem(cat_text))
 
-            # 从规则 ID 推断涉及的报表
-            stmt_map = {
-                "BS": "资产负债表", "IS": "利润表", "CF": "现金流量表",
-                "SCE": "所有者权益变动表", "NOTES": "附注",
-                "LR": "多表",
-            }
-            self._table.setItem(i, 3, QTableWidgetItem(stmt_map.get(cat, "")))
+            # 涉及报表 (从 registry 查找规则获取 statements)
+            stmts = ""
+            registry = self._state.registry
+            if registry is not None:
+                rule = registry.get_by_id(result.rule_id)
+                if rule is not None:
+                    stmts = ", ".join(rule.statements)
+            self._table.setItem(i, 3, QTableWidgetItem(stmts))
 
+            # 校验结果 + 颜色
             if result.errored:
-                status_text = "⚠ 异常"
+                status_text = "异常"
+                status_color = p["warning"]
             elif result.passed:
-                status_text = "✓ 通过"
+                status_text = "通过"
+                status_color = p["success"]
             else:
-                status_text = "✗ 不通过"
+                if result.severity is Severity.ERROR:
+                    status_text = "不通过"
+                    status_color = p["error"]
+                else:
+                    status_text = "警告"
+                    status_color = p["warning"]
 
-            self._table.setItem(i, 4, QTableWidgetItem(status_text))
+            status_item = QTableWidgetItem(status_text)
+            status_item.setForeground(QColor(status_color))
+            self._table.setItem(i, 4, status_item)
 
             diff_item = QTableWidgetItem(f"{result.diff:,.2f}")
             diff_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+            diff_item.setFont(get_mono_font(10))
             self._table.setItem(i, 5, diff_item)
 
-            self._table.setItem(i, 6, QTableWidgetItem(str(result.tolerance)))
+            tol_item = QTableWidgetItem(str(result.tolerance))
+            tol_item.setFont(get_mono_font(10))
+            self._table.setItem(i, 6, tol_item)
 
     def _on_export(self) -> None:
         summary = self._state.results
@@ -162,8 +170,96 @@ class AuditPage(QWidget):
                 position=InfoBarPosition.TOP, duration=3000, parent=self,
             )
             return
-        InfoBar.info(
-            "导出功能", "Excel 导出功能正在开发中",
-            orient=Qt.Orientation.Horizontal, isClosable=True,
-            position=InfoBarPosition.TOP, duration=3000, parent=self,
+
+        period = summary.period or "未命名"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"审计底稿_{period}_{timestamp}.xlsx"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出审计底稿",
+            default_name,
+            "Excel 文件 (*.xlsx)",
         )
+        if not path:
+            return
+
+        try:
+            exporter = AuditExporter()
+            exporter.export(summary, path)
+            InfoBar.success(
+                "导出成功", f"已导出到 {path}",
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=5000, parent=self,
+            )
+        except PermissionError:
+            InfoBar.error(
+                "导出失败", "文件被占用，请关闭已打开的 Excel 文件后重试",
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=5000, parent=self,
+            )
+        except OSError:
+            InfoBar.error(
+                "导出失败", "无法写入文件，请检查路径权限",
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=5000, parent=self,
+            )
+
+    def _on_print_preview(self) -> None:
+        summary = self._state.results
+        if summary is None:
+            InfoBar.warning(
+                "提示", "请先执行校验，再打印底稿",
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=3000, parent=self,
+            )
+            return
+
+        dialog = QPrintPreviewDialog(self)
+        dialog.paintRequested.connect(self._render_print)
+        dialog.exec()
+
+    def _render_print(self, printer: QPrinter) -> None:
+        from PySide6.QtGui import QTextDocument
+
+        summary = self._state.results
+        if summary is None:
+            return
+
+        rows = []
+        for result in summary.results:
+            status = (
+                "异常" if result.errored
+                else "通过" if result.passed
+                else "不通过" if result.severity is Severity.ERROR
+                else "警告"
+            )
+            rows.append(
+                f"<tr>"
+                f"<td>{result.rule_id}</td>"
+                f"<td>{result.rule_name}</td>"
+                f"<td>{result.category}</td>"
+                f"<td>{status}</td>"
+                f"<td align='right'>{result.diff:,.2f}</td>"
+                f"<td>{result.tolerance}</td>"
+                f"</tr>"
+            )
+
+        html = (
+            "<html><head><style>"
+            "table { border-collapse: collapse; width: 100%; }"
+            "th, td { border: 1px solid #ccc; padding: 6px; font-size: 12px; }"
+            "th { background-color: #f3f4f6; }"
+            "</style></head><body>"
+            "<h2>审计底稿</h2>"
+            "<table>"
+            "<tr><th>规则 ID</th><th>规则名称</th><th>分类</th>"
+            "<th>校验结果</th><th>差额 (元)</th><th>容差</th></tr>"
+            f"{''.join(rows)}"
+            "</table></body></html>"
+        )
+
+        doc = QTextDocument()
+        doc.setHtml(html)
+        # print 是 QTextDocument 的有效方法 (PySide6 将 C++ print 映射至此)
+        doc.print(printer)

@@ -8,10 +8,18 @@
 
 from __future__ import annotations
 
-from simpleeval import simple_eval
-from simpleeval import InvalidExpression, NameNotDefined
+from simpleeval import InvalidExpression, NameNotDefined, simple_eval
 
 from fsa.core.exceptions import EvaluationError, FormulaParseError
+
+# simpleeval 默认不提供任何内置函数，需要手动注入常用的数学函数
+_EVAL_FUNCTIONS: dict[str, object] = {
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "round": round,
+    "sum": sum,
+}
 
 
 class ExpressionEvaluator:
@@ -63,7 +71,7 @@ class ExpressionEvaluator:
             FormulaParseError: 语法错误
         """
         try:
-            result = simple_eval(expression, names=namespace)
+            result = simple_eval(expression, names=namespace, functions=_EVAL_FUNCTIONS)
         except NameNotDefined as e:
             raise EvaluationError(
                 expression,
@@ -82,3 +90,44 @@ class ExpressionEvaluator:
             raise EvaluationError(expression, "表达式求值结果为 None")
 
         return float(result)
+
+    @staticmethod
+    def evaluate_boolean(expression: str, namespace: dict[str, float]) -> bool:
+        """求值阈值/范围判断表达式，返回布尔结果。
+
+        用于不含 '==' 的公式，如:
+        - "liability_total / asset_total <= 0.85"
+        - "net_profit <= 0 or operating_net >= 0"
+        - "0 <= (revenue - operating_cost)/revenue <= 1"
+
+        Args:
+            expression: 判断表达式字符串
+            namespace: 变量命名空间
+
+        Returns:
+            True 表示条件满足（校验通过），False 表示不满足
+
+        Raises:
+            EvaluationError: 变量未定义、除零、类型错误等
+            FormulaParseError: 语法错误
+        """
+        try:
+            result = simple_eval(expression, names=namespace, functions=_EVAL_FUNCTIONS)
+        except NameNotDefined as e:
+            raise EvaluationError(
+                expression,
+                f"变量「{e.name}」未定义。请检查报表中是否包含该项目。",
+            ) from e
+        except ZeroDivisionError as e:
+            raise EvaluationError(
+                expression, "除零错误。公式中存在除以零的操作。"
+            ) from e
+        except (SyntaxError, InvalidExpression) as e:
+            raise FormulaParseError(expression, f"语法错误: {e}") from e
+        except TypeError as e:
+            raise EvaluationError(expression, f"类型错误: {e}") from e
+
+        if result is None:
+            raise EvaluationError(expression, "表达式求值结果为 None")
+
+        return bool(result)

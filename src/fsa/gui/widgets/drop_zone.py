@@ -1,6 +1,6 @@
 """文件拖放区域组件。
 
-用户可以将 .xlsx/.xls 文件拖到此处, 触发 file_dropped 信号。
+用户可以将 .xlsx/.xls/.pdf 文件拖到此处, 触发 file_dropped 信号。
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
 
 class DropZone(QFrame):
-    """Excel 文件拖放区域。"""
+    """财务报表文件拖放区域。"""
 
     file_dropped = Signal(str)
 
@@ -26,12 +26,12 @@ class DropZone(QFrame):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        hint = QLabel("将财务报表 Excel 文件拖拽到此处")
+        hint = QLabel("将财务报表文件拖拽到此处")
         hint.setObjectName("DropZoneText")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
-        sub_hint = QLabel("支持 .xlsx / .xls 格式 · 资产负债表、利润表、现金流量表")
+        sub_hint = QLabel("支持 .xlsx / .xls / .pdf 格式 · 资产负债表、利润表、现金流量表")
         sub_hint.setObjectName("DropZoneHint")
         sub_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(sub_hint)
@@ -39,20 +39,23 @@ class DropZone(QFrame):
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.setStyleSheet(
-                "DropZone { border: 2px dashed #4f46e5; "
-                "border-radius: 8px; background-color: #eef2ff; }"
-            )
+            self.setProperty("drag", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
-        self.setStyleSheet("")
+        self.setProperty("drag", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def dropEvent(self, event: QDropEvent) -> None:
-        self.setStyleSheet("")
+        self.setProperty("drag", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
         urls = event.mimeData().urls()
         if not urls:
             return
         path = urls[0].toLocalFile()
-        if path.lower().endswith((".xlsx", ".xls")):
+        if path.lower().endswith((".xlsx", ".xls", ".pdf")):
             event.acceptProposedAction()
             self.file_dropped.emit(path)
