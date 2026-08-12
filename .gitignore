@@ -31,9 +31,10 @@ ENV/
 .settings/
 
 # PyInstaller
-*.spec
 build/
 dist/
+# 注意: fsa.spec 是打包配置, 需要入库 (用 ! 取消忽略)
+!fsa.spec
 
 # Testing
 .pytest_cache/
@@ -43,6 +44,12 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 coverage.xml
+
+# 临时截图/验证产物 (不入库)
+ux_shots/
+verify_*.png
+ux_*.png
+*.xlsx.tmp
 
 # Database
 *.db
