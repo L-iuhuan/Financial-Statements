@@ -1,4 +1,4 @@
-# 一键构建脚本: PyInstaller -> (可选) Inno Setup 安装器
+﻿# 一键构建脚本: PyInstaller -> (可选) Inno Setup 安装器
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 # 前置: pip install pyinstaller; 如需生成安装器, 安装 Inno Setup 6
 
