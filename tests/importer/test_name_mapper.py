@@ -330,6 +330,17 @@ class TestExpandedStandardNames:
         for name in names:
             assert get_key(name) is not None, f"缺少现金流量表科目映射: {name}"
 
+    def test_cf_long_form_names_mapped(self) -> None:
+        """长格式现金流量项目映射到标准 key。"""
+        assert (
+            get_key("购建固定资产、无形资产和其他长期资产支付的现金")
+            == "cash_paid_for_fixed_assets"
+        )
+        assert (
+            get_key("处置固定资产、无形资产和其他长期资产收回的现金净额")
+            == "cash_from_asset_disposal"
+        )
+
     def test_alias_other_comprehensive_income_variant(self) -> None:
         """其他综合收益的税后净额 -> other_comprehensive_income_after_tax。"""
         assert get_key("其他综合收益的税后净额") == "other_comprehensive_income_after_tax"
