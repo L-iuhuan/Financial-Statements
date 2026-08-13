@@ -1,0 +1,13 @@
+{
+  "entities": {
+    "杭州杰为科技有限公司": {
+      "tolerance": 0.01,
+      "cash_equivalent_codes": ["1001", "1002"],
+      "tb_to_bs_mappings": {
+        "monetary_funds": {"codes": ["1001", "1002", "1012"], "side": "debit"},
+        "accounts_receivable": {"codes": ["1122"], "side": "debit"},
+        "accounts_payable": {"codes": ["2202"], "side": "credit"}
+      }
+    }
+  }
+}

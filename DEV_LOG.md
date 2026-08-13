@@ -561,3 +561,19 @@ RC-002: 预收款项/应付账款/预付款项/其他应付款 与资产负债�
 - 知识库新增明细勾稽、现金流分类复核、往来重分类、附表4/5/6 等条目，
   无 LLM 时的回退问答可覆盖新校验能力
 - 测试: 新增明细规则建议断言，tests/agent 57 个测试全部通过
+
+---
+
+## 2026-08-13 | 分支合并 + 公司 GLM 联调 + 多主体批量（main）
+
+### 完成事项
+
+- feat/importer-adaptability 快进合并至 main 并推送（7419c68..d3a4304）
+- 诊断链路接入 OpenAI 兼容 provider：DiagnosisEngine.diagnose_with_client，
+  main_window 优先使用设置中的 provider，回退本地 Ollama/规则化诊断；
+  设置页默认服务地址与模型改为公司 GLM 端点（API key 由用户填写）
+- 联调验证：GLM-4.7-PF8 连通，通用问答与差异诊断回答质量正常
+- `services/entity_config.py`: 主体级口径配置（现金等价物/余额表映射/容差）
+- `services/multi_entity_service.py`: 多主体批量校验（逐文件夹导入+校验+合并），
+  以及 ICF-002 内部现金流双边核对（流入 vs 对方流出，双向去重）
+- 示例配置 resources/entity_configs.example.json；测试 4 例
