@@ -1,0 +1,252 @@
+{
+  "anti_patterns": [],
+  "by_level": {
+    "macro": [
+      {
+        "anti_pattern_proximity": {},
+        "confidence": 0.4,
+        "evidence": [
+          {
+            "file": "Dockerfile*",
+            "lines": "",
+            "note": "0 Dockerfile(s)"
+          }
+        ],
+        "id": "F-MAC-MONO",
+        "level": "macro",
+        "pattern": "Monolith",
+        "recommendation": "Keep the single deployable; revisit if any module starts owning an independent release cadence.",
+        "scope": ".",
+        "severity": "none",
+        "signals_confirming": [
+          "one_dockerfile",
+          "no_services_dir"
+        ],
+        "signals_disproving": [
+          "many_entrypoints"
+        ],
+        "sub_scores": {
+          "anti_pattern_proximity": 1,
+          "completeness": 2,
+          "consistency": 2,
+          "isolation": 1,
+          "necessity": 2
+        },
+        "verdict": "Correct",
+        "violations": [
+          "Isolation",
+          "Anti-pattern proximity"
+        ]
+      }
+    ],
+    "meso": [
+      {
+        "anti_pattern_proximity": {},
+        "confidence": 0.5,
+        "evidence": [
+          {
+            "file": "src\\fsa\\services\\validation_service.py",
+            "lines": "30-46",
+            "note": "ValidationService orchestrates RuleRegistry + RuleRunner; no file/GUI access"
+          },
+          {
+            "file": "src\\fsa\\gui\\pages\\import_page.py",
+            "lines": "32",
+            "note": "interface layer consumes the service via fsa.services.validation_service import"
+          }
+        ],
+        "id": "F-MES-SVC",
+        "level": "meso",
+        "pattern": "Service Layer",
+        "recommendation": "Maintain the current service-layer boundary and transactional scope.",
+        "scope": "2 *Service classes",
+        "severity": "none",
+        "signals_confirming": [
+          "service_class_names",
+          "imported_by_interface_layer"
+        ],
+        "signals_disproving": [],
+        "sub_scores": {
+          "anti_pattern_proximity": 2,
+          "completeness": 1,
+          "consistency": 2,
+          "isolation": 2,
+          "necessity": 2
+        },
+        "verdict": "Correct",
+        "violations": [
+          "Completeness"
+        ]
+      }
+    ],
+    "micro": []
+  },
+  "findings": [
+    {
+      "anti_pattern_proximity": {},
+      "confidence": 0.4,
+      "evidence": [
+        {
+          "file": "Dockerfile*",
+          "lines": "",
+          "note": "0 Dockerfile(s)"
+        }
+      ],
+      "id": "F-MAC-MONO",
+      "level": "macro",
+      "pattern": "Monolith",
+      "recommendation": "Keep the single deployable; revisit if any module starts owning an independent release cadence.",
+      "scope": ".",
+      "severity": "none",
+      "signals_confirming": [
+        "one_dockerfile",
+        "no_services_dir"
+      ],
+      "signals_disproving": [
+        "many_entrypoints"
+      ],
+      "sub_scores": {
+        "anti_pattern_proximity": 1,
+        "completeness": 2,
+        "consistency": 2,
+        "isolation": 1,
+        "necessity": 2
+      },
+      "verdict": "Correct",
+      "violations": [
+        "Isolation",
+        "Anti-pattern proximity"
+      ]
+    },
+    {
+      "anti_pattern_proximity": {},
+      "confidence": 0.5,
+      "evidence": [
+        {
+          "file": "src\\fsa\\services\\validation_service.py",
+          "lines": "30-46",
+          "note": "ValidationService orchestrates RuleRegistry + RuleRunner; no file/GUI access"
+        },
+        {
+          "file": "src\\fsa\\gui\\pages\\import_page.py",
+          "lines": "32",
+          "note": "interface layer consumes the service via fsa.services.validation_service import"
+        }
+      ],
+      "id": "F-MES-SVC",
+      "level": "meso",
+      "pattern": "Service Layer",
+      "recommendation": "Maintain the current service-layer boundary and transactional scope.",
+      "scope": "2 *Service classes",
+      "severity": "none",
+      "signals_confirming": [
+        "service_class_names",
+        "imported_by_interface_layer"
+      ],
+      "signals_disproving": [],
+      "sub_scores": {
+        "anti_pattern_proximity": 2,
+        "completeness": 1,
+        "consistency": 2,
+        "isolation": 2,
+        "necessity": 2
+      },
+      "verdict": "Correct",
+      "violations": [
+        "Completeness"
+      ]
+    }
+  ],
+  "generated_at": "2026-08-13T13:28:02Z",
+  "inventory": {
+    "entrypoints": [
+      "scripts\\generate_logo.py",
+      "scripts\\ux_shots.py",
+      "scripts\\validate_real_data.py",
+      "scripts\\verify_agent.py",
+      "scripts\\verify_diagnosis.py",
+      "scripts\\verify_export.py",
+      "scripts\\verify_ollama.py",
+      "scripts\\verify_pdf_import.py",
+      "scripts\\verify_sce.py",
+      "scripts\\verify_theme.py",
+      "scripts\\verify_update.py",
+      "scripts\\verify_w3.py",
+      "src\\fsa\\__main__.py"
+    ],
+    "frameworks": [],
+    "languages": {
+      "html": {
+        "files": 1,
+        "loc": 284
+      },
+      "json": {
+        "files": 1,
+        "loc": 50
+      },
+      "python": {
+        "files": 148,
+        "loc": 24015
+      },
+      "toml": {
+        "files": 1,
+        "loc": 69
+      }
+    },
+    "loc_total": 24418,
+    "runtime_topology": []
+  },
+  "mode": "quick",
+  "risk_matrix": [],
+  "runtime": {
+    "degradations": [
+      "tokei not installed; using naive line count",
+      "ripgrep (rg) not installed; pattern detection will be slower"
+    ],
+    "duration_seconds": 0,
+    "networkx_available": true,
+    "rg_available": false,
+    "tool_versions": {}
+  },
+  "schema_version": "1.0",
+  "scope": [
+    "."
+  ],
+  "subtrees": [
+    {
+      "path": "demo",
+      "role_guess": "module"
+    },
+    {
+      "path": "docs",
+      "role_guess": "module"
+    },
+    {
+      "path": "resources",
+      "role_guess": "module"
+    },
+    {
+      "path": "scripts",
+      "role_guess": "module"
+    },
+    {
+      "path": "src\\fsa",
+      "role_guess": "bounded_context"
+    },
+    {
+      "path": "src\\fsa.egg-info",
+      "role_guess": "bounded_context"
+    },
+    {
+      "path": "tests",
+      "role_guess": "module"
+    }
+  ],
+  "top_risks": [],
+  "verdict_counts": {
+    "Correct": 2,
+    "Incorrect": 0,
+    "Partial": 0,
+    "candidate": 0
+  }
+}

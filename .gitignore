@@ -82,3 +82,6 @@ temp/
 .codegraph/
 .omo/
 .opencode/
+
+# 架构审计中间产物 (最终报告 architecture-audit.md/.json 入库)
+.architecture-audit/
