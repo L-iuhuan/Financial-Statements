@@ -106,6 +106,59 @@ class ReclassificationRow:
     row: int = 0
 
 
+@dataclass(frozen=True)
+class RelatedPartyPurchaseRow:
+    """关联方采购明细的一行（附表 4）。"""
+
+    buyer: str
+    counterparty: str
+    payment_nature: str
+    total_amount: float
+    supply_chain: float = 0.0
+    mold: float = 0.0
+    inventory: float = 0.0
+    main_cost: float = 0.0
+    other_cost: float = 0.0
+    rnd_expense: float = 0.0
+    admin_expense: float = 0.0
+    selling_expense: float = 0.0
+    other: float = 0.0
+    difference_reason: str = ""
+    row: int = 0
+
+
+@dataclass(frozen=True)
+class SalesDetailRow:
+    """销售收入成本明细的一行（附表 5）。"""
+
+    year: int
+    month: int
+    entity: str
+    customer: str
+    revenue_type: str
+    revenue_amount: float
+    cost_amount: float
+    direct_material: float = 0.0
+    processing: float = 0.0
+    direct_labor: float = 0.0
+    manufacturing: float = 0.0
+    gross_margin: float | None = None
+    row: int = 0
+
+
+@dataclass(frozen=True)
+class InternalCashFlowRow:
+    """内部交易现金流明细的一行（附表 6）。"""
+
+    month: int
+    entity: str
+    counterparty: str
+    payment_nature: str
+    project: str
+    amount: float
+    row: int = 0
+
+
 @dataclass
 class DetailDataset:
     """一次导入的完整明细数据集。"""
@@ -118,3 +171,21 @@ class DetailDataset:
     journal: list[JournalRow] = field(default_factory=list)
     cash_flow_detail: list[CashFlowDetailRow] = field(default_factory=list)
     reclassifications: list[ReclassificationRow] = field(default_factory=list)
+    related_party_purchases: list[RelatedPartyPurchaseRow] = field(default_factory=list)
+    sales_details: list[SalesDetailRow] = field(default_factory=list)
+    internal_cash_flows: list[InternalCashFlowRow] = field(default_factory=list)
+
+    def merge(self, other: DetailDataset) -> None:
+        """合并另一个数据集（多文件导入同一期间时使用）。"""
+        if not self.period and other.period:
+            self.period = other.period
+        if not self.source_file:
+            self.source_file = other.source_file
+        self.trial_balance.extend(other.trial_balance)
+        self.trial_balance_current.extend(other.trial_balance_current)
+        self.journal.extend(other.journal)
+        self.cash_flow_detail.extend(other.cash_flow_detail)
+        self.reclassifications.extend(other.reclassifications)
+        self.related_party_purchases.extend(other.related_party_purchases)
+        self.sales_details.extend(other.sales_details)
+        self.internal_cash_flows.extend(other.internal_cash_flows)

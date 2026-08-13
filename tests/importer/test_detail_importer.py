@@ -58,6 +58,34 @@ def _make_workbook(tmp_path: Path) -> Path:
             [2, "应付账款", "供应商A", 1000.0, "应付账款", 1000.0, None, None],
         ],
     )
+    ws_purchase = wb.create_sheet("关联方采购")
+    _write_sheet(
+        ws_purchase,
+        ["单位名称（填表单位-购买方）", "对方单位名称", "款项性质", "总采购金额",
+         "供应链采购", "其中：结存存货", "主营业务成本", "研发费用"],
+        [
+            ["杭州杰为科技有限公司", "拓尔微电子股份有限公司", "采购款", 1000.0, None, 1000.0, None, None],
+        ],
+    )
+    ws_sales = wb.create_sheet("销售收入成本明细表")
+    _write_sheet(
+        ws_sales,
+        ["年", "月", "归属主体", "客户名称", "收入类型", "销售收入金额", "销售成本金额",
+         "直接材料", "加工费", "直接人工", "制造费", "销售毛利率"],
+        [
+            [2026, 1, "杭州杰为科技有限公司", "客户A", "主营业务收入", 800.0, 500.0,
+             300.0, 100.0, 50.0, 50.0, 0.375],
+        ],
+    )
+    ws_internal = wb.create_sheet("内部现金流量明细表")
+    _write_sheet(
+        ws_internal,
+        ["月份", "统计单位名称", "对方单位名称", "款项性质", "现金流量项目", "发生额"],
+        [
+            [1, "杭州杰为科技有限公司", "拓尔微电子股份有限公司", "货款",
+             "收到的其他与经营活动的现金", 100.0],
+        ],
+    )
     wb.save(str(path))
     return path
 
@@ -83,6 +111,13 @@ class TestDetailImporter:
         assert len(dataset.reclassifications) == 2
         assert dataset.reclassifications[0].original_account == "应收账款"
         assert dataset.reclassifications[0].book_amount == -20.0
+
+        assert len(dataset.related_party_purchases) == 1
+        assert dataset.related_party_purchases[0].total_amount == 1000.0
+        assert len(dataset.sales_details) == 1
+        assert dataset.sales_details[0].revenue_amount == 800.0
+        assert len(dataset.internal_cash_flows) == 1
+        assert dataset.internal_cash_flows[0].amount == 100.0
 
     def test_current_month_sheet_goes_to_separate_list(self, tmp_path: Path) -> None:
         path = tmp_path / "detail_current.xlsx"

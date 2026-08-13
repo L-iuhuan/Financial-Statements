@@ -18,6 +18,12 @@ from fsa.core.engine.reclassification_checks import (
     check_reclassification_rules,
     check_reclassification_vs_balance_sheet,
 )
+from fsa.core.engine.supplementary_checks import (
+    check_internal_cash_flow_vs_statement,
+    check_related_party_purchase_breakdown,
+    check_sales_detail_consistency,
+    check_sales_vs_income_statement,
+)
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report, ReportType
 from fsa.core.models.result import ValidationSummary
@@ -72,6 +78,14 @@ class DetailValidationService:
         )
         results += check_reclassification_rules(dataset, self._config.tolerance)
         results += check_reclassification_vs_balance_sheet(
+            dataset, reports, self._config.tolerance
+        )
+        results += check_related_party_purchase_breakdown(dataset, self._config.tolerance)
+        results += check_sales_detail_consistency(dataset, self._config.tolerance)
+        results += check_sales_vs_income_statement(
+            dataset, reports, self._config.tolerance
+        )
+        results += check_internal_cash_flow_vs_statement(
             dataset, reports, self._config.tolerance
         )
 

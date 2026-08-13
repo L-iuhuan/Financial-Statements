@@ -14,8 +14,11 @@ from fsa.core.importer.excel_reader import RawSheetData, read_excel
 from fsa.core.models.detail import (
     CashFlowDetailRow,
     DetailDataset,
+    InternalCashFlowRow,
     JournalRow,
+    RelatedPartyPurchaseRow,
     ReclassificationRow,
+    SalesDetailRow,
     TrialBalanceRow,
 )
 
@@ -42,6 +45,12 @@ class DetailImporter:
                 self._collect_cash_flow_detail(dataset, sheet_name, raw)
             elif _is_reclassification(raw.headers):
                 self._collect_reclassification(dataset, raw)
+            elif _is_related_party_purchase(raw.headers):
+                self._collect_related_party_purchase(dataset, raw)
+            elif _is_sales_detail(raw.headers):
+                self._collect_sales_detail(dataset, raw)
+            elif _is_internal_cash_flow(raw.headers):
+                self._collect_internal_cash_flow(dataset, raw)
 
         logger.info(
             f"明细导入完成: 余额表 {len(dataset.trial_balance)} 行, "
@@ -91,6 +100,27 @@ class DetailImporter:
         rows = [_parse_reclassification_row(raw.headers, row) for row in raw.rows]
         dataset.reclassifications.extend([r for r in rows if r is not None])
 
+    def _collect_related_party_purchase(
+        self, dataset: DetailDataset, raw: RawSheetData
+    ) -> None:
+        """解析关联方采购明细工作表。"""
+        rows = [_parse_purchase_row(raw.headers, row) for row in raw.rows]
+        dataset.related_party_purchases.extend([r for r in rows if r is not None])
+
+    def _collect_sales_detail(
+        self, dataset: DetailDataset, raw: RawSheetData
+    ) -> None:
+        """解析销售收入成本明细工作表。"""
+        rows = [_parse_sales_row(raw.headers, row) for row in raw.rows]
+        dataset.sales_details.extend([r for r in rows if r is not None])
+
+    def _collect_internal_cash_flow(
+        self, dataset: DetailDataset, raw: RawSheetData
+    ) -> None:
+        """解析内部交易现金流量明细工作表。"""
+        rows = [_parse_internal_cash_flow_row(raw.headers, row) for row in raw.rows]
+        dataset.internal_cash_flows.extend([r for r in rows if r is not None])
+
 
 def _is_trial_balance(headers: list[str]) -> bool:
     """按表头判断是否为科目余额表。"""
@@ -119,6 +149,24 @@ def _is_reclassification(headers: list[str]) -> bool:
     """按表头判断是否为往来重分类明细。"""
     joined = "".join(_normalize(h) for h in headers)
     return "重分类后科目" in joined and "账面余额" in joined
+
+
+def _is_related_party_purchase(headers: list[str]) -> bool:
+    """按表头判断是否为关联方采购明细。"""
+    joined = "".join(_normalize(h) for h in headers)
+    return "总采购金额" in joined and "对方单位名称" in joined
+
+
+def _is_sales_detail(headers: list[str]) -> bool:
+    """按表头判断是否为销售收入成本明细。"""
+    joined = "".join(_normalize(h) for h in headers)
+    return "销售收入金额" in joined and "销售成本金额" in joined
+
+
+def _is_internal_cash_flow(headers: list[str]) -> bool:
+    """按表头判断是否为内部交易现金流量明细。"""
+    joined = "".join(_normalize(h) for h in headers)
+    return "统计单位名称" in joined and "现金流量项目" in joined
 
 
 def _is_cumulative(sheet_name: str) -> bool:
@@ -209,11 +257,93 @@ def _parse_reclassification_row(
     )
 
 
+def _parse_purchase_row(
+    headers: list[str], row: dict[str, object]
+) -> RelatedPartyPurchaseRow | None:
+    """解析关联方采购明细的一行。"""
+    buyer = _text(row, _find_col(headers, "填表单位-购买方"))
+    counterparty = _text(row, _find_col(headers, "对方单位名称"))
+    if not buyer and not counterparty:
+        return None
+    return RelatedPartyPurchaseRow(
+        buyer=buyer,
+        counterparty=counterparty,
+        payment_nature=_text(row, _find_col(headers, "款项性质")),
+        total_amount=_number(row, _find_exact_col(headers, "总采购金额")),
+        supply_chain=_number(row, _find_col(headers, "供应链采购")),
+        mold=_number(row, _find_col(headers, "模具采购")),
+        inventory=_number(row, _find_col(headers, "结存存货")),
+        main_cost=_number(row, _find_col(headers, "主营业务成本")),
+        other_cost=_number(row, _find_col(headers, "其他业务成本")),
+        rnd_expense=_number(row, _find_col(headers, "研发费用")),
+        admin_expense=_number(row, _find_col(headers, "管理费用")),
+        selling_expense=_number(row, _find_col(headers, "销售费用")),
+        other=_number(row, _find_exact_col(headers, "其他")),
+        difference_reason=_text(row, _find_exact_col(headers, "差异原因")),
+        row=_to_int(row.get("_row")),
+    )
+
+
+def _parse_sales_row(
+    headers: list[str], row: dict[str, object]
+) -> SalesDetailRow | None:
+    """解析销售收入成本明细的一行。"""
+    revenue = _number(row, _find_col(headers, "销售收入金额"))
+    cost = _number(row, _find_col(headers, "销售成本金额"))
+    if revenue == 0.0 and cost == 0.0:
+        return None
+    margin_value = row.get(_find_col(headers, "销售毛利率"))
+    margin: float | None = _optional_number(margin_value)
+    return SalesDetailRow(
+        year=_to_int(row.get(_find_exact_col(headers, "年"))),
+        month=_to_int(row.get(_find_exact_col(headers, "月"))),
+        entity=_text(row, _find_col(headers, "归属主体")),
+        customer=_text(row, _find_col(headers, "客户名称")),
+        revenue_type=_text(row, _find_col(headers, "收入类型")),
+        revenue_amount=revenue,
+        cost_amount=cost,
+        direct_material=_number(row, _find_exact_col(headers, "直接材料")),
+        processing=_number(row, _find_exact_col(headers, "加工费")),
+        direct_labor=_number(row, _find_exact_col(headers, "直接人工")),
+        manufacturing=_number(row, _find_exact_col(headers, "制造费")),
+        gross_margin=margin,
+        row=_to_int(row.get("_row")),
+    )
+
+
+def _parse_internal_cash_flow_row(
+    headers: list[str], row: dict[str, object]
+) -> InternalCashFlowRow | None:
+    """解析内部交易现金流量明细的一行。"""
+    project = _text(row, _find_col(headers, "现金流量项目"))
+    amount = _number(row, _find_exact_col(headers, "发生额"))
+    if not project or amount == 0.0:
+        return None
+    return InternalCashFlowRow(
+        month=_to_int(row.get(_find_col(headers, "月份"))),
+        entity=_text(row, _find_col(headers, "统计单位名称")),
+        counterparty=_text(row, _find_col(headers, "对方单位名称")),
+        payment_nature=_text(row, _find_col(headers, "款项性质")),
+        project=project,
+        amount=amount,
+        row=_to_int(row.get("_row")),
+    )
+
+
 def _find_col(headers: list[str], keyword: str) -> str | None:
     """按关键字（去空白后包含匹配）查找列名。"""
     normalized_keyword = _normalize(keyword)
     for header in headers:
         if normalized_keyword in _normalize(header):
+            return header
+    return None
+
+
+def _find_exact_col(headers: list[str], name: str) -> str | None:
+    """按去空白后的精确名称查找列名（避免"其他"误命中"其他业务成本"）。"""
+    normalized_name = _normalize(name)
+    for header in headers:
+        if _normalize(header) == normalized_name:
             return header
     return None
 
@@ -243,6 +373,16 @@ def _number(row: dict[str, object], column: str | None) -> float:
         return float(value)
     except (ValueError, TypeError):
         return 0.0
+
+
+def _optional_number(value: object) -> float | None:
+    """安全转为 float，不可解析返回 None。"""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
 
 
 def _to_int(value: object) -> int:
