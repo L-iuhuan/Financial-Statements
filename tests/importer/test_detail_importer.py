@@ -48,6 +48,16 @@ def _make_workbook(tmp_path: Path) -> Path:
             [None, None, None, "销售商品、提供劳务收到的现金(01)", "小计", "流入", 500.0],
         ],
     )
+    ws_rc = wb.create_sheet("往来重分类明细")
+    _write_sheet(
+        ws_rc,
+        ["序号", "账面对应往来科目（重分类前科目）", "客户/供应商/等", "账面余额",
+         "重分类后科目", "重分类后金额", "开票金额", "暂估金额"],
+        [
+            [1, "应收账款", "深圳某公司", -20.0, "预收账款", 20.0, None, None],
+            [2, "应付账款", "供应商A", 1000.0, "应付账款", 1000.0, None, None],
+        ],
+    )
     wb.save(str(path))
     return path
 
@@ -69,6 +79,10 @@ class TestDetailImporter:
 
         assert len(dataset.cash_flow_detail) == 2
         assert dataset.cash_flow_detail[0].project == "销售商品、提供劳务收到的现金(01)"
+
+        assert len(dataset.reclassifications) == 2
+        assert dataset.reclassifications[0].original_account == "应收账款"
+        assert dataset.reclassifications[0].book_amount == -20.0
 
     def test_current_month_sheet_goes_to_separate_list(self, tmp_path: Path) -> None:
         path = tmp_path / "detail_current.xlsx"

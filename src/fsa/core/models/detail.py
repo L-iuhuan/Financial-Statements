@@ -90,6 +90,22 @@ class CashFlowDetailRow:
     row: int = 0
 
 
+@dataclass(frozen=True)
+class ReclassificationRow:
+    """往来重分类明细的一行（附表 3）。"""
+
+    original_account: str
+    counterparty: str
+    book_amount: float
+    reclassified_account: str
+    reclassified_amount: float
+    invoiced_amount: float = 0.0
+    accrued_amount: float = 0.0
+    is_related_party: str = ""
+    note: str = ""
+    row: int = 0
+
+
 @dataclass
 class DetailDataset:
     """一次导入的完整明细数据集。"""
@@ -101,3 +117,4 @@ class DetailDataset:
     trial_balance_current: list[TrialBalanceRow] = field(default_factory=list)
     journal: list[JournalRow] = field(default_factory=list)
     cash_flow_detail: list[CashFlowDetailRow] = field(default_factory=list)
+    reclassifications: list[ReclassificationRow] = field(default_factory=list)

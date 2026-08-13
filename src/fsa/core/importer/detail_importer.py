@@ -15,6 +15,7 @@ from fsa.core.models.detail import (
     CashFlowDetailRow,
     DetailDataset,
     JournalRow,
+    ReclassificationRow,
     TrialBalanceRow,
 )
 
@@ -39,6 +40,8 @@ class DetailImporter:
                 self._collect_journal(dataset, sheet_name, raw)
             elif _is_cash_flow_detail(raw.headers):
                 self._collect_cash_flow_detail(dataset, sheet_name, raw)
+            elif _is_reclassification(raw.headers):
+                self._collect_reclassification(dataset, raw)
 
         logger.info(
             f"明细导入完成: 余额表 {len(dataset.trial_balance)} 行, "
@@ -81,6 +84,13 @@ class DetailImporter:
         rows = [_parse_cash_flow_row(raw.headers, row) for row in raw.rows]
         dataset.cash_flow_detail.extend([r for r in rows if r is not None])
 
+    def _collect_reclassification(
+        self, dataset: DetailDataset, raw: RawSheetData
+    ) -> None:
+        """解析往来重分类明细工作表。"""
+        rows = [_parse_reclassification_row(raw.headers, row) for row in raw.rows]
+        dataset.reclassifications.extend([r for r in rows if r is not None])
+
 
 def _is_trial_balance(headers: list[str]) -> bool:
     """按表头判断是否为科目余额表。"""
@@ -103,6 +113,12 @@ def _is_cash_flow_detail(headers: list[str]) -> bool:
     """按表头判断是否为现金流量明细（区别于现金流量表主表）。"""
     joined = "".join(_normalize(h) for h in headers)
     return "现金流量项目" in joined and "方向" in joined
+
+
+def _is_reclassification(headers: list[str]) -> bool:
+    """按表头判断是否为往来重分类明细。"""
+    joined = "".join(_normalize(h) for h in headers)
+    return "重分类后科目" in joined and "账面余额" in joined
 
 
 def _is_cumulative(sheet_name: str) -> bool:
@@ -168,6 +184,27 @@ def _parse_cash_flow_row(
         amount=_number(row, _find_amount_col(headers)),
         month=_to_int(row.get(_find_col(headers, "年月"))),
         day=_to_int(row.get(_find_col(headers, "年日"))),
+        row=_to_int(row.get("_row")),
+    )
+
+
+def _parse_reclassification_row(
+    headers: list[str], row: dict[str, object]
+) -> ReclassificationRow | None:
+    """解析往来重分类明细的一行。"""
+    original = _text(row, _find_col(headers, "账面对应往来科目"))
+    if not original:
+        return None
+    return ReclassificationRow(
+        original_account=original,
+        counterparty=_text(row, _find_col(headers, "客户/供应商")),
+        book_amount=_number(row, _find_col(headers, "账面余额")),
+        reclassified_account=_text(row, _find_col(headers, "重分类后科目")),
+        reclassified_amount=_number(row, _find_col(headers, "重分类后金额")),
+        invoiced_amount=_number(row, _find_col(headers, "开票金额")),
+        accrued_amount=_number(row, _find_col(headers, "暂估金额")),
+        is_related_party=_text(row, _find_col(headers, "是否合并范围内关联方")),
+        note=_text(row, _find_col(headers, "备注")),
         row=_to_int(row.get("_row")),
     )
 

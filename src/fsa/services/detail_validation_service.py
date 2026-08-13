@@ -14,6 +14,10 @@ from fsa.core.engine.cash_flow_checks import (
     check_cash_flow_classification,
     check_cash_flow_coverage,
 )
+from fsa.core.engine.reclassification_checks import (
+    check_reclassification_rules,
+    check_reclassification_vs_balance_sheet,
+)
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report, ReportType
 from fsa.core.models.result import ValidationSummary
@@ -65,6 +69,10 @@ class DetailValidationService:
             check_cash_flow_coverage(
                 dataset, self._config.cash_equivalent_codes, self._config.tolerance
             )
+        )
+        results += check_reclassification_rules(dataset, self._config.tolerance)
+        results += check_reclassification_vs_balance_sheet(
+            dataset, reports, self._config.tolerance
         )
 
         passed = sum(1 for result in results if result.passed)

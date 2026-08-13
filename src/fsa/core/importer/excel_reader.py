@@ -196,6 +196,8 @@ def _capture_header_rows(matrix: list[list[object]], header_idx: int) -> list[li
         if row_idx >= len(matrix):
             break
         cells = matrix[row_idx]
+        if _contains_number(cells):
+            break
         first = _normalize_cell(cells[0]) if cells else ""
         if first:
             break
@@ -203,6 +205,14 @@ def _capture_header_rows(matrix: list[list[object]], header_idx: int) -> list[li
             break
         header_rows.append(_to_header_list(cells, fill_empty=False))
     return header_rows
+
+
+def _contains_number(cells: list[object]) -> bool:
+    """判断一行是否包含数值（数据行特征，用于停止多层表头捕获）。"""
+    for cell in cells:
+        if isinstance(cell, (int, float)) and not isinstance(cell, bool):
+            return True
+    return False
 
 
 def _build_rows(

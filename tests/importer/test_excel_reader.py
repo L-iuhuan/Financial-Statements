@@ -266,6 +266,28 @@ class TestHeaderRowDetection:
         sheet = data["资产负债表"]
         assert sheet.headers == ["资   产", "期末余额", "负债和所有者权益", "期末余额#2"]
 
+    def test_numeric_data_row_stops_header_capture(self, tmp_path: Path) -> None:
+        """序号列为空但含数值的数据行不应被当作子表头层。"""
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "往来重分类明细"
+        rows = [
+            ["序号", "账面对应往来科目", "账面余额", "重分类后科目", "重分类后金额"],
+            [None, "应收账款", 1000.0, "应收账款", 1000.0],
+        ]
+        for row_idx, row in enumerate(rows, 1):
+            for col_idx, value in enumerate(row, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+        path = tmp_path / "numeric_first_empty.xlsx"
+        wb.save(str(path))
+
+        data = read_excel(str(path))
+        sheet = data["往来重分类明细"]
+        assert len(sheet.header_rows) == 1
+        assert sheet.rows[0]["账面对应往来科目"] == "应收账款"
+
 
 class TestReadXls:
     """测试 .xls 文件的读取（pandas + xlrd 路径）。"""
