@@ -23,13 +23,17 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import FluentIcon, InfoBar, InfoBarPosition
 
 from fsa.core.importer.importer import ImportService
+from fsa.core.importer.detail_importer import DetailImporter
+from fsa.core.exceptions import FSAError
+from fsa.core.models.detail import DetailDataset
+from fsa.core.models.report import Report, ReportType
 from fsa.core.models.rule import Severity
 from fsa.gui.app_state import AppState
 from fsa.gui.widgets.drop_zone import DropZone
 from fsa.gui.widgets.report_card import ReportCard
 from fsa.gui.widgets.result_card import ResultCard
 from fsa.gui.widgets.summary_card import SummaryCard
-from fsa.services.validation_service import ValidationService
+from fsa.services.package_service import PackageValidationService
 
 
 class ImportPage(QWidget):
@@ -44,6 +48,7 @@ class ImportPage(QWidget):
         self.setObjectName("ImportPage")
         self._state = state
         self._importer = ImportService()
+        self._detail_importer = DetailImporter()
         self._current_filter = "all"
         self._result_cards: list[tuple[object, ResultCard]] = []
         self._setup_ui()
@@ -159,7 +164,7 @@ class ImportPage(QWidget):
         empty_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(empty_text)
 
-        empty_hint = QLabel("导入三大主表后，点击「执行校验」开始勾稽校验")
+        empty_hint = QLabel("可一次拖入主表与附表（1~6），点击「执行校验」开始勾稽校验")
         empty_hint.setObjectName("MetaLabel")
         empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(empty_hint)
@@ -174,31 +179,60 @@ class ImportPage(QWidget):
         main.addWidget(scroll)
 
     def _connect_signals(self) -> None:
-        self._drop_zone.file_dropped.connect(self._on_file)
+        self._drop_zone.files_dropped.connect(self._on_files)
         self._state.reports_changed.connect(self._update_reports)
         self._state.results_changed.connect(self._update_results)
 
     def _on_file(self, file_path: str) -> None:
-        logger.info(f"导入文件: {file_path}")
-        self._importer.period = self._state.period
-        try:
-            reports = self._importer.import_file(file_path)
-        except FileNotFoundError:
-            self._show_info("文件不存在，请检查文件路径", "error")
-            return
-        except ValueError as e:
-            self._show_info(f"文件格式错误: {e}", "error")
-            return
-        except OSError as e:
-            self._show_info(f"读取文件失败: {e}", "error")
-            return
+        self._on_files([file_path])
 
-        if not reports:
-            self._show_info("文件中未找到可识别的财务报表", "warning")
+    def _on_files(self, file_paths: list[str]) -> None:
+        """一次导入一个或多个文件（主表 + 附表），分别识别并合并。"""
+        logger.info(f"导入文件: {file_paths}")
+        self._importer.period = self._state.period
+        self._detail_importer.period = self._state.period
+
+        reports_by_type: dict[ReportType, Report] = {}
+        dataset = DetailDataset(period=self._state.period)
+        errors: list[str] = []
+        try:
+            for path in file_paths:
+                try:
+                    for report in self._importer.import_file(path):
+                        if report.report_type not in reports_by_type:
+                            reports_by_type[report.report_type] = report
+                    dataset.merge(self._detail_importer.import_file(path))
+                except FileNotFoundError:
+                    errors.append(f"{path}: 文件不存在")
+                except (ValueError, OSError, ImportError) as e:
+                    errors.append(f"{path}: {e}")
+        except (FSAError, ValueError, OSError, ImportError, KeyError, TypeError) as e:
+            logger.error(f"导入报表包异常: {e}")
+            errors.append(str(e))
+
+        reports = list(reports_by_type.values())
+        if not reports and not dataset.trial_balance and not dataset.journal:
+            self._show_info("未识别到任何财务报表或明细数据", "warning")
             return
 
         self._state.set_reports(reports)
-        self._show_info(f"成功导入 {len(reports)} 张报表", "success")
+        self._state.set_detail_dataset(dataset)
+        detail_rows = (
+            len(dataset.trial_balance)
+            + len(dataset.journal)
+            + len(dataset.cash_flow_detail)
+            + len(dataset.reclassifications)
+            + len(dataset.related_party_purchases)
+            + len(dataset.sales_details)
+            + len(dataset.internal_cash_flows)
+        )
+        message = f"成功导入 {len(reports)} 张报表、{detail_rows} 行明细数据"
+        if errors:
+            message += f"；{len(errors)} 个文件失败"
+            self._show_info(message, "warning")
+        else:
+            self._show_info(message, "success")
+        self.validate_enabled_changed.emit(bool(reports) or detail_rows > 0)
 
     def trigger_validate(self) -> None:
         """触发校验 (供顶栏按钮调用)。"""
@@ -206,12 +240,15 @@ class ImportPage(QWidget):
         if registry is None:
             self._show_info("规则库未加载，请检查规则文件", "error")
             return
-        if not self._state.reports:
+        dataset = self._state.detail_dataset
+        if not self._state.reports and dataset is None:
             self._show_info("请先导入报表", "warning")
             return
 
-        service = ValidationService(registry)
-        summary = service.validate(self._state.reports, self._state.period)
+        service = PackageValidationService(registry)
+        summary = service.validate(
+            self._state.reports, dataset or DetailDataset(period=self._state.period), self._state.period
+        )
         self._state.set_results(summary)
         kind = "success" if summary.all_passed else "warning"
         self._show_info(

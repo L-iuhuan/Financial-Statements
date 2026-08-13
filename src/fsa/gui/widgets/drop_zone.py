@@ -14,6 +14,7 @@ class DropZone(QFrame):
     """财务报表文件拖放区域。"""
 
     file_dropped = Signal(str)
+    files_dropped = Signal(list)
 
     def __init__(self) -> None:
         super().__init__()
@@ -31,7 +32,7 @@ class DropZone(QFrame):
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
-        sub_hint = QLabel("支持 .xlsx / .xls / .pdf 格式 · 资产负债表、利润表、现金流量表")
+        sub_hint = QLabel("支持 .xlsx / .xls / .pdf · 可一次拖入主表与附表（1~6）")
         sub_hint.setObjectName("DropZoneHint")
         sub_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(sub_hint)
@@ -55,7 +56,11 @@ class DropZone(QFrame):
         urls = event.mimeData().urls()
         if not urls:
             return
-        path = urls[0].toLocalFile()
-        if path.lower().endswith((".xlsx", ".xls", ".pdf")):
+        paths = [url.toLocalFile() for url in urls]
+        supported = [
+            path for path in paths if path.lower().endswith((".xlsx", ".xls", ".pdf"))
+        ]
+        if supported:
             event.acceptProposedAction()
-            self.file_dropped.emit(path)
+            self.files_dropped.emit(supported)
+            self.file_dropped.emit(supported[0])

@@ -505,5 +505,24 @@ RC-002: 预收款项/应付账款/预付款项/其他应付款 与资产负债�
   应收账款/其他应收款 重分类明细与报表差 2,021 / 3,389.82（坏账准备口径）
   应付账款余额表 -7,497 vs 报表 559,155.44（重分类口径）
   内部现金流「收到其他经营现金」9,932,877.64 超主表 7,424,050.44（2,508,827.20）
-  现金流分类 29 张凭证待复核（1012 理财口径）
+ 现金流分类 29 张凭证待复核（1012 理财口径）
 ```
+
+---
+
+## 2026-08-13 | GUI 报表包接线（feat/importer-adaptability）
+
+### 完成事项
+
+- `services/package_service.py`: PackageValidationService + merge_summaries，
+  主表规则与明细勾稽一次执行、合并为一份 ValidationSummary
+- AppState 增加 detail_dataset；DropZone 支持多文件拖入（files_dropped）
+- ImportPage 支持一次拖入主表+附表（1~6）：主表去重合并、明细数据集 merge，
+  顶栏校验按钮执行合并校验；重置清空明细数据
+- 测试: package merge 单测 + GUI 报表包导入端到端测试
+
+### 验证
+
+- 本机安装 PySide6/pytest-qt/PySide6-Fluent-Widgets 后，GUI 测试
+  101 通过（6 个设置持久化用例因沙箱注册表权限失败，与代码无关）
+- 新增 GUI 用例通过：一次导入主表+明细 → 3 张报表 + 明细数据 → 合并校验

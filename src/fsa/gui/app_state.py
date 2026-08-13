@@ -14,6 +14,7 @@ from loguru import logger
 from PySide6.QtCore import QObject, Signal
 
 from fsa.core.engine.registry import RuleRegistry
+from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report
 from fsa.core.models.result import ValidationSummary
 from fsa.core.resources import resource_path
@@ -44,6 +45,7 @@ class AppState(QObject):
     def __init__(self) -> None:
         super().__init__()
         self._reports: list[Report] = []
+        self._detail_dataset: DetailDataset | None = None
         self._results: ValidationSummary | None = None
         self._registry: RuleRegistry | None = None
         self._period: str = ""
@@ -88,6 +90,10 @@ class AppState(QObject):
         return self._reports
 
     @property
+    def detail_dataset(self) -> DetailDataset | None:
+        return self._detail_dataset
+
+    @property
     def results(self) -> ValidationSummary | None:
         return self._results
 
@@ -115,6 +121,10 @@ class AppState(QObject):
         self._reports = reports
         self.reports_changed.emit()
 
+    def set_detail_dataset(self, dataset: DetailDataset | None) -> None:
+        """设置明细数据集（附表 2~6 合并结果）。"""
+        self._detail_dataset = dataset
+
     def set_results(self, results: ValidationSummary, persist: bool = True) -> None:
         """设置校验结果并可选持久化到 SQLite。
 
@@ -141,6 +151,7 @@ class AppState(QObject):
     def clear_all(self) -> None:
         """清空报表和结果。"""
         self._reports = []
+        self._detail_dataset = None
         self._results = None
         self.reports_changed.emit()
         self.results_changed.emit()
