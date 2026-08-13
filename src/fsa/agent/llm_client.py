@@ -261,3 +261,19 @@ def create_llm_client(
             base_url=base_url, model=model, api_key=api_key, timeout=timeout
         )
     raise ValueError(f"未知的 LLM provider 类型: {provider}")
+
+
+def infer_provider(base_url: str) -> str:
+    """根据服务地址推断 provider 类型。
+
+    用户只填地址、未选择模型类型时使用:
+    - 含 localhost/127.0.0.1 且不含 /v1 后缀 → 本地 Ollama
+    - 其余 → OpenAI 兼容 API
+    """
+    url = base_url.strip().lower()
+    if not url:
+        return ""
+    is_local = "localhost" in url or "127.0.0.1" in url
+    if is_local and not url.rstrip("/").endswith("/v1"):
+        return "ollama"
+    return "openai"

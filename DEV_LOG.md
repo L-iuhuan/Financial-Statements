@@ -577,3 +577,18 @@ RC-002: 预收款项/应付账款/预付款项/其他应付款 与资产负债�
 - `services/multi_entity_service.py`: 多主体批量校验（逐文件夹导入+校验+合并），
   以及 ICF-002 内部现金流双边核对（流入 vs 对方流出，双向去重）
 - 示例配置 resources/entity_configs.example.json；测试 4 例
+
+---
+
+## 2026-08-13 | GUI 可用性完善（字体/DPI、Agent 对话、动效卡顿）
+
+### 修复
+
+- 高 DPI 缩放取整策略（RoundPreferFloor）+ 字体全量 hinting/抗锯齿，
+  缓解高分屏字体锐化发虚
+- Agent 对话未走模型：provider 未选择但已填服务地址时按地址自动推断
+  （localhost:11434→ollama，其余/v1→openai）；可用性检查改为实时探测，
+  不再缓存过期结果；模型配置但服务不可用时明确提示并附规则化答复
+- AgentLoop 移入后台线程，LLM 长响应不再冻结界面
+- 按钮增加 :pressed 按压态；导入页报表卡/结果卡批量重建时暂停重绘
+- 测试: infer_provider/工厂 6 例；GUI 相关 20 例通过

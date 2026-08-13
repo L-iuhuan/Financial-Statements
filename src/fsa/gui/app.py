@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from loguru import logger
@@ -48,8 +49,18 @@ def main() -> None:
 
     sys.excepthook = exception_hook
 
+    # 高 DPI: Qt6 默认启用缩放，取整策略避免分数缩放导致的字体发虚
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.RoundPreferFloor
+    )
+
     app = QApplication(sys.argv)
-    app.setFont(QFont("Microsoft YaHei UI", 10))
+    app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
+    font = QFont("Microsoft YaHei UI", 10)
+    font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    app.setFont(font)
 
     dark, mode = _get_startup_theme()
     apply_theme(dark=dark)

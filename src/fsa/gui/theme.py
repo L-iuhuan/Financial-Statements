@@ -158,6 +158,9 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["bg_surface_hover"]};
         color: {p["text_primary"]};
     }}
+    QPushButton#NavItem:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
     QPushButton#NavItem[active="true"] {{
         background-color: {p["brand_50"]};
         color: {p["brand_700"]};
@@ -199,6 +202,11 @@ def _generate_qss(p: dict[str, str]) -> str:
     QPushButton#BtnPrimary:hover {{
         background-color: {p["brand_700"]};
     }}
+    QPushButton#BtnPrimary:pressed {{
+        background-color: {p["brand_700"]};
+        padding-top: 9px;
+        padding-bottom: 7px;
+    }}
     QPushButton#BtnPrimary:disabled {{
         background-color: {p["brand_600"]};
         color: rgba(255,255,255,0.5);
@@ -216,6 +224,9 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["bg_surface_hover"]};
         border-color: {p["border_strong"]};
     }}
+    QPushButton#BtnSecondary:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
     QPushButton#BtnIcon {{
         background-color: {p["bg_surface"]};
         color: {p["text_secondary"]};
@@ -227,6 +238,9 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["bg_surface_hover"]};
         color: {p["text_primary"]};
         border-color: {p["border_strong"]};
+    }}
+    QPushButton#BtnIcon:pressed {{
+        background-color: {p["bg_surface_active"]};
     }}
     QPushButton#FilterTab {{
         background-color: {p["bg_surface"]};
@@ -240,6 +254,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     QPushButton#FilterTab:hover {{
         background-color: {p["bg_surface_hover"]};
         border-color: {p["border_strong"]};
+    }}
+    QPushButton#FilterTab:pressed {{
+        background-color: {p["bg_surface_active"]};
     }}
     QPushButton#FilterTab[active="true"] {{
         background-color: {p["brand_600"]};
@@ -255,6 +272,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     }}
     QPushButton#TextBtn:hover {{
         background-color: {p["bg_surface_hover"]};
+    }}
+    QPushButton#TextBtn:pressed {{
+        background-color: {p["bg_surface_active"]};
     }}
     QPushButton#DangerBtn {{
         background-color: {p["bg_surface"]};
@@ -493,6 +513,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     QPushButton#AgentFAB:hover {{
         background-color: {p["brand_700"]};
     }}
+    QPushButton#AgentFAB:pressed {{
+        background-color: {p["brand_700"]};
+    }}
 
     /* ── AI 抽屉 ── */
     QFrame#AgentDrawer {{
@@ -532,6 +555,9 @@ def _generate_qss(p: dict[str, str]) -> str:
         border-color: {p["border_strong"]};
         color: {p["text_primary"]};
     }}
+    QPushButton#AgentHeaderBtn:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
     QPushButton#AgentSessionBtn {{
         background-color: {p["bg_surface"]};
         color: {p["text_secondary"]};
@@ -569,6 +595,9 @@ def _generate_qss(p: dict[str, str]) -> str:
         color: {p["brand_700"]};
         background-color: {p["brand_50"]};
     }}
+    QPushButton#AgentSuggestion:pressed {{
+        background-color: {p["brand_100"]};
+    }}
     QLabel#AgentBubbleUser {{
         background-color: {p["brand_600"]};
         color: white;
@@ -601,6 +630,9 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["brand_100"]};
         border-color: {p["brand_500"]};
     }}
+    QPushButton#DiagnoseBtn:pressed {{
+        background-color: {p["brand_200"]};
+    }}
 
     /* ── 深度辩论按钮 (深色填充, 区别于诊断按钮) ── */
     QPushButton#DebateBtn {{
@@ -612,6 +644,9 @@ def _generate_qss(p: dict[str, str]) -> str:
         font-weight: 600;
     }}
     QPushButton#DebateBtn:hover {{
+        background-color: {p["brand_700"]};
+    }}
+    QPushButton#DebateBtn:pressed {{
         background-color: {p["brand_700"]};
     }}
 

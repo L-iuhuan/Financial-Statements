@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from loguru import logger
-from PySide6.QtCore import QEvent, QSettings, Qt
+from PySide6.QtCore import Q_ARG, QEvent, QMetaObject, QSettings, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -446,6 +446,7 @@ class MainWindow(QMainWindow):
         无 LLM 时给出通用的中文帮助提示。
         """
         logger.info(f"AI 助手收到消息: {text}")
+        from fsa.agent.fallback import fallback_answer
         rule_id = self._agent_drawer.context_rule_id
 
         if rule_id is not None:
@@ -454,39 +455,54 @@ class MainWindow(QMainWindow):
 
         # 尝试 AgentLoop (多轮对话 + 工具调用)
         client = self._get_llm_client()
-        if client is not None and self._llm_available(client):
-            self._run_agent_loop(client, text)
+        if client is not None:
+            if self._llm_available(client):
+                self._run_agent_loop(client, text)
+                return
+            self._agent_drawer.add_assistant_message(
+                "检测到已配置大模型，但服务暂时不可用。以下先给出规则化答复：\n\n"
+                + fallback_answer(text, self._state)
+            )
             return
 
         # 无 LLM: 智能规则化回退 (规则查询/知识库, 而非固定文本)
-        from fsa.agent.fallback import fallback_answer
         self._agent_drawer.add_assistant_message(
             fallback_answer(text, self._state)
         )
 
     def _llm_available(self, client) -> bool:
-        """检查 LLM 可用性 (缓存结果避免重复探测)。"""
-        if self._ollama_available is None:
-            try:
-                self._ollama_available = bool(client.is_available())
-            except Exception:
-                self._ollama_available = False
-        return bool(self._ollama_available)
+        """检查 LLM 可用性（每次实时探测，配置修改后立即生效）。"""
+        try:
+            return bool(client.is_available())
+        except Exception:
+            return False
 
     def _run_agent_loop(self, client, text: str) -> None:
-        """运行 AgentLoop: 多轮对话 + 工具调用 + 分步推理。"""
-        from fsa.agent.agent_loop import AgentLoop
-        from fsa.agent.llm_client import LLMError
-
+        """在后台线程运行 AgentLoop，避免长 LLM 调用冻结界面。"""
         history = self._agent_drawer.get_chat_history(limit=10)
-        try:
-            answer = AgentLoop(client, self._state).ask(text, history=history)
-            self._agent_drawer.add_assistant_message(answer)
-        except LLMError as e:
-            logger.error(f"AgentLoop 失败: {e}")
-            self._agent_drawer.add_assistant_message(
-                f"AI 分析暂时不可用: {e}\n\n建议您检查大模型服务是否正常运行。"
+
+        def task() -> None:
+            from fsa.agent.agent_loop import AgentLoop
+            from fsa.agent.llm_client import LLMError
+
+            try:
+                answer = AgentLoop(client, self._state).ask(text, history=history)
+            except LLMError as e:
+                logger.error(f"AgentLoop 失败: {e}")
+                answer = f"AI 分析暂时不可用: {e}\n\n建议您检查大模型服务是否正常运行。"
+            QMetaObject.invokeMethod(
+                self,
+                "_append_agent_answer",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, answer),
             )
+
+        import threading
+        threading.Thread(target=task, daemon=True).start()
+
+    def _append_agent_answer(self, answer: str) -> None:
+        """在 UI 线程追加 AI 回答。"""
+        self._agent_drawer.add_assistant_message(answer)
 
     def _on_diagnose(self, rule_id: str) -> None:
         """从校验卡片触发 AI 诊断: 打开抽屉、设上下文、运行诊断。"""
@@ -514,17 +530,17 @@ class MainWindow(QMainWindow):
         从 QSettings 读取 llm_provider/llm_base_url/llm_model/llm_api_key。
         返回 LLMClient 或 None (未配置时)。
         """
-        from fsa.agent.llm_client import create_llm_client
+        from fsa.agent.llm_client import create_llm_client, infer_provider
 
         settings = QSettings("FSA", "FinancialAudit")
         provider = str(settings.value("llm_provider", ""))
-        if not provider:
-            return None
         base_url = str(settings.value("llm_base_url", ""))
         model = str(settings.value("llm_model", "GLM-4.7-PF8"))
         api_key = str(settings.value("llm_api_key", ""))
-        if not base_url:
+        if not base_url and not provider:
             return None
+        if not provider:
+            provider = infer_provider(base_url)
         try:
             return create_llm_client(
                 provider=provider, base_url=base_url,

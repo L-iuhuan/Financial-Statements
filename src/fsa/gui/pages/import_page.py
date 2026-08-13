@@ -270,10 +270,13 @@ class ImportPage(QWidget):
         self._drop_zone.setVisible(False)
         self._empty_state.setVisible(False)
         self._clear_report_cards()
-
-        for i, report in enumerate(reports):
-            card = ReportCard(report)
-            self._cards_grid.addWidget(card, i // 3, i % 3)
+        self.setUpdatesEnabled(False)
+        try:
+            for i, report in enumerate(reports):
+                card = ReportCard(report)
+                self._cards_grid.addWidget(card, i // 3, i % 3)
+        finally:
+            self.setUpdatesEnabled(True)
 
         self.validate_enabled_changed.emit(True)
 
@@ -367,12 +370,16 @@ class ImportPage(QWidget):
 
         self._clear_cards()
         self._result_cards.clear()
-        for result in summary.results:
-            card = ResultCard(result)
-            card.diagnose_clicked.connect(self.diagnose_requested.emit)
-            card.debate_clicked.connect(self.debate_requested.emit)
-            self._cards_layout.addWidget(card)
-            self._result_cards.append((result, card))
+        self.setUpdatesEnabled(False)
+        try:
+            for result in summary.results:
+                card = ResultCard(result)
+                card.diagnose_clicked.connect(self.diagnose_requested.emit)
+                card.debate_clicked.connect(self.debate_requested.emit)
+                self._cards_layout.addWidget(card)
+                self._result_cards.append((result, card))
+        finally:
+            self.setUpdatesEnabled(True)
         self._apply_filter()
 
     def _apply_filter(self) -> None:
