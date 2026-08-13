@@ -88,7 +88,13 @@ def _build_category_advice(result: ValidationResult) -> str:
         lines.append("现金流量表平衡校验涉及期初期末现金等价物和汇率变动。")
         lines.append("常见遗漏: 请检查是否遗漏「汇率变动对现金及现金等价物的影响」项目。")
         lines.append("汇率变动金额通常较小，但若企业有大量外币业务则可能显著。")
-    elif rule_id.startswith("BS-") or rule_id.startswith("IS-") or rule_id.startswith("CF-"):
+    elif (
+        rule_id.startswith(("BS-", "IS-"))
+        or (
+            rule_id.startswith("CF-")
+            and not rule_id.startswith(("CF-DTL", "CF-JNL", "CF-CLS"))
+        )
+    ):
         if "BAL" in rule_id:
             lines.append("表内平衡规则不通过，说明相关合计项的取数不完整。")
             lines.append("建议检查: 各明细项目是否都已取数、是否有漏项、是否有重分类错误。")
@@ -102,6 +108,42 @@ def _build_category_advice(result: ValidationResult) -> str:
         lines.append("逻辑合理性规则属于业务合理性提示，而非硬性错误。")
         lines.append("这类规则的结果需要结合企业实际业务情况判断，不一定代表数据错误。")
         lines.append("建议: 结合行业特征、企业经营状况、历史同期数据进行综合判断。")
+    elif rule_id == "JNL-BAL-001":
+        lines.append("序时账逐凭证借贷不平衡，属于记账层面的硬性错误。")
+        lines.append("建议: 按提示中的凭证号打开凭证，核对借方与贷方分录是否完整、")
+        lines.append("是否存在漏记、串户或方向录入错误。")
+    elif rule_id == "CF-DTL-001":
+        lines.append("现金流量明细与主表项目不一致，可能是主表与明细的口径不同。")
+        lines.append("建议: 核对主表是否包含明细之外的调整项，例如不涉及现金的")
+        lines.append("投资活动、受限资金、内部划转等，必要时按企业口径调整填报。")
+    elif rule_id == "CF-JNL-001":
+        lines.append("现金流明细与序时账现金科目不一致，通常是现金等价物口径差异。")
+        lines.append("建议: 确认企业把哪些科目视为现金等价物（如理财产品 1012 是否纳入），")
+        lines.append("在主体配置中调整口径后重新核对。")
+    elif rule_id == "TB-BS-001":
+        lines.append("余额表与资产负债表不一致，常见于坏账准备、重分类和抵销调整。")
+        lines.append("建议: 用往来重分类明细（附表3）复核重分类结果，")
+        lines.append("并核对减值准备对报表净额的影响。")
+    elif rule_id in ("RC-001", "RC-002"):
+        lines.append("往来重分类检查关注负数余额转正与科目对应关系。")
+        lines.append("建议: 逐笔核对六大往来的负数余额是否已重分类到对应科目，")
+        lines.append("差额部分优先排查坏账准备等报表调整。")
+    elif rule_id == "RP-001":
+        lines.append("关联方采购总金额与成本/费用分类合计不一致。")
+        lines.append("建议: 核对采购金额在存货、主营业务成本、研发费用等分类中")
+        lines.append("是否分摊完整，是否存在遗漏或重复归类。")
+    elif rule_id in ("SAL-001", "SAL-002"):
+        lines.append("销售收入成本明细与账务不一致。")
+        lines.append("建议: 核对收入/成本金额与成本构成四要素（材料/加工/人工/制造费），")
+        lines.append("并按收入类型与利润表营业收入、营业成本逐项勾稽。")
+    elif rule_id == "ICF-001":
+        lines.append("内部交易现金流超过主表对应项目，属于需要解释的口径问题。")
+        lines.append("建议: 核对内部交易是否存在代收代付、轧差列报，")
+        lines.append("或内部现金流项目与主表项目的口径映射是否准确。")
+    elif rule_id.startswith("CF-CLS-"):
+        lines.append("这是现金流项目选择的复核提示，不一定是数据错误。")
+        lines.append("对方科目不在常见范围内，通常是因为企业有特殊业务（如理财、")
+        lines.append("保证金）或凭证为复合分录。建议结合凭证摘要确认分类口径。")
     else:
         # 通用分类建议
         if "A-表内平衡" in category:

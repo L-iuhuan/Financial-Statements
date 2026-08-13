@@ -68,12 +68,49 @@ class TestDiagnosisBasic:
         engine = DiagnosisEngine()
         result = _make_result()
         diagnosis = engine.diagnose(result)
-
         assert result.rule_id in diagnosis
         assert result.rule_name in diagnosis
         assert "差额" in diagnosis
         # 差额应格式化显示
         assert "10,000" in diagnosis
+
+
+class TestDetailRuleAdvice:
+    """明细层规则的针对性诊断建议。"""
+
+    def test_cash_flow_detail_advice_mentions_scope(self) -> None:
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="CF-DTL-001",
+            rule_name="现金流量明细=现金流量表",
+            category="L2-明细勾稽",
+            diff=15000000.0,
+        )
+        diagnosis = engine.diagnose(result)
+        assert "口径" in diagnosis
+        assert "受限资金" in diagnosis
+
+    def test_trial_balance_advice_mentions_bad_debt(self) -> None:
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="TB-BS-001",
+            rule_name="余额表=资产负债表",
+            category="L2-明细勾稽",
+            diff=2001.0,
+        )
+        diagnosis = engine.diagnose(result)
+        assert "坏账准备" in diagnosis
+
+    def test_cash_flow_classification_advice_is_review_hint(self) -> None:
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="CF-CLS-006",
+            rule_name="现金流选择: 投资支付的现金",
+            category="L4-现金流选择",
+            diff=1.0,
+        )
+        diagnosis = engine.diagnose(result)
+        assert "复核" in diagnosis
 
     def test_diagnose_output_contains_trace_subjects(self) -> None:
         """诊断输出包含涉及科目的名称、金额、行列定位。"""
