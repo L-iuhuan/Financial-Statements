@@ -480,3 +480,44 @@ class TestGetSupplementaryKey:
     def test_none_returns_none(self) -> None:
         """None 输入返回 None。"""
         assert get_supplementary_key(None) is None
+
+
+class TestSuffixStripping:
+    """测试行尾括号注释的剥离（报表常见的多余字符）。"""
+
+    def test_profit_items_with_parenthetical_suffix(self) -> None:
+        """营业利润/利润总额/净利润的括号注释被剥离。"""
+        assert get_key("营业利润（亏损以“-”号填列）") == "operating_profit"
+        assert get_key("利润总额（亏损总额以“-”号填列）") == "total_profit"
+        assert get_key("净利润（净亏损以“-”号填列）") == "net_profit"
+
+    def test_profit_items_with_half_width_parenthesis(self) -> None:
+        """半角括号后缀同样被剥离。"""
+        assert get_key("净利润(净亏损以-号填列)") == "net_profit"
+
+    def test_loss_items_with_parenthetical_suffix(self) -> None:
+        """损失类项目的括号注释被剥离。"""
+        assert get_key("投资收益（损失以“-”号填列）") == "investment_income"
+        assert get_key("公允价值变动收益（损失以“-”号填列）") == "fair_value_change"
+        assert get_key("信用减值损失（损失以“-”号填列）") == "credit_impairment"
+        assert get_key("资产减值损失（损失以“-”号填列）") == "asset_impairment"
+        assert get_key("资产处置收益（损失以“-”号填列）") == "asset_disposal_gain"
+
+    def test_prefix_and_suffix_combined(self) -> None:
+        """序号前缀 + 括号后缀组合清洗。"""
+        assert get_key("四、净利润（净亏损以“-”号填列）") == "net_profit"
+        assert get_key("减：所得税费用（收益以“-”号填列）") == "income_tax_expense"
+
+    def test_equity_alias_with_parenthetical_suffix(self) -> None:
+        """带括号变体的所有者权益别名映射。"""
+        assert get_key("实收资本（或股本）") == "paid_in_capital"
+        assert get_key("负债和所有者权益总计（或股东权益总计）") == "liability_equity_total"
+        assert get_key("归属于母公司所有者权益合计") == "parent_equity"
+
+    def test_suffix_only_name_returns_none(self) -> None:
+        """只有括号注释没有实际名称返回 None。"""
+        assert get_key("（净亏损以“-”号填列）") is None
+
+    def test_is_known_with_parenthetical_suffix(self) -> None:
+        """带括号注释的标准名 is_known 返回 True。"""
+        assert is_known("净利润（净亏损以“-”号填列）") is True

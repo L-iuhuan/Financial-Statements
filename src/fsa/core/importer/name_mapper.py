@@ -16,6 +16,12 @@ from types import MappingProxyType
 # 前缀正则: 匹配 一、二、...十、 减：加： 等
 _PREFIX_RE = re.compile(r"^[一二三四五六七八九十]+、|^减[：:]|^加[：:]|^其中[：:]|^\s+")
 
+# 后缀正则: 去除行尾的括号注释，如 "净利润（净亏损以“-”号填列）" -> "净利润"
+_SUFFIX_RE = re.compile(r"[（(][^）)]*[）)]\s*$")
+
+# 行尾冒号
+_TRAILING_COLON_RE = re.compile(r"[：:]+\s*$")
+
 # 标准 CAS 科目名 -> 英文 snake_case key
 _STANDARD_NAMES: dict[str, str] = {
     # === 资产负债表 - 流动资产 ===
@@ -205,8 +211,15 @@ _SUPPLEMENTARY_NAMES: dict[str, str] = {
 }
 
 
-def _clean_name(name: str) -> str:
-    """清理科目名称: 去除首尾空格 + 去除前缀(一、/减：/加：等)。
+def clean_name(name: str) -> str:
+    """规范化科目名称，容忍报表中常见的多余字符。
+
+    处理顺序:
+    1. 去除首尾空格
+    2. 去除行尾括号注释（如"（净亏损以“-”号填列）"、"（元/股）"）
+    3. 去除行尾冒号
+    4. 去除前缀（一、/减：/加：/其中：等）
+    5. 再次去除行尾冒号与空格
 
     Args:
         name: 原始科目名称
@@ -215,14 +228,20 @@ def _clean_name(name: str) -> str:
         清理后的科目名称
     """
     result = name.strip()
+    if not result:
+        return ""
+    result = _SUFFIX_RE.sub("", result)
+    result = _TRAILING_COLON_RE.sub("", result)
+    result = result.strip()
     result = _PREFIX_RE.sub("", result).strip()
+    result = _TRAILING_COLON_RE.sub("", result).strip()
     return result
 
 
 def get_key(name: str | None, default: str | None = None) -> str | None:
     """根据中文科目名获取对应的英文 key。
 
-    自动清洗前缀（一、, 减：, 加：等）和首尾空格，
+    自动清洗前缀（一、, 减：, 加：等）、行尾括号注释和首尾空格，
     依次查找标准名和别名。
 
     Args:
@@ -234,7 +253,7 @@ def get_key(name: str | None, default: str | None = None) -> str | None:
     """
     if name is None:
         return default
-    cleaned = _clean_name(name)
+    cleaned = clean_name(name)
     return _NAME_TO_KEY.get(cleaned, default)
 
 
@@ -262,7 +281,7 @@ def is_known(name: str) -> bool:
     """
     if not name:
         return False
-    return _clean_name(name) in _NAME_TO_KEY
+    return clean_name(name) in _NAME_TO_KEY
 
 
 def get_supplementary_key(name: str | None) -> str | None:
@@ -279,7 +298,7 @@ def get_supplementary_key(name: str | None) -> str | None:
     """
     if name is None:
         return None
-    cleaned = name.strip()
+    cleaned = clean_name(name)
     if not cleaned:
         return None
     return _SUPPLEMENTARY_NAMES.get(cleaned)

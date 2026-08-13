@@ -474,7 +474,130 @@ class TestSupplementarySection:
         items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
         keys = {item.key for item in items}
         assert "cf_notes_net_profit" in keys
+
+
+class TestDualColumnBalanceSheet:
+    """测试资产负债表的左右双栏布局（资产 | 负债和所有者权益）。"""
+
+    def test_extracts_right_side_liability_and_equity(self) -> None:
+        """右栏的负债/权益项目同样被提取（列名带去重后缀）。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=[
+                "资   产", "行次", "期末余额", "年初余额",
+                "负债和所有者权益", "行次#2", "期末余额#2", "年初余额#2",
+            ],
+            rows=[
+                {
+                    "_row": 2,
+                    "资   产": "货币资金",
+                    "行次": 38,
+                    "期末余额": 100000.0,
+                    "年初余额": 80000.0,
+                    "负债和所有者权益": "负债合计",
+                    "行次#2": 69,
+                    "期末余额#2": 1000000.0,
+                    "年初余额#2": 900000.0,
+                },
+                {
+                    "_row": 3,
+                    "资   产": "资产总计",
+                    "行次": 38,
+                    "期末余额": 2000000.0,
+                    "年初余额": 1850000.0,
+                    "负债和所有者权益": "所有者权益合计",
+                    "行次#2": 82,
+                    "期末余额#2": 1000000.0,
+                    "年初余额#2": 950000.0,
+                },
+            ],
+        )
+
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        keys = {item.key for item in items}
+        assert "monetary_funds" in keys
+        assert "asset_total" in keys
+        assert "liability_total" in keys
+        assert "equity_total" in keys
+        amounts = {item.key: item.amount for item in items}
+        assert amounts["asset_total"] == 2000000.0
+        assert amounts["liability_total"] == 1000000.0
+        assert amounts["equity_total"] == 1000000.0
+
+    def test_right_side_without_left_name_skipped(self) -> None:
+        """右侧没有项目名时不产生项目。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额", "负债和所有者权益", "期末余额#2"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0,
+                 "负债和所有者权益": None, "期末余额#2": 999.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        keys = {item.key for item in items}
+        assert keys == {"asset_total"}
+
+
+class TestCustomPeriodColumns:
+    """测试自定义期间列（日期序列号 / 2026年1-6月 / 2025年1-12月）。"""
+
+    def test_income_statement_ytd_column_selected(self) -> None:
+        """本年累计列被识别为主金额列，上年全年列被识别为次金额列。"""
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项       目", "行次", "46174", "2026年1-6月", "2025年1-12月"],
+            rows=[
+                {
+                    "_row": 2,
+                    "项       目": "营业收入",
+                    "行次": 1,
+                    "46174": 100000.0,
+                    "2026年1-6月": 600000.0,
+                    "2025年1-12月": 500000.0,
+                },
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
         assert len(items) == 1
+        assert items[0].key == "revenue"
+        assert items[0].amount == 600000.0
+        assert items[0].column == "2026年1-6月"
+        assert items[0].beginning_amount == 500000.0
+
+    def test_suffix_in_item_name_is_normalized(self) -> None:
+        """带括号注释的项目名仍能映射到标准 key。"""
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额"],
+            rows=[
+                {"_row": 2, "项目": "四、净利润（净亏损以“-”号填列）", "本期金额": 405000.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        assert len(items) == 1
+        assert items[0].key == "net_profit"
+
+    def test_numeric_fallback_when_no_known_headers(self) -> None:
+        """无已知列名时按数值内容回退选择金额列。"""
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本月", "累计"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本月": 100.0, "累计": 600.0},
+                {"_row": 3, "项目": "营业成本", "本月": 40.0, "累计": 240.0},
+                {"_row": 4, "项目": "净利润", "本月": 60.0, "累计": 360.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        amounts = {item.key: item.amount for item in items}
+        beginnings = {item.key: item.beginning_amount for item in items}
+        assert len(items) == 3
+        assert amounts["revenue"] == 100.0
+        assert amounts["operating_cost"] == 40.0
+        assert amounts["net_profit"] == 60.0
+        assert beginnings["revenue"] == 600.0
+        assert beginnings["net_profit"] == 360.0
 
 
 class TestPrefixStrippedExtraction:

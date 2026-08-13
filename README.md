@@ -19,7 +19,7 @@
 - **数据导入**: 拖拽导入 Excel (.xlsx/.xls)，V1 支持 PDF
 - **智能识别**: 自动识别资产负债表/利润表/现金流量表等报表类型
 - **科目标准化**: CAS 标准科目字典 + 别名映射，统一不同企业的科目名称
-- **勾稽校验**: 44 条 CAS 默认规则，覆盖表内平衡/表间勾稽/逻辑合理性
+- **勾稽校验**: 37 条 CAS 规则（v1.2.0），覆盖表内平衡/表间勾稽/逻辑合理性
 - **差异追溯**: 点击差异查看公式、涉及科目、原始行列定位
 - **审计底稿**: 导出带公式的 Excel 审计底稿，可人工复核
 - **报表自动生成** (V1.5): 从余额表+序时账自动生成三大报表 + 审计底稿
@@ -43,12 +43,6 @@
 # 安装依赖
 pip install -e ".[dev]"
 
-# 初始化数据库
-python scripts/init_db.py
-
-# 导入默认规则库
-python scripts/import_rules.py resources/rules/cas_gouji_rule_library.json
-
 # 启动应用
 python -m fsa
 ```
@@ -58,7 +52,7 @@ python -m fsa
 - [设计文档](design.md) - 完整调研与设计 (6项任务)
 - [项目结构与开发计划](project_structure.md) - 目录结构、模块接口、分阶段计划
 - [开发日志](DEV_LOG.md) - 开发过程记录
-- [CAS 勾稽规则库](resources/rules/cas_gouji_rule_library.json) - 44 条默认规则
+- [CAS 勾稽规则库](cas_gouji_rule_library.json) - 37 条规则（v1.2.0）
 
 ## 开发路线
 

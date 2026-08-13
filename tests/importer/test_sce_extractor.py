@@ -102,3 +102,43 @@ class TestSceImportIntegration:
         reports = ImportService().import_file(str(three_only))
         types = {r.report_type for r in reports}
         assert ReportType.STATEMENT_OF_CHANGES_IN_EQUITY not in types
+
+
+class TestSceMultiRowHeader:
+    """测试权益变动表的多层表头（股本/资本公积 + 优先股/永续债等子层）。"""
+
+    def test_component_columns_mapped_across_header_layers(self) -> None:
+        """组件名分布在多层表头时仍能正确映射。"""
+        from fsa.core.importer.excel_reader import RawSheetData
+
+        raw = RawSheetData(
+            name="所有者权益变动表",
+            headers=["项目", "行次", "46174", "列4", "列5", "资本公积", "所有者权益合计"],
+            header_rows=[
+                ["项目", "行次", "46174", "", "", "资本公积", "所有者权益合计"],
+                ["", "", "", "股本", "其他权益工具", "", ""],
+                ["", "", "", "", "优先股", "", ""],
+            ],
+            rows=[
+                {
+                    "_row": 7,
+                    "项目": "一、上年年末余额",
+                    "行次": 1,
+                    "列4": 1000000.0,
+                    "资本公积": 2300000.0,
+                    "所有者权益合计": 1312769.29,
+                },
+                {
+                    "_row": 11,
+                    "项目": "三、本年增减变动金额",
+                    "行次": 6,
+                    "所有者权益合计": -10228207.35,
+                },
+            ],
+        )
+
+        items = extract_sce_items(raw)
+        keys = {item.key: item.amount for item in items}
+        assert keys["sce_paid_in_capital_beginning"] == 1000000.0
+        assert keys["sce_capital_reserve_beginning"] == 2300000.0
+        assert keys["sce_equity_total_beginning"] == 1312769.29

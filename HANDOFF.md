@@ -38,7 +38,9 @@ python -m ruff check src/    # 静态检查
 - [x] 科目追溯 trace (行列定位, P3 可审计)
 
 ### 数据导入
-- [x] Excel (.xlsx/.xls) 三大主表
+- [x] Excel (.xlsx/.xls) 三大主表（.xls 走 pandas+xlrd）
+- [x] 表头自动定位 + 多层表头捕获 + 重复列名去重
+- [x] 资产负债表左右双栏 / 期间列模式识别 / 项目名后缀清洗
 - [x] PDF 导入 (pdfplumber, RawSheetData 兼容)
 - [x] 所有者权益变动表 SCE (矩阵解析)
 
@@ -84,6 +86,10 @@ python -m ruff check src/    # 静态检查
 - [ ] **多行业真实年报压测**: 当前仅茅台+格力两份。需收集银行/地产/制造业等不同
   行业年报 (格式差异大), 放入 `tests/fixtures/real_reports/` 后运行
   `python scripts/validate_real_data.py`, 暴露不同格式的识别/校验边界问题。
+- [ ] **Excel COM 读取适配器**: 公司 DLP 加密环境下 openpyxl/xlrd 无法读文件，
+  Excel 本体可透明解密；需 win32com/xlwings 读取通道（`read_excel` 旁新增适配器）。
+- [ ] **明细数据模型**: 余额表/序时账/现金流量明细（附表 2）及往来重分类等附表，
+  数据模型与识别目前仍是空白。
 
 ### P1 — 功能增强
 - [ ] **容差持久化的默认值回写**: 规则页改容差已存 SQLite, 但"恢复默认"未重置规则容差

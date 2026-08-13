@@ -186,3 +186,111 @@ class TestRawSheetDataProperties:
         sheet = data["资产负债表"]
         row = sheet.rows[0]
         assert row.get("不存在的列") is None
+
+
+class TestHeaderRowDetection:
+    """测试表头行自动定位与多层表头捕获。"""
+
+    def test_header_row_below_title_rows_is_detected(self) -> None:
+        from tests.importer.conftest import make_excel_with_merged_cells
+
+        path = make_excel_with_merged_cells()
+        data = read_excel(str(path))
+        sheet = data["资产负债表"]
+        assert sheet.headers[0] == "项目"
+        assert sheet.rows[0]["_row"] == 3
+
+    def test_header_row_without_project_column_uses_amount_keywords(
+        self, tmp_path: Path
+    ) -> None:
+        """无「项目」列时，凭金额列关键词定位表头（如"资 产"表头）。"""
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "资产负债表"
+        ws.cell(row=1, column=1, value="资产负债表")
+        headers = ["资   产", "行次", "期末余额", "年初余额"]
+        for col_idx, header in enumerate(headers, 1):
+            ws.cell(row=2, column=col_idx, value=header)
+        ws.cell(row=3, column=1, value="资产总计")
+        ws.cell(row=3, column=3, value=2000000.0)
+        path = tmp_path / "no_project_header.xlsx"
+        wb.save(str(path))
+
+        data = read_excel(str(path))
+        sheet = data["资产负债表"]
+        assert sheet.headers[0] == "资   产"
+        assert "期末余额" in sheet.headers
+        assert sheet.rows[0]["资   产"] == "资产总计"
+
+    def test_multi_layer_header_rows_captured(self, tmp_path: Path) -> None:
+        """连续多层表头（如权益变动表）被捕获到 header_rows。"""
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "所有者权益变动表"
+        rows = [
+            ["项目", "行次", "46174", None, None, "资本公积", "所有者权益合计"],
+            [None, None, None, "股本", "其他权益工具", None, None],
+            [None, None, None, None, "优先股", None, None],
+            ["一、上年年末余额", 1, None, 1000000.0, None, 2300000.0, 1312769.29],
+        ]
+        for row_idx, row in enumerate(rows, 1):
+            for col_idx, value in enumerate(row, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+        path = tmp_path / "multi_layer_header.xlsx"
+        wb.save(str(path))
+
+        data = read_excel(str(path))
+        sheet = data["所有者权益变动表"]
+        assert sheet.headers[0] == "项目"
+        assert len(sheet.header_rows) == 3
+        assert sheet.rows[0]["项目"] == "一、上年年末余额"
+
+    def test_duplicate_header_names_are_suffixed(self, tmp_path: Path) -> None:
+        """重复列名（如左右两栏的"期末余额"）自动追加序号后缀。"""
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "资产负债表"
+        headers = ["资   产", "期末余额", "负债和所有者权益", "期末余额"]
+        for col_idx, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col_idx, value=header)
+        path = tmp_path / "duplicate_header.xlsx"
+        wb.save(str(path))
+
+        data = read_excel(str(path))
+        sheet = data["资产负债表"]
+        assert sheet.headers == ["资   产", "期末余额", "负债和所有者权益", "期末余额#2"]
+
+
+class TestReadXls:
+    """测试 .xls 文件的读取（pandas + xlrd 路径）。"""
+
+    def test_read_xls_roundtrip(self, tmp_path: Path) -> None:
+        import xlwt
+
+        path = tmp_path / "balance_sheet.xls"
+        book = xlwt.Workbook()
+        sheet = book.add_sheet("资产负债表")
+        headers = ["项目", "行次", "期末余额"]
+        for col_idx, header in enumerate(headers):
+            sheet.write(0, col_idx, header)
+        rows = [
+            ["资产总计", 38, 2000000.0],
+            ["负债合计", 69, 1000000.0],
+            ["所有者权益合计", 82, 1000000.0],
+        ]
+        for row_idx, row in enumerate(rows, 1):
+            for col_idx, value in enumerate(row):
+                sheet.write(row_idx, col_idx, value)
+        book.save(str(path))
+
+        data = read_excel(str(path))
+        sheet = data["资产负债表"]
+        assert sheet.headers[:3] == ["项目", "行次", "期末余额"]
+        assert len(sheet.rows) == 3
+        assert sheet.rows[0]["项目"] == "资产总计"

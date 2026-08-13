@@ -221,6 +221,7 @@ def test_evaluate_exact_match_returns_pass():
 | PySide6-Fluent-Widgets | >=1.0 | LGPL | Fluent Design 组件 |
 | pandas | >=2.2 | BSD | 数据处理 |
 | openpyxl | >=3.1 | MIT | Excel 读写 |
+| xlrd | >=2.0 | BSD | 旧版 .xls 读取（pandas 引擎） |
 | simpleeval | >=1.0 | MIT | 安全表达式求值 |
 | loguru | >=0.7 | MIT | 日志 |
 | camelot-py | >=0.12 | MIT | PDF 表格提取 (V1) |
@@ -236,6 +237,7 @@ def test_evaluate_exact_match_returns_pass():
 | pytest-cov | 覆盖率 |
 | ruff | Linter |
 | mypy | 类型检查 |
+| xlwt | >=1.3 | BSD | 测试中生成 .xls 文件 |
 
 ---
 

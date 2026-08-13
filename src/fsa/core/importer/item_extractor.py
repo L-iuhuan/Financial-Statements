@@ -1,66 +1,64 @@
 """报表项目提取器: 从 RawSheetData 提取 ReportItem 对象。
 
-根据报表类型选择正确的金额列，将中文项目名映射为 key。
-自动跳过分类行、备注行。补充资料区域提取 cf_notes_ 前缀项目。
-支持双金额列（期末/期初、本期/上期）。
+针对不同企业的报表格式提供通用适配能力:
+- 自动识别项目列与主/次金额列（标准列名、期间列名、纯数值列回退）
+- 资产负债表支持左右双栏（资产 | 负债和所有者权益）
+- 项目名统一清洗（前缀/行尾括号注释/冒号）
+- 现金流量表补充资料区域映射为 cf_notes_ 前缀
 """
 
 from __future__ import annotations
 
-# 前缀正则: 匹配 一、二、...十、 减：加： 等
 import re
 
 from loguru import logger
 
 from fsa.core.importer.excel_reader import RawSheetData
-from fsa.core.importer.name_mapper import get_key, get_supplementary_key
+from fsa.core.importer.name_mapper import clean_name, get_key, get_supplementary_key
 from fsa.core.models.report import ReportItem, ReportType
 
-_PREFIX_RE = re.compile(r"^[一二三四五六七八九十]+、|^减[：:]|^加[：:]|^其中[：:]|^\s+")
-
-# 报表类型 -> (主金额列候选, 次金额列候选)
-# 主金额列: 期末余额/本期金额
-# 次金额列: 年初余额/上期金额 (期初数)
-_AMOUNT_COLUMN_CANDIDATES: dict[ReportType, tuple[list[str], list[str]]] = {
-    ReportType.BALANCE_SHEET: (
-        ["期末余额", "期末数", "期末"],
-        ["年初余额", "年初数", "期初余额", "期初数"],
-    ),
-    ReportType.INCOME_STATEMENT: (
-        ["本期金额", "本期数", "本期"],
-        ["上期金额", "上期数", "上期"],
-    ),
-    ReportType.CASH_FLOW_STATEMENT: (
-        ["本期金额", "本期数", "本期"],
-        ["上期金额", "上期数", "上期"],
-    ),
-}
-
-# 项目名称列候选（按优先级）
 _NAME_COLUMN_CANDIDATES = ["项目", "项目名称", "科目", "科目名称"]
 
-# 补充资料区域的标记文本
+_PRIMARY_COLUMN_CANDIDATES: dict[ReportType, list[str]] = {
+    ReportType.BALANCE_SHEET: ["期末余额", "期末数", "期末", "金额"],
+    ReportType.INCOME_STATEMENT: [
+        "本期金额",
+        "本期数",
+        "本年累计",
+        "本年累计数",
+        "累计金额",
+        "累计数",
+        "本期",
+        "金额",
+    ],
+    ReportType.CASH_FLOW_STATEMENT: [
+        "本期金额",
+        "本期数",
+        "本年累计",
+        "本年累计数",
+        "累计金额",
+        "累计数",
+        "本期",
+        "金额",
+    ],
+}
+
+_SECONDARY_COLUMN_CANDIDATES: dict[ReportType, list[str]] = {
+    ReportType.BALANCE_SHEET: ["年初余额", "年初数", "期初余额", "期初数"],
+    ReportType.INCOME_STATEMENT: ["上期金额", "上期数", "上期", "上年金额", "上年数", "上年累计"],
+    ReportType.CASH_FLOW_STATEMENT: ["上期金额", "上期数", "上期", "上年金额", "上年数", "上年累计"],
+}
+
 _SUPPLEMENTARY_MARKER = "补充资料"
+_YTD_PERIOD_RE = re.compile(r"^\d{4}年1-\d{1,2}月$")
+_MONTH_PERIOD_RE = re.compile(r"^\d{4}年\d{1,2}月$")
+_FULL_YEAR_RE = re.compile(r"^\d{4}年(1-12|12)月$")
+_SERIAL_RE = re.compile(r"^\d{4,5}$")
+_NUMERIC_RATIO = 0.3
 
 
-def extract_items(
-    raw: RawSheetData,
-    report_type: ReportType,
-) -> list[ReportItem]:
+def extract_items(raw: RawSheetData, report_type: ReportType) -> list[ReportItem]:
     """从原始工作表数据中提取 ReportItem 列表。
-
-    处理流程:
-    1. 查找项目列和金额列（主列 + 次列）
-    2. 逐行处理:
-       a. 跳过空行
-       b. 跳过分类行（以：或:结尾）
-       c. 跳过备注行（以"注"开头）
-       d. 补充资料区域: 用 get_supplementary_key 映射，cf_notes_ 前缀
-       e. 清洗名称并映射为 key
-       f. 跳过未映射项
-       g. 跳过重复项（仅保留首次出现，cf_notes_ keys 视为独立）
-       h. 读取金额，跳过空值和非数字
-       i. 读取次列金额（期初/上期），None 如果列不存在或单元格为空
 
     Args:
         raw: 工作表原始数据
@@ -74,15 +72,56 @@ def extract_items(
         logger.warning(f"工作表「{raw.name}」中未找到项目列，可用的列: {raw.headers}")
         return []
 
-    primary_column, secondary_column = _get_amount_columns(report_type, raw.headers)
-    if primary_column is None:
+    primary, secondary = _pick_amount_columns(report_type, raw.headers, raw.rows, 0)
+    if primary is None:
         logger.warning(f"工作表「{raw.name}」中未找到金额列，可用的列: {raw.headers}")
         return []
 
     items: list[ReportItem] = []
     seen_keys: set[str] = set()
-    in_supplementary = False
+    allow_supplementary = report_type == ReportType.CASH_FLOW_STATEMENT
+    _extract_side(
+        raw,
+        name_column,
+        primary,
+        secondary,
+        items,
+        seen_keys,
+        allow_supplementary,
+    )
 
+    if report_type == ReportType.BALANCE_SHEET:
+        right_column = _find_right_name_column(raw.headers)
+        if right_column is not None:
+            right_primary, right_secondary = _pick_amount_columns(
+                report_type, raw.headers, raw.rows, _column_index(raw.headers, right_column) + 1
+            )
+            if right_primary is not None:
+                _extract_side(
+                    raw,
+                    right_column,
+                    right_primary,
+                    right_secondary,
+                    items,
+                    seen_keys,
+                    allow_supplementary=False,
+                )
+
+    logger.info(f"  从工作表「{raw.name}」提取了 {len(items)} 个项目")
+    return items
+
+
+def _extract_side(
+    raw: RawSheetData,
+    name_column: str,
+    primary: str,
+    secondary: str | None,
+    items: list[ReportItem],
+    seen_keys: set[str],
+    allow_supplementary: bool,
+) -> None:
+    """按指定的项目列与金额列提取一侧的报表项目。"""
+    in_supplementary = False
     for row in raw.rows:
         item_name = row.get(name_column)
         if item_name is None:
@@ -96,192 +135,245 @@ def extract_items(
         if row_num is None:
             row_num = 0
 
-        # 检测补充资料区域开始
-        if _SUPPLEMENTARY_MARKER in item_name_str:
+        if allow_supplementary and _SUPPLEMENTARY_MARKER in item_name_str:
             in_supplementary = True
-            logger.debug(f"  进入补充资料区域: 「{item_name_str}」(行{row_num})")
             continue
 
         if in_supplementary:
-            _handle_supplementary_row(
-                item_name_str, row, primary_column,
-                secondary_column, row_num, items, seen_keys,
+            _extract_supplementary_row(
+                item_name_str, row, primary, secondary, row_num, items, seen_keys
             )
             continue
 
-        # 跳过分类行（以：或:结尾）
-        if item_name_str.endswith("：") or item_name_str.endswith(":"):
-            continue
-
-        # 跳过备注行
-        if item_name_str.startswith("注"):
+        if _is_skip_row(item_name_str):
             continue
 
         _extract_item(
-            item_name_str, row, primary_column, secondary_column,
-            row_num, items, seen_keys, main_table=True,
+            item_name_str, row, primary, secondary, row_num, items, seen_keys
         )
 
-    logger.info(f"  从工作表「{raw.name}」提取了 {len(items)} 个项目")
-    return items
 
-
-def _handle_supplementary_row(
+def _extract_supplementary_row(
     item_name_str: str,
     row: dict[str, object],
-    primary_column: str,
-    secondary_column: str | None,
+    primary: str,
+    secondary: str | None,
     row_num: int,
     items: list[ReportItem],
     seen_keys: set[str],
 ) -> None:
-    """处理补充资料区域的一行数据。
-
-    使用 get_supplementary_key 映射，不在映射表中的跳过。
-    清洗前缀（减：、加：等）后再映射。
-    """
-    if item_name_str.endswith("：") or item_name_str.endswith(":"):
+    """处理现金流量表补充资料区域的一行数据。"""
+    if _is_skip_row(item_name_str):
         return
-    if item_name_str.startswith("注"):
-        return
-
-    # 清洗前缀后再映射
-    cleaned = _PREFIX_RE.sub("", item_name_str).strip()
+    cleaned = clean_name(item_name_str)
     key = get_supplementary_key(cleaned)
     if key is None:
-        logger.debug(
-            f"  补充资料中未映射的项目: 「{item_name_str}」(行{row_num})，跳过"
-        )
+        logger.debug(f"  补充资料中未映射的项目: 「{item_name_str}」(行{row_num})，跳过")
         return
-
-    _extract_item(
-        cleaned, row, primary_column, secondary_column,
-        row_num, items, seen_keys, main_table=False,
+    _append_item(
+        cleaned, key, row, primary, secondary, row_num, items, seen_keys
     )
 
 
 def _extract_item(
     item_name_str: str,
     row: dict[str, object],
-    primary_column: str,
-    secondary_column: str | None,
+    primary: str,
+    secondary: str | None,
     row_num: int,
     items: list[ReportItem],
     seen_keys: set[str],
-    main_table: bool = True,
 ) -> None:
-    """提取单个项目并添加到 items 列表。
-
-    Args:
-        item_name_str: 项目名称
-        row: 数据行
-        primary_column: 主金额列名
-        secondary_column: 次金额列名（可为 None）
-        row_num: 行号
-        items: 目标列表
-        seen_keys: 已见 key 集合
-        main_table: 是否为主表区域（True 用 get_key，False 用 get_supplementary_key）
-    """
-    key = get_key(item_name_str) if main_table else get_supplementary_key(item_name_str)
-
+    """提取主表中的一个项目。"""
+    key = get_key(item_name_str)
     if key is None:
-        if main_table:
-            logger.debug(
-                f"  未映射的项目: 「{item_name_str}」(行{row_num})，跳过"
-            )
+        logger.debug(f"  未映射的项目: 「{item_name_str}」(行{row_num})，跳过")
         return
+    _append_item(
+        item_name_str, key, row, primary, secondary, row_num, items, seen_keys
+    )
 
+
+def _append_item(
+    item_name_str: str,
+    key: str,
+    row: dict[str, object],
+    primary: str,
+    secondary: str | None,
+    row_num: int,
+    items: list[ReportItem],
+    seen_keys: set[str],
+) -> None:
+    """读取金额并追加一个 ReportItem。"""
     if key in seen_keys:
         logger.warning(
-            f"  重复项目: 「{item_name_str}」(key={key})，"
-            f"仅保留第一个出现(行{row_num})"
+            f"  重复项目: 「{item_name_str}」(key={key})，仅保留第一个出现(行{row_num})"
         )
         return
 
-    amount = row.get(primary_column)
+    amount = row.get(primary)
     if amount is None:
         logger.debug(f"  项目「{item_name_str}」的金额为空，跳过")
         return
-
     try:
-        amount_float = float(amount)  # type: ignore[arg-type]
+        amount_float = float(amount)
     except (ValueError, TypeError):
-        logger.warning(
-            f"  项目「{item_name_str}」的金额无法转换为数字: {amount}，跳过"
-        )
+        logger.warning(f"  项目「{item_name_str}」的金额无法转换为数字: {amount}，跳过")
         return
 
-    beginning_amount: float | None = None
-    if secondary_column is not None:
-        ba = row.get(secondary_column)
-        if ba is not None:
-            try:
-                beginning_amount = float(ba)  # type: ignore[arg-type]
-            except (ValueError, TypeError):
-                beginning_amount = None
-
-    item = ReportItem(
-        key=key,
-        name=item_name_str,
-        amount=amount_float,
-        beginning_amount=beginning_amount,
-        row=row_num,
-        column=primary_column,
+    beginning_amount = _read_optional_float(row, secondary)
+    items.append(
+        ReportItem(
+            key=key,
+            name=item_name_str,
+            amount=amount_float,
+            beginning_amount=beginning_amount,
+            row=row_num,
+            column=primary,
+        )
     )
-    items.append(item)
     seen_keys.add(key)
 
 
 def _find_name_column(headers: list[str]) -> str | None:
-    """查找项目名称列。
-
-    按候选列表优先匹配，若都不匹配则取第一列。
-
-    Args:
-        headers: 列标题列表
-
-    Returns:
-        列名，未找到返回 None
-    """
+    """查找项目名称列，未命中候选时回退到第一列。"""
     for candidate in _NAME_COLUMN_CANDIDATES:
-        for h in headers:
-            if h == candidate:
-                return h
-    # 回退: 取第一列
+        for header in headers:
+            if _normalize(header) == candidate:
+                return header
     return headers[0] if headers else None
 
 
-def _get_amount_columns(
+def _find_right_name_column(headers: list[str]) -> str | None:
+    """查找资产负债表的右侧项目列（负债和所有者权益栏）。"""
+    for header in headers[1:]:
+        normalized = _normalize(header)
+        if "负债" in normalized and "权益" in normalized:
+            return header
+    return None
+
+
+def _pick_amount_columns(
     report_type: ReportType,
     headers: list[str],
+    rows: list[dict[str, object]],
+    start_col: int,
 ) -> tuple[str | None, str | None]:
-    """根据报表类型查找主金额列和次金额列。
+    """选择主金额列与次金额列（标准列名 -> 期间模式 -> 数值列回退）。"""
+    primary_candidates = _PRIMARY_COLUMN_CANDIDATES.get(report_type, [])
+    secondary_candidates = _SECONDARY_COLUMN_CANDIDATES.get(report_type, [])
 
-    Args:
-        report_type: 报表类型
-        headers: 列标题列表
+    primary = _find_by_candidates(headers, primary_candidates, start_col)
+    secondary = _find_by_candidates(headers, secondary_candidates, start_col)
 
-    Returns:
-        (primary_column, secondary_column) 元组
-    """
-    candidates = _AMOUNT_COLUMN_CANDIDATES.get(report_type)
-    if candidates is None:
-        return None, None
+    if primary is None and report_type != ReportType.BALANCE_SHEET:
+        primary = _find_period_column(headers, start_col, primary=True)
+        if primary is not None:
+            secondary = _find_period_column(
+                headers, _column_index(headers, primary) + 1, primary=False
+            )
 
-    primary_candidates, secondary_candidates = candidates
-
-    primary = _find_column(primary_candidates, headers)
-    secondary = _find_column(secondary_candidates, headers)
+    if primary is None:
+        numeric_columns = _numeric_columns(headers, rows, start_col)
+        if numeric_columns:
+            primary = numeric_columns[0]
+            if secondary is None and len(numeric_columns) > 1:
+                secondary = numeric_columns[1]
 
     return primary, secondary
 
 
-def _find_column(candidates: list[str], headers: list[str]) -> str | None:
-    """在 headers 中查找第一个匹配的候选列名。"""
-    for alt in candidates:
-        if alt in headers:
-            return alt
+def _find_by_candidates(
+    headers: list[str],
+    candidates: list[str],
+    start_col: int,
+) -> str | None:
+    """按候选名精确/包含匹配查找列名。"""
+    for candidate in candidates:
+        for header in headers[start_col:]:
+            normalized = _normalize(header)
+            if normalized == candidate or candidate in normalized:
+                return header
     return None
+
+
+def _find_period_column(
+    headers: list[str],
+    start_col: int,
+    primary: bool,
+) -> str | None:
+    """按期间列模式（2026年1-6月 / 46174 序列号等）查找列名。"""
+    if primary:
+        patterns = ((_YTD_PERIOD_RE,), (_MONTH_PERIOD_RE,), (_SERIAL_RE,))
+    else:
+        patterns = ((_FULL_YEAR_RE,), (_MONTH_PERIOD_RE,))
+    for group in patterns:
+        for header in headers[start_col:]:
+            normalized = _normalize(header)
+            if any(pattern.match(normalized) for pattern in group):
+                return header
+    return None
+
+
+def _numeric_columns(
+    headers: list[str],
+    rows: list[dict[str, object]],
+    start_col: int,
+) -> list[str]:
+    """返回数据行中数值占比超过阈值的列名（按列顺序）。"""
+    result: list[str] = []
+    threshold = max(2, int(len(rows) * _NUMERIC_RATIO))
+    for header in headers[start_col:]:
+        if _normalize(header) == "行次":
+            continue
+        numeric = 0
+        for row in rows:
+            value = row.get(header)
+            if value is None:
+                continue
+            try:
+                float(value)
+            except (ValueError, TypeError):
+                continue
+            numeric += 1
+        if numeric >= threshold:
+            result.append(header)
+    return result
+
+
+def _column_index(headers: list[str], header: str) -> int:
+    """返回列名在表头中的下标。"""
+    for idx, candidate in enumerate(headers):
+        if candidate == header:
+            return idx
+    return 0
+
+
+def _read_optional_float(row: dict[str, object], column: str | None) -> float | None:
+    """读取次金额列，不存在或不可解析时返回 None。"""
+    if column is None:
+        return None
+    value = row.get(column)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_skip_row(item_name_str: str) -> bool:
+    """判断是否为分类行或备注行（应跳过）。"""
+    return (
+        item_name_str.endswith("：")
+        or item_name_str.endswith(":")
+        or item_name_str.startswith("注")
+    )
+
+
+def _normalize(value: str) -> str:
+    """去除字符串中所有空白（含全角空格）。"""
+    return re.sub(r"\s+", "", value)
 
 
 def _to_int(value: object) -> int | None:

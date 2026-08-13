@@ -15,6 +15,7 @@ import re
 from loguru import logger
 
 from fsa.core.importer.excel_reader import RawSheetData
+from fsa.core.importer.name_mapper import clean_name
 from fsa.core.models.report import ReportItem
 
 # 权益组成列名 -> 基础 key (实收资本(或股本) 等带括号的变体也覆盖)
@@ -57,7 +58,8 @@ def extract_sce_items(raw: RawSheetData) -> list[ReportItem]:
     Returns:
         ReportItem 列表 (sce_* keys)
     """
-    column_map = _build_column_map(raw.headers)
+    header_rows = raw.header_rows or [raw.headers]
+    column_map = _build_column_map(raw.headers, header_rows)
     if not column_map:
         logger.warning(f"工作表「{raw.name}」未识别到权益组成列")
         return []
@@ -75,16 +77,29 @@ def extract_sce_items(raw: RawSheetData) -> list[ReportItem]:
     return items
 
 
-def _build_column_map(headers: list[str]) -> dict[str, str]:
-    """构建 列标题 -> 基础 key 映射 (跳过"项目"列)。"""
+def _build_column_map(headers: list[str], header_rows: list[list[str]]) -> dict[str, str]:
+    """构建 数据行键名 -> 基础 key 映射 (跳过"项目"列)。
+
+    支持多行表头: 对每一列，从各层表头中取第一个非空标签，
+    例如 "股本/资本公积/减：库存股..." 与 "优先股/永续债/其他..."
+    两层合并时只取上一层的有效组件名。映射键使用行数据的实际列名
+    （headers 中可能带 #2 等去重后缀）。
+    """
     mapping: dict[str, str] = {}
-    for header in headers:
-        cleaned = _clean_label(header)
+    column_count = len(headers)
+    for col_idx in range(column_count):
+        label = ""
+        for row in header_rows:
+            if col_idx < len(row):
+                label = str(row[col_idx]).strip()
+            if label:
+                break
+        cleaned = _clean_label(label)
         if cleaned in ("项目", ""):
             continue
         key = _COMPONENT_KEYS.get(cleaned)
         if key is not None:
-            mapping[header] = key
+            mapping[headers[col_idx]] = key
     return mapping
 
 
@@ -92,7 +107,7 @@ def _clean_label(text: str) -> str:
     """清理行/列标签: 去除序号前缀、减:、括号序号、首尾空格。"""
     result = text.strip()
     result = _PREFIX_RE.sub("", result).strip()
-    return result
+    return clean_name(result)
 
 
 def _row_suffix(label: str) -> str | None:
