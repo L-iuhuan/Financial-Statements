@@ -521,7 +521,7 @@ class MainWindow(QMainWindow):
         if not provider:
             return None
         base_url = str(settings.value("llm_base_url", ""))
-        model = str(settings.value("llm_model", "qwen2.5:7b"))
+        model = str(settings.value("llm_model", "GLM-4.7-PF8"))
         api_key = str(settings.value("llm_api_key", ""))
         if not base_url:
             return None
@@ -633,21 +633,23 @@ class MainWindow(QMainWindow):
             return
 
         engine = DiagnosisEngine()
-        client = self._get_ollama_client()
-
-        # 检查 Ollama 可用性（缓存结果，避免重复探测）
-        if self._ollama_available is None:
-            try:
-                self._ollama_available = client.is_available()
-            except Exception:
-                self._ollama_available = False
-
-        if self._ollama_available:
-            diagnosis = engine.diagnose_with_llm(failed[0], client=client)
-            diagnosis += "\n\n（由本地 AI 模型生成）"
+        provider_client = self._get_llm_client()
+        if provider_client is not None:
+            diagnosis = engine.diagnose_with_client(failed[0], provider_client)
+            diagnosis += "\n\n（由 AI 模型生成）"
         else:
-            diagnosis = engine.diagnose(failed[0])
-            diagnosis += "\n\n（规则引擎诊断 · 未检测到本地模型）"
+            client = self._get_ollama_client()
+            if self._ollama_available is None:
+                try:
+                    self._ollama_available = client.is_available()
+                except Exception:
+                    self._ollama_available = False
+            if self._ollama_available:
+                diagnosis = engine.diagnose_with_llm(failed[0], client=client)
+                diagnosis += "\n\n（由本地 AI 模型生成）"
+            else:
+                diagnosis = engine.diagnose(failed[0])
+                diagnosis += "\n\n（规则引擎诊断 · 未检测到模型）"
 
         self._agent_drawer.add_assistant_message(diagnosis)
 

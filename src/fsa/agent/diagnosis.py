@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from fsa.core.models.result import TraceItem, ValidationResult
 
 if TYPE_CHECKING:
+    from fsa.agent.llm_client import LLMClient
     from fsa.agent.ollama_client import OllamaClient
 
 
@@ -276,3 +277,34 @@ class DiagnosisEngine:
             return self.diagnose(result)
 
         return llm_response
+
+    def diagnose_with_client(
+        self,
+        result: ValidationResult,
+        client: LLMClient | None = None,
+    ) -> str:
+        """使用 LLMClient 协议（Ollama / OpenAI 兼容）的增强诊断。
+
+        客户端不可用、调用失败或返回空内容时，回退到规则化诊断。
+        """
+        if client is None:
+            return self.diagnose(result)
+        try:
+            available = client.is_available()
+        except Exception:
+            return self.diagnose(result)
+        if not available:
+            return self.diagnose(result)
+
+        from fsa.agent.llm_client import ChatMessage
+
+        messages = [
+            ChatMessage(role="system", content=_LLM_SYSTEM_PROMPT),
+            ChatMessage(role="user", content=_build_llm_prompt(result)),
+        ]
+        try:
+            response = client.chat(messages)
+        except Exception:
+            return self.diagnose(result)
+        text = (response.content or "").strip()
+        return text or self.diagnose(result)

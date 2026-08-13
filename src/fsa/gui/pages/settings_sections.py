@@ -293,7 +293,9 @@ def build_llm_section(
     row2, _ = _row(
         "服务地址", "Ollama: http://localhost:11434; 公司部署/在线: API base URL"
     )
-    base_url_input = QLineEdit(str(settings.value("llm_base_url", "")))
+    base_url_input = QLineEdit(
+        str(settings.value("llm_base_url", "http://10.16.2.6:4434/v1"))
+    )
     base_url_input.setObjectName("StyledInput")
     base_url_input.setPlaceholderText("如 http://localhost:11434 或 https://api.xxx.com/v1")
     base_url_input.setMinimumWidth(280)
@@ -303,7 +305,7 @@ def build_llm_section(
 
     # model
     row3, _ = _row("模型名称", "如 qwen2.5:7b / deepseek-r1 / 公司部署的模型名")
-    model_input = QLineEdit(str(settings.value("llm_model", "qwen2.5:7b")))
+    model_input = QLineEdit(str(settings.value("llm_model", "GLM-4.7-PF8")))
     model_input.setObjectName("StyledInput")
     model_input.setMinimumWidth(280)
     model_input.editingFinished.connect(page._save_llm_config)
