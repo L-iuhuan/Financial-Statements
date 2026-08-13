@@ -222,6 +222,7 @@ def test_evaluate_exact_match_returns_pass():
 | pandas | >=2.2 | BSD | 数据处理 |
 | openpyxl | >=3.1 | MIT | Excel 读写 |
 | xlrd | >=2.0 | BSD | 旧版 .xls 读取（pandas 引擎） |
+| pywin32 | >=306 | PSF | Windows Excel COM 读取（DLP 加密环境回退） |
 | simpleeval | >=1.0 | MIT | 安全表达式求值 |
 | loguru | >=0.7 | MIT | 日志 |
 | camelot-py | >=0.12 | MIT | PDF 表格提取 (V1) |

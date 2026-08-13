@@ -11,9 +11,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from zipfile import BadZipFile
 
 import openpyxl
 from loguru import logger
+
+from fsa.core.exceptions import FSAError
 
 _NAME_HEADER_CANDIDATES = ("项目", "项目名称", "科目", "科目名称")
 _AMOUNT_HEADER_KEYWORDS = (
@@ -31,6 +34,15 @@ _AMOUNT_HEADER_KEYWORDS = (
 )
 _MAX_SCAN_ROWS = 15
 _MAX_HEADER_LAYERS = 4
+
+try:
+    import xlrd
+
+    _XLRD_ERRORS: tuple[type[Exception], ...] = (xlrd.biffh.XLRDError,)
+except ImportError:
+    _XLRD_ERRORS = ()
+
+_NATIVE_READ_ERRORS = (BadZipFile, OSError, ValueError, KeyError, TypeError) + _XLRD_ERRORS
 
 
 @dataclass
@@ -51,20 +63,41 @@ class RawSheetData:
     rows: list[dict[str, object]] = field(default_factory=list)
 
 
-def read_excel(file_path: str) -> dict[str, RawSheetData]:
+def read_excel(file_path: str, use_com: bool = False) -> dict[str, RawSheetData]:
     """读取 Excel 文件，返回所有工作表的原始数据。
 
     Args:
         file_path: Excel 文件路径（.xlsx 或 .xls）
+        use_com: 强制使用 Excel COM 读取（默认为 False，常规读取失败时自动回退）
 
     Returns:
         字典，键为工作表名称，值为 RawSheetData
 
     Raises:
-        FileNotFoundError: 文件不存在或无法打开
-        ImportError: 读取 .xls 但缺少 pandas/xlrd 依赖
+        FileNotFoundError: 文件不存在
+        FSAError: 常规读取与 Excel COM 读取均失败
     """
     path = str(file_path)
+    if use_com:
+        return read_excel_com(path)
+
+    try:
+        return _read_native(path)
+    except FileNotFoundError:
+        raise
+    except _NATIVE_READ_ERRORS as error:
+        logger.warning(f"常规方式读取失败（{error}），尝试用 Excel COM 打开: {path}")
+        try:
+            return read_excel_com(path)
+        except FSAError as com_error:
+            raise FSAError(
+                f"文件「{path}」常规解析失败（{error}），"
+                f"Excel COM 打开也失败: {com_error}"
+            ) from error
+
+
+def _read_native(path: str) -> dict[str, RawSheetData]:
+    """用 openpyxl / pandas+xlrd 常规读取 Excel 文件。"""
     suffix = Path(path).suffix.lower()
     if suffix == ".xls":
         return _read_xls(path)
@@ -229,3 +262,82 @@ def _normalize_cell(value: object) -> str:
     if value is None:
         return ""
     return re.sub(r"\s+", "", str(value))
+
+
+def read_excel_com(file_path: str) -> dict[str, RawSheetData]:
+    """通过 Excel COM（pywin32）读取 Excel 文件。
+
+    适用于公司 DLP 透明加密环境：openpyxl/xlrd 看到的是密文，
+    而 Excel 本体被加密客户端信任，可透明解密。
+
+    Args:
+        file_path: Excel 文件路径（.xlsx / .xls / .xlsm）
+
+    Returns:
+        字典，键为工作表名称，值为 RawSheetData
+
+    Raises:
+        FSAError: 未安装 pywin32、无法启动 Excel 或文件无法打开
+    """
+    try:
+        import win32com.client
+    except ImportError as error:
+        raise FSAError("未安装 pywin32，无法使用 Excel COM 读取加密文件") from error
+
+    pythoncom = None
+    co_initialized = False
+    try:
+        import pythoncom
+    except ImportError:
+        pass
+    else:
+        try:
+            pythoncom.CoInitialize()
+            co_initialized = True
+        except (pythoncom.com_error, OSError):
+            co_initialized = False
+
+    path = str(file_path)
+    excel = None
+    try:
+        try:
+            excel = win32com.client.DispatchEx("Excel.Application")
+        except Exception as error:
+            raise FSAError(f"无法启动 Excel 进程: {error}") from error
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        excel.AskToUpdateLinks = False
+        try:
+            workbook = excel.Workbooks.Open(
+                path, UpdateLinks=0, ReadOnly=True, AddToMru=False
+            )
+        except Exception as error:  # COM 异常类型不统一，统一转为业务异常
+            raise FSAError(f"Excel 无法打开文件「{path}」: {error}") from error
+
+        result: dict[str, RawSheetData] = {}
+        try:
+            for sheet in workbook.Worksheets:
+                matrix = _com_range_to_matrix(sheet.UsedRange.Value)
+                result[sheet.Name] = _matrix_to_raw(sheet.Name, matrix)
+        finally:
+            workbook.Close(SaveChanges=False)
+        logger.info(f"Excel COM 读取完成，共 {len(result)} 个工作表")
+        return result
+    finally:
+        if excel is not None:
+            excel.Quit()
+        if pythoncom is not None and co_initialized:
+            pythoncom.CoUninitialize()
+
+
+def _com_range_to_matrix(value: object) -> list[list[object]]:
+    """将 Excel COM Range.Value 转换为行优先二维矩阵。"""
+    if value is None:
+        return []
+    if not isinstance(value, (tuple, list)):
+        return [[value]]
+    matrix: list[list[object]] = []
+    for row in value:
+        row_values = list(row) if isinstance(row, (tuple, list)) else [row]
+        matrix.append(list(row_values))
+    return matrix

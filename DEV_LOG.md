@@ -377,3 +377,27 @@
 - Excel COM 读取适配器（DLP 加密环境的导入通道）
 - 余额表/序时账/现金流量明细数据模型（附表 2）
 - 用真实杰为数据做端到端回归并固化为 fixture
+
+---
+
+## 2026-08-13 | Excel COM 读取适配器（feat/importer-adaptability）
+
+### 完成事项
+
+- `excel_reader.read_excel_com`：通过 pywin32 启动隐藏 Excel 读取工作表，
+  复用 `_matrix_to_raw` 的通用表头/多行表头/去重逻辑
+- `read_excel` 增加 `use_com` 参数；常规读取失败（BadZipFile/XLRDError 等，
+  即 DLP 密文）时自动回退到 COM，并把两类失败统一为中文 FSAError
+- 依赖声明：pywin32 进入 pyproject；AGENTS 依赖清单登记
+- 测试：`tests/importer/test_excel_reader_com.py`（环境守卫：无 pywin32/Excel 时跳过）
+
+### 端到端验证（真实 DLP 加密文件）
+
+```text
+附表1（2026.06，加密 .xlsx）
+  openpyxl 失败(File is not a zip file) -> 自动回退 Excel COM -> 读取 5 个工作表
+  识别 4 张报表: BS 23 项 / IS 15 项 / CF 21 项 / SCE 15 项
+  规则: 37 条, 执行 25, 通过 18, 不通过 7, 异常 0, 跳过 12
+  其中 7 条不通过为真实经营信号（收入同比 -90%、流动比率 0.70 等），
+  SCE-BAL-002 属单体报表无"归属于母公司权益"的规则适用性瑕疵，待规则层修正。
+```

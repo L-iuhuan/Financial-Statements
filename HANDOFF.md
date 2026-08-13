@@ -86,8 +86,8 @@ python -m ruff check src/    # 静态检查
 - [ ] **多行业真实年报压测**: 当前仅茅台+格力两份。需收集银行/地产/制造业等不同
   行业年报 (格式差异大), 放入 `tests/fixtures/real_reports/` 后运行
   `python scripts/validate_real_data.py`, 暴露不同格式的识别/校验边界问题。
-- [ ] **Excel COM 读取适配器**: 公司 DLP 加密环境下 openpyxl/xlrd 无法读文件，
-  Excel 本体可透明解密；需 win32com/xlwings 读取通道（`read_excel` 旁新增适配器）。
+- [x] **Excel COM 读取适配器**: 公司 DLP 加密环境下 openpyxl/xlrd 无法读文件，
+  Excel 本体可透明解密；已实现 `read_excel_com`，常规读取失败时自动回退。
 - [ ] **明细数据模型**: 余额表/序时账/现金流量明细（附表 2）及往来重分类等附表，
   数据模型与识别目前仍是空白。
 
