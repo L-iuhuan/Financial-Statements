@@ -32,6 +32,8 @@ class PackageValidationService:
     ) -> ValidationSummary:
         """执行主表规则与明细勾稽检查，合并为一份汇总。"""
         main_summary = ValidationService(self._registry).validate(reports, period)
+        if dataset.is_empty:
+            return main_summary
         detail_service = DetailValidationService(self._detail_config)
         report_map: dict[ReportType, Report] = {
             report.report_type: report for report in reports

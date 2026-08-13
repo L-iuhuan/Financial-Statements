@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 from loguru import logger
@@ -16,8 +17,8 @@ from fsa.core.models.detail import (
     DetailDataset,
     InternalCashFlowRow,
     JournalRow,
-    RelatedPartyPurchaseRow,
     ReclassificationRow,
+    RelatedPartyPurchaseRow,
     SalesDetailRow,
     TrialBalanceRow,
 )
@@ -370,9 +371,12 @@ def _number(row: dict[str, object], column: str | None) -> float:
     if value is None:
         return 0.0
     try:
-        return float(value)
+        result = float(value)
     except (ValueError, TypeError):
         return 0.0
+    if math.isnan(result):
+        return 0.0
+    return result
 
 
 def _optional_number(value: object) -> float | None:
@@ -380,9 +384,12 @@ def _optional_number(value: object) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        result = float(value)
     except (ValueError, TypeError):
         return None
+    if math.isnan(result):
+        return None
+    return result
 
 
 def _to_int(value: object) -> int:

@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import FluentIcon, InfoBar, InfoBarPosition
 
-from fsa.core.importer.importer import ImportService
-from fsa.core.importer.detail_importer import DetailImporter
 from fsa.core.exceptions import FSAError
+from fsa.core.importer.detail_importer import DetailImporter
+from fsa.core.importer.importer import ImportService
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report, ReportType
 from fsa.core.models.rule import Severity
@@ -204,7 +204,7 @@ class ImportPage(QWidget):
                     dataset.merge(self._detail_importer.import_file(path))
                 except FileNotFoundError:
                     errors.append(f"{path}: 文件不存在")
-                except (ValueError, OSError, ImportError) as e:
+                except (FSAError, ValueError, OSError, ImportError) as e:
                     errors.append(f"{path}: {e}")
         except (FSAError, ValueError, OSError, ImportError, KeyError, TypeError) as e:
             logger.error(f"导入报表包异常: {e}")

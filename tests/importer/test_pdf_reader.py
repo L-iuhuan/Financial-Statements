@@ -13,7 +13,6 @@ import pytest
 from fsa.core.importer.excel_reader import RawSheetData
 from fsa.core.models.report import ReportType
 
-
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "real_reports"
 THREE_REPORTS_PDF = FIXTURE_DIR / "测试报表_三大报表.pdf"
 MERGED_BS_PDF = FIXTURE_DIR / "测试报表_合并资产负债表.pdf"

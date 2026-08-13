@@ -5,12 +5,10 @@
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
-from fsa.core.exceptions import InvalidToleranceError
 from fsa.core.engine.comparator import ToleranceComparator
+from fsa.core.exceptions import InvalidToleranceError
 from fsa.core.models.rule import ToleranceType
 
 

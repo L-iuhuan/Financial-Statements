@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from fsa.core.engine.registry import RuleRegistry
 from fsa.core.models.report import ReportType
 from fsa.core.models.rule import ReconciliationRule, Severity, ToleranceType

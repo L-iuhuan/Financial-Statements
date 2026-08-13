@@ -5,16 +5,16 @@
 
 from __future__ import annotations
 
-from fsa.core.models.report import ReportType
 from fsa.core.importer.report_identifier import identify_reports
+from fsa.core.models.report import ReportType
 
 
 class TestIdentifyBySheetName:
     """测试通过工作表名称识别报表类型。"""
 
     def test_identify_balance_sheet_by_chinese_name(self) -> None:
-        from tests.importer.conftest import make_balance_sheet_excel
         from fsa.core.importer.excel_reader import read_excel
+        from tests.importer.conftest import make_balance_sheet_excel
 
         path = make_balance_sheet_excel()
         data = read_excel(str(path))
@@ -26,8 +26,8 @@ class TestIdentifyBySheetName:
         assert sheet_name == "资产负债表"
 
     def test_identify_income_statement_by_chinese_name(self) -> None:
-        from tests.importer.conftest import make_income_statement_excel
         from fsa.core.importer.excel_reader import read_excel
+        from tests.importer.conftest import make_income_statement_excel
 
         path = make_income_statement_excel()
         data = read_excel(str(path))
@@ -38,8 +38,8 @@ class TestIdentifyBySheetName:
         assert report_type == ReportType.INCOME_STATEMENT
 
     def test_identify_cash_flow_by_chinese_name(self) -> None:
-        from tests.importer.conftest import make_cash_flow_excel
         from fsa.core.importer.excel_reader import read_excel
+        from tests.importer.conftest import make_cash_flow_excel
 
         path = make_cash_flow_excel()
         data = read_excel(str(path))
@@ -54,8 +54,8 @@ class TestIdentifyMultiSheet:
     """测试多工作表文件识别。"""
 
     def test_identify_all_three_sheets(self) -> None:
-        from tests.importer.conftest import make_multi_sheet_excel
         from fsa.core.importer.excel_reader import read_excel
+        from tests.importer.conftest import make_multi_sheet_excel
 
         path = make_multi_sheet_excel()
         data = read_excel(str(path))
@@ -123,8 +123,8 @@ class TestEdgeCases:
     """测试边界情况。"""
 
     def test_empty_sheet_returns_empty_list(self) -> None:
-        from tests.importer.conftest import make_empty_excel
         from fsa.core.importer.excel_reader import read_excel
+        from tests.importer.conftest import make_empty_excel
 
         path = make_empty_excel()
         data = read_excel(str(path))

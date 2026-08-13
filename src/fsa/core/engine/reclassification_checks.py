@@ -114,7 +114,7 @@ def check_reclassification_vs_balance_sheet(
                 break
 
     results: list[ValidationResult] = []
-    for key, names in _BALANCE_SHEET_ACCOUNTS.items():
+    for key in _BALANCE_SHEET_ACCOUNTS:
         expected = sums.get(key, 0.0)
         actual = statement.get(key)
         if actual is None:

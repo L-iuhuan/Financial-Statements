@@ -9,11 +9,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import cast
 
+from fsa.core.importer.name_mapper import clean_name
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report, ReportType
 from fsa.core.models.result import ValidationResult
 from fsa.core.models.rule import Severity
-from fsa.core.importer.name_mapper import clean_name
 
 # 现金流量明细项目名 -> 主表项目名（企业导出与准则列报用词差异）
 CF_PROJECT_ALIASES: dict[str, str] = {
@@ -206,10 +206,9 @@ def check_trial_balance_vs_balance_sheet(
     results: list[ValidationResult] = []
     for item_key, config in mappings.items():
         codes_raw = config["codes"]
-        if isinstance(codes_raw, str):
-            codes = (codes_raw,)
-        else:
-            codes = cast(tuple[str, ...], codes_raw)
+        codes = (
+            (codes_raw,) if isinstance(codes_raw, str) else cast(tuple[str, ...], codes_raw)
+        )
         side = str(config.get("side", "debit"))
         expected = _sum_trial_balance(dataset, codes, side)
         actual = amounts.get(item_key)

@@ -189,3 +189,19 @@ class DetailDataset:
         self.related_party_purchases.extend(other.related_party_purchases)
         self.sales_details.extend(other.sales_details)
         self.internal_cash_flows.extend(other.internal_cash_flows)
+
+    @property
+    def is_empty(self) -> bool:
+        """明细数据是否全部为空（仅导入主表时跳过明细校验）。"""
+        return not any(
+            (
+                self.trial_balance,
+                self.trial_balance_current,
+                self.journal,
+                self.cash_flow_detail,
+                self.reclassifications,
+                self.related_party_purchases,
+                self.sales_details,
+                self.internal_cash_flows,
+            )
+        )

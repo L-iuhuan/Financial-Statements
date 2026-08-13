@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from fsa.core.engine.custom_rules import load_custom_rules, save_custom_rules
 from fsa.core.engine.registry import RuleRegistry
 from fsa.core.models.rule import ReconciliationRule, Severity, ToleranceType

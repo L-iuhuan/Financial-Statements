@@ -209,10 +209,9 @@ def _capture_header_rows(matrix: list[list[object]], header_idx: int) -> list[li
 
 def _contains_number(cells: list[object]) -> bool:
     """判断一行是否包含数值（数据行特征，用于停止多层表头捕获）。"""
-    for cell in cells:
-        if isinstance(cell, (int, float)) and not isinstance(cell, bool):
-            return True
-    return False
+    return any(
+        isinstance(cell, (int, float)) and not isinstance(cell, bool) for cell in cells
+    )
 
 
 def _build_rows(

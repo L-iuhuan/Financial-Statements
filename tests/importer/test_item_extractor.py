@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
-from fsa.core.models.report import ReportItem, ReportType
 from fsa.core.importer.excel_reader import RawSheetData
 from fsa.core.importer.item_extractor import extract_items
+from fsa.core.models.report import ReportType
 
 
 class TestExtractBalanceSheetItems:

@@ -34,7 +34,7 @@ def test_native_failure_falls_back_without_pywin32(tmp_path: Path) -> None:
         pytest.skip("已安装 pywin32，跳过缺依赖分支")
 
     encrypted_like = tmp_path / "encrypted.xlsx"
-    encrypted_like.write_bytes("该文件为密文".encode("utf-8"))
+    encrypted_like.write_bytes("该文件为密文".encode())
 
     with pytest.raises(FSAError, match="pywin32"):
         read_excel(str(encrypted_like))

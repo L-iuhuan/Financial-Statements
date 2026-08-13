@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from fsa.core.importer.excel_reader import RawSheetData, read_excel
+from fsa.core.importer.excel_reader import read_excel
 
 
 class TestReadExcelNormal:

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 from loguru import logger
@@ -220,6 +221,9 @@ def _append_item(
     except (ValueError, TypeError):
         logger.warning(f"  项目「{item_name_str}」的金额无法转换为数字: {amount}，跳过")
         return
+    if math.isnan(amount_float):
+        logger.debug(f"  项目「{item_name_str}」的金额为 NaN，跳过")
+        return
 
     beginning_amount = _read_optional_float(row, secondary)
     items.append(
@@ -357,9 +361,12 @@ def _read_optional_float(row: dict[str, object], column: str | None) -> float | 
     if value is None:
         return None
     try:
-        return float(value)
+        result = float(value)
     except (ValueError, TypeError):
         return None
+    if math.isnan(result):
+        return None
+    return result
 
 
 def _is_skip_row(item_name_str: str) -> bool:

@@ -10,6 +10,7 @@ SCE 是矩阵式报表, 不同于三大主表的"项目+金额"列表布局:
 
 from __future__ import annotations
 
+import math
 import re
 
 from loguru import logger
@@ -163,10 +164,15 @@ def _to_float(value: object) -> float | None:
     """安全转换为 float, 失败返回 None。"""
     if value is None:
         return None
+    if not isinstance(value, (int, float, str)):
+        return None
     try:
-        return float(value)  # type: ignore[arg-type]
+        result = float(value)
     except (ValueError, TypeError):
         return None
+    if math.isnan(result):
+        return None
+    return result
 
 
 def _to_row_num(row: dict[str, object]) -> int:

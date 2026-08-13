@@ -22,20 +22,21 @@ def check_cash_flow_classification(
     counterparts = _voucher_counterparts(dataset, cash_equivalent_codes)
     results: list[ValidationResult] = []
     for rule in DEFAULT_CASH_FLOW_RULES:
-        suspicious = _suspicious_vouchers(dataset, rule, counterparts)
+        suspicious, voucher_count = _suspicious_vouchers(dataset, rule, counterparts)
         passed = not suspicious
         detail = "；".join(
             f"凭证{voucher} 对方科目 {accounts}"
             for voucher, accounts in suspicious[:5]
         )
-        message = (
-            f"现金流分类「{rule.project_keyword}」: 复核通过"
-            if passed
-            else (
+        if voucher_count == 0:
+            message = f"现金流分类「{rule.project_keyword}」: 本期无对应凭证"
+        elif passed:
+            message = f"现金流分类「{rule.project_keyword}」: 复核通过"
+        else:
+            message = (
                 f"现金流分类「{rule.project_keyword}」: {len(suspicious)} 张凭证"
                 f"对方科目不在常见范围，请复核。{detail}"
             )
-        )
         results.append(
             ValidationResult(
                 rule_id=rule.rule_id,
@@ -110,7 +111,7 @@ def _suspicious_vouchers(
     dataset: DetailDataset,
     rule: CashFlowClassificationRule,
     counterparts: dict[str, set[str]],
-) -> list[tuple[str, str]]:
+) -> tuple[list[tuple[str, str]], int]:
     """找出对方科目不在规则常见范围内的凭证。"""
     vouchers = {
         row.voucher_no
@@ -131,7 +132,7 @@ def _suspicious_vouchers(
         )
         if not matched:
             suspicious.append((voucher, "/".join(sorted(accounts)[:5])))
-    return suspicious
+    return suspicious, len(vouchers)
 
 
 def _strip_suo(project_name: str) -> str:

@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from fsa.core.engine.cash_flow_checks import (
+    check_cash_flow_classification,
+    check_cash_flow_coverage,
+)
 from fsa.core.engine.detail_checks import (
     check_cash_flow_detail_vs_journal,
     check_cash_flow_detail_vs_statement,
     check_journal_voucher_balance,
     check_trial_balance_vs_balance_sheet,
-)
-from fsa.core.engine.cash_flow_checks import (
-    check_cash_flow_classification,
-    check_cash_flow_coverage,
 )
 from fsa.core.engine.reclassification_checks import (
     check_reclassification_rules,

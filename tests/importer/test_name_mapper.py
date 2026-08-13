@@ -8,8 +8,8 @@ from __future__ import annotations
 import pytest
 
 from fsa.core.importer.name_mapper import (
-    NAME_TO_KEY,
     KEY_TO_NAME,
+    NAME_TO_KEY,
     get_key,
     get_name,
     get_supplementary_key,
