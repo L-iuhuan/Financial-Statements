@@ -14,12 +14,15 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from fsa.gui.app_state import AppState
 from fsa.gui.main_window import MainWindow
 from fsa.gui.theme import get_qss
+
+# 整个文件为耗时压测 (rapid 50x/100x 循环), 默认套件跳过;
+# 改动抽屉/主题/布局相关代码或发布前, 用 pytest -m slow 显式运行
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture
@@ -215,7 +218,6 @@ class TestSendButton:
         """发送按钮完整显示'发送'二字。"""
         window._open_drawer()
         drawer = window._agent_drawer
-        send_btn = drawer.findChild(QPushButton, "BtnPrimary")
         # 找发送按钮 (文本为"发送")
         from PySide6.QtWidgets import QPushButton as QPB
         btns = drawer.findChildren(QPB)

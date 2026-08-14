@@ -842,3 +842,83 @@ class TestDualColumnExtraction:
         assert len(cf_notes) == 1
         assert cf_notes[0].amount == 705000.0
         assert cf_notes[0].beginning_amount == 650000.0
+
+
+class TestFormattedNumbers:
+    """测试报表中常见数字格式的解析（千分位/括号负数/占位符/科学计数法）。"""
+
+    def test_thousands_separator_parsed(self) -> None:
+        """带千分位逗号的字符串金额被正确解析。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "资产总计", "期末余额": "1,000,000.50"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 1000000.50
+
+    def test_parenthesized_negative_parsed(self) -> None:
+        """括号负数被解析为负数。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "未分配利润", "期末余额": "(1,291,800.12)"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == -1291800.12
+
+    def test_placeholder_parsed_as_zero(self) -> None:
+        """占位符（-）被解析为 0.0，项目仍被保留。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "库存股", "期末余额": "-"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 0.0
+
+    def test_em_dash_placeholder_parsed_as_zero(self) -> None:
+        """全角破折号（—）被解析为 0.0。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "库存股", "期末余额": "—"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 0.0
+
+    def test_scientific_notation_parsed(self) -> None:
+        """科学计数法金额被正确解析。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "资产总计", "期末余额": "1.5e6"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 1500000.0
+
+    def test_beginning_amount_with_placeholder_is_zero(self) -> None:
+        """次金额列为占位符时解析为 0.0 而非 None。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额", "年初余额"],
+            rows=[{"_row": 2, "项目": "资产总计", "期末余额": 2000000.0, "年初余额": "-"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].beginning_amount == 0.0
+
+    def test_empty_string_amount_skipped(self) -> None:
+        """空字符串金额（真空值）被跳过，不制造虚假的 0。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "资产总计", "期末余额": "   "}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 0

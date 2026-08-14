@@ -8,10 +8,9 @@ from __future__ import annotations
 import pytest
 
 from fsa.core.models.report import ReportType
-from fsa.core.models.result import ValidationResult, ValidationSummary
+from fsa.core.models.result import ValidationSummary
 from fsa.core.models.rule import Severity
 from fsa.storage.history_repo import HistoryRepo
-
 from tests.storage.conftest import make_result, make_summary
 
 
@@ -58,10 +57,10 @@ class TestHistoryRepoSave:
         )
 
         # Act
-        history_id = history_repo.save(summary)
+        history_repo.save(summary)
 
         # Assert
-        assert history_id > 0
+        assert history_repo.count() == 1
 
     def test_save_persists_report_types(
         self, history_repo: HistoryRepo
@@ -75,7 +74,7 @@ class TestHistoryRepoSave:
         summary = make_summary(report_types=report_types)
 
         # Act
-        history_id = history_repo.save(summary)
+        history_repo.save(summary)
 
         # Assert
         recent = history_repo.get_recent()
@@ -152,6 +151,77 @@ class TestHistoryRepoGetRecent:
         assert record["errored"] == 1
         assert record["skipped"] == 34
         assert isinstance(record["report_types"], list)
+
+
+class TestHistoryRepoGetById:
+    """按 ID 读取单条历史记录测试。"""
+
+    def test_get_by_id_returns_matching_record(
+        self, history_repo: HistoryRepo
+    ) -> None:
+        # Arrange
+        summary = make_summary(period="2024年12月")
+        history_id = history_repo.save(summary)
+
+        # Act
+        record = history_repo.get_by_id(history_id)
+
+        # Assert
+        assert record is not None
+        assert record["id"] == history_id
+        assert record["period"] == "2024年12月"
+
+    def test_get_by_id_returns_all_fields(
+        self, history_repo: HistoryRepo
+    ) -> None:
+        # Arrange
+        summary = make_summary(
+            period="2024年6月", total=10, passed=8,
+            failed=1, errored=1, skipped=34,
+        )
+        history_id = history_repo.save(summary)
+
+        # Act
+        record = history_repo.get_by_id(history_id)
+
+        # Assert
+        assert record is not None
+        assert record["created_at"] != ""
+        assert record["total"] == 10
+        assert record["passed"] == 8
+        assert record["failed"] == 1
+        assert record["errored"] == 1
+        assert record["skipped"] == 34
+        assert isinstance(record["report_types"], list)
+
+    def test_get_by_id_matches_get_recent_fields(
+        self, history_repo: HistoryRepo
+    ) -> None:
+        # Arrange
+        summary = make_summary(period="2024年12月")
+        history_id = history_repo.save(summary)
+
+        # Act
+        by_id = history_repo.get_by_id(history_id)
+        recent = history_repo.get_recent()[0]
+
+        # Assert
+        assert by_id == recent
+
+    def test_get_by_id_nonexistent_returns_none(
+        self, history_repo: HistoryRepo
+    ) -> None:
+        # Arrange
+        history_repo.save(make_summary())
+
+        # Act + Assert
+        assert history_repo.get_by_id(9999) is None
+
+    def test_get_by_id_empty_repo_returns_none(
+        self, history_repo: HistoryRepo
+    ) -> None:
+        # Act + Assert
+        assert history_repo.get_by_id(1) is None
 
 
 class TestHistoryRepoGetDetail:

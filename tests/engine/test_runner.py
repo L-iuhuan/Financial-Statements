@@ -161,3 +161,23 @@ class TestRuleRunner:
         keys = {t.key for t in result.trace}
         assert "asset_total" in keys
         assert "liability_total" in keys
+
+    def test_missing_known_item_trace_has_chinese_annotation(self) -> None:
+        """KNOWN_LINE_ITEM_KEYS 预填充 0 的变量: trace column 标注中文说明。"""
+        rule = ReconciliationRule(
+            rule_id="TEST-MISS-001",
+            name="缺失科目按 0 处理",
+            category="A-表内平衡",
+            statements=["资产负债表"],
+            formula="asset_total == monetary_funds + liability_total",
+            tolerance_type=ToleranceType.EXACT,
+            tolerance=0.01,
+            severity=Severity.WARNING,
+        )
+        ctx = make_context(asset_total=100.0, liability_total=60.0, equity_total=40.0)
+        result = RuleRunner.run(rule, ctx)
+        missing = [t for t in result.trace if t.key == "monetary_funds"]
+        assert len(missing) == 1
+        assert missing[0].row == 0
+        assert missing[0].column == "未在报表中找到（按 0 处理）"
+        assert missing[0].amount == 0.0

@@ -38,6 +38,7 @@ _STANDARD_NAMES: dict[str, str] = {
     # === 资产负债表 - 非流动资产 ===
     "固定资产": "fixed_assets",
     "在建工程": "construction_in_progress",
+    "使用权资产": "right_of_use_assets",
     "无形资产": "intangible_assets",
     "商誉": "goodwill",
     "长期待摊费用": "long_term_prepaid_expenses",
@@ -49,6 +50,7 @@ _STANDARD_NAMES: dict[str, str] = {
     "应付票据": "notes_payable",
     "应付账款": "accounts_payable",
     "预收款项": "advance_from_customers",
+    "合同负债": "contract_liabilities",
     "应付职工薪酬": "employee_benefits_payable",
     "应交税费": "taxes_payable",
     "其他应付款": "other_payable",

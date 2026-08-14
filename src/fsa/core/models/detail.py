@@ -169,7 +169,9 @@ class DetailDataset:
     trial_balance: list[TrialBalanceRow] = field(default_factory=list)
     trial_balance_current: list[TrialBalanceRow] = field(default_factory=list)
     journal: list[JournalRow] = field(default_factory=list)
+    journal_current: list[JournalRow] = field(default_factory=list)
     cash_flow_detail: list[CashFlowDetailRow] = field(default_factory=list)
+    cash_flow_detail_current: list[CashFlowDetailRow] = field(default_factory=list)
     reclassifications: list[ReclassificationRow] = field(default_factory=list)
     related_party_purchases: list[RelatedPartyPurchaseRow] = field(default_factory=list)
     sales_details: list[SalesDetailRow] = field(default_factory=list)
@@ -184,7 +186,9 @@ class DetailDataset:
         self.trial_balance.extend(other.trial_balance)
         self.trial_balance_current.extend(other.trial_balance_current)
         self.journal.extend(other.journal)
+        self.journal_current.extend(other.journal_current)
         self.cash_flow_detail.extend(other.cash_flow_detail)
+        self.cash_flow_detail_current.extend(other.cash_flow_detail_current)
         self.reclassifications.extend(other.reclassifications)
         self.related_party_purchases.extend(other.related_party_purchases)
         self.sales_details.extend(other.sales_details)
@@ -198,7 +202,9 @@ class DetailDataset:
                 self.trial_balance,
                 self.trial_balance_current,
                 self.journal,
+                self.journal_current,
                 self.cash_flow_detail,
+                self.cash_flow_detail_current,
                 self.reclassifications,
                 self.related_party_purchases,
                 self.sales_details,

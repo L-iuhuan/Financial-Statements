@@ -2,7 +2,7 @@
 
 > 更新日期: 2026-08-13
 > 用途: 跨机器开发的交接与续作指南
-> 当前版本: v0.1.0 (MVP+), 规则库 CAS v1.2.0 (37 条)
+> 当前版本: v0.1.0 (MVP+), 规则库 CAS v1.3.0 (42 条)
 
 ---
 
@@ -20,7 +20,7 @@ pip install -e ".[dev]"
 python -m fsa
 
 # 4. 测试
-python -m pytest -q          # 753 个测试
+python -m pytest -q          # 1029 个测试 (收集数)
 python -m ruff check src/    # 静态检查
 ```
 
@@ -32,9 +32,9 @@ python -m ruff check src/    # 静态检查
 ## 二、当前完成状态 (全部已验证)
 
 ### 核心引擎
-- [x] 37 条 CAS 勾稽规则 (v1.2.0), 茅台/格力真实年报 0 失败 0 异常
+- [x] 42 条 CAS 勾稽规则 (v1.3.0), 真实年报压测 0 失败 0 异常
 - [x] 双金额列引擎 (期末/期初 _ending/_beginning 变量)
-- [x] 补充资料提取 (cf_notes_ 前缀, 茅台 CF 22→40 项)
+- [x] 补充资料提取 (cf_notes_ 前缀, 真实年报 CF 22→40 项)
 - [x] 科目追溯 trace (行列定位, P3 可审计)
 
 ### 数据导入
@@ -75,7 +75,7 @@ python -m ruff check src/    # 静态检查
 - [x] 一键构建 scripts/build_installer.ps1
 
 ### 测试
-- [x] 753 测试全绿 (含 20 个压力/边界测试, 48 个 GUI 功能测试)
+- [x] 1029 测试收集 (1028 通过 / 1 跳过; 含 GUI 134, 压力/边界 20)
 - [x] TEST_PLAN.md 测试方案 (9 模块 48 用例)
 
 ---
@@ -83,7 +83,7 @@ python -m ruff check src/    # 静态检查
 ## 三、接下来要做的 (按优先级)
 
 ### P0 — 真实场景验证 (最优先)
-- [ ] **多行业真实年报压测**: 当前仅茅台+格力两份。需收集银行/地产/制造业等不同
+- [ ] **多行业真实年报压测**: 当前仅两份真实年报 (酒企+制造)。需收集银行/地产/制造业等不同
   行业年报 (格式差异大), 放入 `tests/fixtures/real_reports/` 后运行
   `python scripts/validate_real_data.py`, 暴露不同格式的识别/校验边界问题。
 - [x] **Excel COM 读取适配器**: 公司 DLP 加密环境下 openpyxl/xlrd 无法读文件，
@@ -126,11 +126,11 @@ python -m ruff check src/    # 静态检查
 │   ├── storage/        # SQLite (database/history_repo/chat_repo/override_repo)
 │   ├── updater/        # 自动更新
 │   └── gui/            # PySide6 界面
-├── tests/              # 753 测试
+├── tests/              # 1029 测试
 ├── scripts/            # 验证/构建脚本
 ├── resources/          # logo/图标
 ├── demo/               # demo.html 设计稿
-├── cas_gouji_rule_library.json   # 规则库 v1.2.0
+├── cas_gouji_rule_library.json   # 规则库 v1.3.0
 └── fsa.spec / installer.iss      # 打包配置
 ```
 

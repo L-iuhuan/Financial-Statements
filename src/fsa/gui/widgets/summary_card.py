@@ -7,14 +7,14 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
-from fsa.gui.theme import get_mono_font
+from fsa.gui.theme import current_palette, get_mono_font, register_theme_listener
 
-# 圆点颜色映射
-_DOT_COLORS: dict[str, str] = {
-    "success": "#10b981",
-    "error": "#ef4444",
-    "warning": "#f59e0b",
-    "info": "#3b82f6",
+# 圆点类型 -> 主题调色板语义色键名
+_DOT_PALETTE_KEYS: dict[str, str] = {
+    "success": "success",
+    "error": "error",
+    "warning": "warning",
+    "info": "info",
 }
 
 
@@ -26,19 +26,26 @@ class SummaryCard(QFrame):
         self.setObjectName("SummaryCard")
         self._dot_type = dot_type
         self._setup_ui()
+        self._apply_dot_color()
+        register_theme_listener(self._apply_dot_color)
+
+    def _apply_dot_color(self) -> None:
+        """圆点颜色跟随当前主题调色板 (深色下用暗色语义色, 避免刺眼)。"""
+        key = _DOT_PALETTE_KEYS.get(self._dot_type, "info")
+        color = current_palette()[key]
+        self._dot.setStyleSheet(f"color: {color}; font-size: 10px;")
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(4)
 
         # 上方: 圆点 + 标签
         top = QHBoxLayout()
         top.setSpacing(8)
 
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color: {_DOT_COLORS.get(self._dot_type, '#3b82f6')}; font-size: 10px;")
-        top.addWidget(dot)
+        self._dot = QLabel("●")
+        top.addWidget(self._dot)
 
         self._label = QLabel("")
         self._label.setObjectName("SummaryCardLabel")

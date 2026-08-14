@@ -7,6 +7,7 @@ history_retention_days, update_manifest_url。
 
 from __future__ import annotations
 
+from loguru import logger
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -110,11 +111,17 @@ class SettingsPage(QWidget):
         self._settings.sync()
         self._update_theme_buttons(mode)
         dark = self._detect_system_dark() if mode == "auto" else mode == "dark"
-        apply_theme(dark=dark)
-        from PySide6.QtWidgets import QApplication
-        app = QApplication.instance()
-        if isinstance(app, QApplication):
-            app.setStyleSheet(get_qss(dark))
+
+        def _apply() -> None:
+            apply_theme(dark=dark)
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if isinstance(app, QApplication):
+                app.setStyleSheet(get_qss(dark))
+
+        # 截屏遮罩淡出过渡, 避免瞬间反色闪烁
+        from fsa.gui.theme import run_theme_transition
+        run_theme_transition(self.window(), _apply)
         self.theme_changed.emit(dark)
 
     def _update_theme_buttons(self, mode: str) -> None:
@@ -136,8 +143,10 @@ class SettingsPage(QWidget):
             if hasattr(style_hints, "colorScheme"):
                 from PySide6.QtCore import Qt
                 return style_hints.colorScheme() == Qt.ColorScheme.Dark
-        except Exception:
-            pass
+        except (RuntimeError, AttributeError) as e:
+            # 防御性兜底: QGuiApplication 未就绪或缺 colorScheme 时无法判定,
+            # 一律按亮色处理, 不影响启动 (仅记录调试日志)
+            logger.debug(f"系统暗色模式检测失败, 按亮色处理: {e}")
         return False
 
     def _save_tolerance(self) -> None:
@@ -190,12 +199,21 @@ class SettingsPage(QWidget):
 
     def _reset_to_defaults(self) -> None:
         """恢复所有设置为默认值并立即生效。"""
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "确认恢复",
+            "确定将所有设置恢复为默认值吗？此操作不可撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         defaults = {
             "theme_mode": "auto",
             "default_tolerance": "0.01",
             "gross_margin_threshold": "30",
             "history_retention_days": "90",
-            "update_manifest_url": "http://localhost:8000/version.json",
+            "update_manifest_url": "",
         }
         for key, value in defaults.items():
             self._settings.setValue(key, value)
@@ -227,6 +245,7 @@ class SettingsPage(QWidget):
         """保存更新清单 URL 到 QSettings。"""
         url = self._update_url_input.text().strip()
         self._settings.setValue("update_manifest_url", url)
+        self._settings.sync()
         self._notify_saved()
 
     def _check_for_update(self) -> None:

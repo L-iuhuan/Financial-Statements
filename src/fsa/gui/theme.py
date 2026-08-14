@@ -9,18 +9,21 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable
 
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
 from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel, QWidget
 from qfluentwidgets import Theme, setTheme, setThemeColor
 
 # ── 设计令牌 (DESIGN_SYSTEM.md) ──
 
-# 品牌色 — 深青玉 (deep teal): 现代金融科技信赖色, 脱离 AI 感
-BRAND_50 = "#eef7f5"
-BRAND_100 = "#d6ece8"
-BRAND_200 = "#aed8d1"
-BRAND_500 = "#15917f"
-BRAND_600 = "#0e7a6c"
-BRAND_700 = "#0b6257"
+# 品牌色 — 钢蓝灰 (steel slate blue): 稳重财务专业感, 与语义色明确区分
+# 色相 ~220° 远离 success 绿(~160°)/error 红/warning 黄, 低饱和克制
+BRAND_50 = "#eef2f7"
+BRAND_100 = "#d5dde8"
+BRAND_200 = "#a8b9d0"
+BRAND_500 = "#4e6fa7"
+BRAND_600 = "#3e5f8f"
+BRAND_700 = "#2e4f77"
 
 # 语义色
 SUCCESS = "#10b981"
@@ -64,6 +67,7 @@ def _light_palette() -> dict[str, str]:
         "bg_surface_active": "#e5e7eb",
         "bg_sidebar": "#fafafa",
         "bg_acrylic": "rgba(255,255,255,0.72)",
+        "overlay": "rgba(0,0,0,0.2)",
         "text_primary": "#111827",
         "text_secondary": "#6b7280",
         "text_tertiary": "#9ca3af",
@@ -89,6 +93,7 @@ def _dark_palette() -> dict[str, str]:
         "bg_surface_active": "#3f3f46",
         "bg_sidebar": "#0f0f10",
         "bg_acrylic": "rgba(24,24,27,0.72)",
+        "overlay": "rgba(0,0,0,0.4)",
         "text_primary": "#f9fafb",
         "text_secondary": "#9ca3af",
         "text_tertiary": "#6b7280",
@@ -99,9 +104,9 @@ def _dark_palette() -> dict[str, str]:
         "error": "#f87171", "error_bg": "#450a0a", "error_border": "#991b1b",
         "warning": "#fbbf24", "warning_bg": "#422006", "warning_border": "#92400e",
         "info": "#60a5fa", "info_bg": "#0c1c33", "info_border": "#1e40af",
-        "brand_50": "#122b27", "brand_100": "#1a423c",
-        "brand_200": "#2a5f56", "brand_500": "#4fb3a5",
-        "brand_600": "#3d9a8d", "brand_700": "#328a7e",
+        "brand_50": "#1a2332", "brand_100": "#233045",
+        "brand_200": "#2e405e", "brand_500": "#6b8fc5",
+        "brand_600": "#4a6d9f", "brand_700": "#3e5f8f",
     }
 
 
@@ -343,6 +348,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     QFrame#RuleCard:hover {{
         border-color: {p["border_strong"]};
     }}
+    QFrame#RuleCard:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
     QLabel#RuleBadge {{
         font-size: 11px;
         font-weight: 600;
@@ -398,6 +406,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     QFrame#ReportCard:hover {{
         border-color: {p["border_strong"]};
     }}
+    QFrame#ReportCard:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
     QFrame#ReportCardIcon {{
         background-color: {p["brand_50"]};
         border-radius: 6px;
@@ -427,6 +438,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     }}
     QFrame#HistoryCard:hover {{
         border-color: {p["border_strong"]};
+    }}
+    QFrame#HistoryCard:pressed {{
+        background-color: {p["bg_surface_active"]};
     }}
 
     /* ── 空状态 ── */
@@ -529,7 +543,7 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["brand_500"]};
     }}
     QFrame#AgentOverlay {{
-        background-color: rgba(0,0,0,0.2);
+        background-color: {p["overlay"]};
     }}
     QFrame#AgentContextBar {{
         background-color: {p["brand_50"]};
@@ -614,7 +628,7 @@ def _generate_qss(p: dict[str, str]) -> str:
     }}
     QLabel#AgentTimeLabel {{
         font-size: 11px;
-        color: {p["text_tertiary"]};
+        color: {p["text_secondary"]};
     }}
 
     /* ── 诊断按钮 ── */
@@ -711,6 +725,15 @@ def _generate_qss(p: dict[str, str]) -> str:
     QFrame#ResultCard[status="error"]:hover {{
         border-color: {p["warning"]};
     }}
+    QFrame#ResultCard[status="pass"]:pressed {{
+        background-color: {p["success_border"]};
+    }}
+    QFrame#ResultCard[status="fail"]:pressed {{
+        background-color: {p["error_border"]};
+    }}
+    QFrame#ResultCard[status="error"]:pressed {{
+        background-color: {p["warning_border"]};
+    }}
     QLabel#ResultStatusLabel[status="pass"] {{
         color: {p["success"]};
     }}
@@ -773,6 +796,26 @@ def _generate_qss(p: dict[str, str]) -> str:
         padding: 8px 12px;
         border-bottom: 1px solid {p["border"]};
     }}
+    QTableWidget::item:alternate {{
+        background-color: {p["bg_surface_hover"]};
+    }}
+
+    /* ── 页面标题 ── */
+    QLabel#PageTitle {{
+        font-size: 15px;
+        font-weight: 600;
+        color: {p["text_primary"]};
+    }}
+    QLabel#SectionTitle {{
+        font-size: 15px;
+        font-weight: 600;
+        color: {p["text_primary"]};
+    }}
+    QLabel#AgentDrawerTitle {{
+        font-size: 15px;
+        font-weight: 600;
+        color: {p["text_primary"]};
+    }}
 
     /* ── 滚动区域 ── */
     QScrollArea {{
@@ -824,7 +867,17 @@ def get_qss(dark: bool = False) -> str:
 
 def get_mono_font(size: int = 10) -> QFont:
     """获取等宽字体 (用于金额显示)。"""
-    return QFont("JetBrains Mono", size)
+    font = QFont("JetBrains Mono", size)
+    # 未安装 JetBrains Mono 时回退到系统等宽字体 (Qt 按平台选择)
+    font.setStyleHint(QFont.StyleHint.Monospace)
+    return font
+
+
+def get_shadow_color(hover: bool = False) -> QColor:
+    """卡片阴影颜色: 深色主题下加深以保证可见性。"""
+    if _current_dark:
+        return QColor(0, 0, 0, 90 if hover else 60)
+    return QColor(0, 0, 0, 25 if hover else 10)
 
 
 def get_ui_font(size: int = 10) -> QFont:
@@ -866,3 +919,49 @@ def notify_theme_listeners() -> None:
         with contextlib.suppress(Exception):
             # 避免单个监听器异常影响其他监听器
             fn()
+
+
+# 进行中的主题过渡动画 (防止被 GC 提前回收)
+_active_transition_anims: list[QPropertyAnimation] = []
+
+
+def run_theme_transition(window: QWidget, apply_fn: Callable[[], None]) -> None:
+    """主题切换过渡: 旧画面截图遮罩淡出 (200ms), 避免瞬间反色闪烁。
+
+    先对窗口当前外观截屏作为遮罩, 再应用新主题, 最后淡出遮罩露出新外观。
+    以下情况直接应用不做动画: 测试环境 (PYTEST_CURRENT_TEST)、无法截屏、
+    上一次过渡动画仍在进行 (快速连续切换时避免截屏/动画堆积)。
+    """
+    import os
+
+    in_test = os.environ.get("PYTEST_CURRENT_TEST") is not None
+    if in_test or _active_transition_anims:
+        apply_fn()
+        return
+    pixmap = window.grab()
+    if pixmap.isNull():
+        apply_fn()
+        return
+    overlay = QLabel(window)
+    overlay.setPixmap(pixmap)
+    overlay.setGeometry(window.rect())
+    overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    apply_fn()
+    overlay.show()
+    overlay.raise_()
+    effect = QGraphicsOpacityEffect(overlay)
+    overlay.setGraphicsEffect(effect)
+    anim = QPropertyAnimation(effect, b"opacity", overlay)
+    anim.setDuration(200)
+    anim.setStartValue(1.0)
+    anim.setEndValue(0.0)
+    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def _cleanup() -> None:
+        overlay.deleteLater()
+        if anim in _active_transition_anims:
+            _active_transition_anims.remove(anim)
+
+    anim.finished.connect(_cleanup)
+    _active_transition_anims.append(anim)
+    anim.start()

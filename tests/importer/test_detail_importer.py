@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
+import io
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import openpyxl
+from loguru import logger
 
 from fsa.core.importer.detail_importer import DetailImporter
+from fsa.core.models.detail import CashFlowDetailRow, DetailDataset, JournalRow
+
+
+@contextmanager
+def _capture_loguru(level: str = "WARNING") -> Iterator[io.StringIO]:
+    """捕获 loguru 日志到 StringIO。
+
+    loguru 默认 stderr handler 在导入时即绑定底层 fd，capsys/caplog 均捕获不到，
+    因此测试中挂载一个临时 StringIO sink。
+    """
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level=level, format="{level} {message}", colorize=False)
+    try:
+        yield sink
+    finally:
+        logger.remove(handler_id)
 
 
 def _write_sheet(ws: openpyxl.worksheet.worksheet.Worksheet, headers: list[str], rows: list[list[object]]) -> None:
@@ -134,3 +154,108 @@ class TestDetailImporter:
         dataset = DetailImporter().import_file(str(path))
         assert dataset.trial_balance == []
         assert len(dataset.trial_balance_current) == 1
+
+    def test_current_month_journal_goes_to_journal_current(
+        self, tmp_path: Path
+    ) -> None:
+        """本月口径序时账进入 journal_current 且有中文 warning 日志。"""
+        path = tmp_path / "journal_current.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "序时账（本月）"
+        _write_sheet(
+            ws,
+            ["日期", "凭证号", "科目编码", "科目名称", "摘要", "方向", "金额"],
+            [
+                ["2026-06-30", "记-0001", "1002", "银行存款", "收款", "贷", 500.0],
+                ["2026-06-30", "记-0001", "1122", "应收账款", "收款", "借", 500.0],
+            ],
+        )
+        wb.save(str(path))
+
+        with _capture_loguru() as sink:
+            dataset = DetailImporter().import_file(str(path))
+
+        assert dataset.journal == []
+        assert len(dataset.journal_current) == 2
+        assert dataset.journal_current[0].voucher_no == "记-0001"
+        # 中文 warning 说明数据被分流而非静默丢弃
+        captured = sink.getvalue()
+        assert "WARNING" in captured
+        assert "序时账" in captured and "本月" in captured
+        assert "journal_current" in captured
+
+    def test_cumulative_journal_still_goes_to_journal(self, tmp_path: Path) -> None:
+        """累计口径序时账仍进入 journal。"""
+        path = tmp_path / "journal_cumulative.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "序时账（1-本月）"
+        _write_sheet(
+            ws,
+            ["日期", "凭证号", "科目编码", "科目名称", "摘要", "方向", "金额"],
+            [["2026-06-30", "记-0001", "1002", "银行存款", "收款", "贷", 500.0]],
+        )
+        wb.save(str(path))
+
+        dataset = DetailImporter().import_file(str(path))
+        assert len(dataset.journal) == 1
+        assert dataset.journal_current == []
+
+    def test_current_month_cash_flow_detail_goes_to_current(
+        self, tmp_path: Path
+    ) -> None:
+        """本月口径现金流明细进入 cash_flow_detail_current 且有 warning 日志。"""
+        path = tmp_path / "cf_detail_current.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "现金流量明细（本月）"
+        _write_sheet(
+            ws,
+            ["年月", "凭证号", "现金流量项目", "摘要", "方向", "金额"],
+            [
+                [6, "记-0001", "销售商品、提供劳务收到的现金(01)", "货款", "流入", 500.0],
+            ],
+        )
+        wb.save(str(path))
+
+        with _capture_loguru() as sink:
+            dataset = DetailImporter().import_file(str(path))
+
+        assert dataset.cash_flow_detail == []
+        assert len(dataset.cash_flow_detail_current) == 1
+        captured = sink.getvalue()
+        assert "WARNING" in captured
+        assert "现金流量明细" in captured and "本月" in captured
+        assert "cash_flow_detail_current" in captured
+
+
+class TestDetailDatasetMergeAndEmpty:
+    """测试 DetailDataset 合并与空判断包含新增的本月数据集。"""
+
+    def test_merge_combines_journal_current(self) -> None:
+        target = DetailDataset()
+        other = DetailDataset(journal_current=[JournalRow(
+            date="2026-06-30", voucher_no="记-0001", parent_account="",
+            account_code="1002", account_name="银行存款", summary="收款",
+            direction="贷", amount=500.0,
+        )])
+        target.merge(other)
+        assert len(target.journal_current) == 1
+
+    def test_merge_combines_cash_flow_detail_current(self) -> None:
+        target = DetailDataset()
+        other = DetailDataset(cash_flow_detail_current=[CashFlowDetailRow(
+            voucher_no="记-0001", project="销售商品收到的现金(01)", summary="货款",
+            direction="流入", amount=500.0,
+        )])
+        target.merge(other)
+        assert len(target.cash_flow_detail_current) == 1
+
+    def test_is_empty_false_with_only_current_data(self) -> None:
+        dataset = DetailDataset(journal_current=[
+            JournalRow(date="", voucher_no="记-0001", parent_account="",
+                       account_code="1002", account_name="", summary="",
+                       direction="借", amount=1.0)
+        ])
+        assert dataset.is_empty is False

@@ -46,13 +46,19 @@ class ValidationService:
         self._registry = registry
 
     def validate(
-        self, reports: list[Report], period: str = ""
+        self,
+        reports: list[Report],
+        period: str = "",
+        threshold_vars: dict[str, float] | None = None,
     ) -> ValidationSummary:
         """校验报表列表, 返回汇总结果。
 
         Args:
             reports: 待校验的报表列表
             period: 报告期间, 如 "2024-12"
+            threshold_vars: 逻辑合理性规则(LR-*)的行业阈值变量 -> 值,
+                按主体行业注入 (见 EntityConfig.industry)。缺省为 None,
+                由 runner 回落 general 默认阈值 (与现状行为一致)。
 
         Returns:
             ValidationSummary 汇总结果
@@ -70,7 +76,7 @@ class ValidationService:
                 skipped += 1
                 logger.debug(f"规则 {rule.rule_id} 跳过 (缺少所需报表)")
                 continue
-            result = self._run_rule_safe(rule, context)
+            result = self._run_rule_safe(rule, context, threshold_vars)
             results.append(result)
 
         summary = self._build_summary(results, context, period, skipped)
@@ -101,19 +107,23 @@ class ValidationService:
 
     @staticmethod
     def _run_rule_safe(
-        rule: ReconciliationRule, context: ValidationContext
+        rule: ReconciliationRule,
+        context: ValidationContext,
+        threshold_vars: dict[str, float] | None = None,
     ) -> ValidationResult:
         """执行单条规则, 捕获异常转为跳过/异常结果。
 
-        EvaluationError (变量未定义/除零) -> 跳过 (缺少数据, 不算不通过)
+        EvaluationError (变量未定义/除零/相对容差基准为0) -> 跳过 (缺少数据, 不算不通过)
         FormulaParseError (公式语法错误) -> 异常 (规则定义有误)
         其他 FSAError -> 异常
-        其他异常 -> 异常 (未预期错误)
+        可预期的运行期异常 (ValueError/TypeError/KeyError/ArithmeticError/
+        RuntimeError/OSError) -> 异常 (未预期错误)
+        其余异常 -> 向上传播 (暴露真实缺陷, 不做宽泛捕获)
         """
         try:
-            return RuleRunner.run(rule, context)
+            return RuleRunner.run(rule, context, threshold_vars)
         except EvaluationError as e:
-            logger.info(f"规则 {rule.rule_id} 跳过 (缺少变量): {e}")
+            logger.info(f"规则 {rule.rule_id} 跳过 (数据不足): {e}")
             return ValidationResult.from_skip(rule, str(e))
         except FormulaParseError as e:
             logger.warning(f"规则 {rule.rule_id} 公式错误: {e}")
@@ -121,8 +131,8 @@ class ValidationService:
         except FSAError as e:
             logger.warning(f"规则 {rule.rule_id} 执行异常: {e}")
             return ValidationResult.from_error(rule, str(e))
-        except Exception as e:
-            logger.error(f"规则 {rule.rule_id} 未预期异常: {type(e).__name__}: {e}")
+        except (ValueError, TypeError, KeyError, ArithmeticError, RuntimeError, OSError) as e:
+            logger.error(f"规则 {rule.rule_id} 执行异常: {type(e).__name__}: {e}")
             return ValidationResult.from_error(rule, f"未预期错误: {e}")
 
     @staticmethod

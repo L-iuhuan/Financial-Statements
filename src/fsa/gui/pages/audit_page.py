@@ -5,13 +5,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -25,9 +22,9 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import InfoBar, InfoBarPosition
 
-from fsa.core.exporter.audit_exporter import AuditExporter
 from fsa.core.models.rule import Severity
 from fsa.gui.app_state import AppState
+from fsa.gui.export_helper import export_audit_workbook
 from fsa.gui.theme import current_palette, get_mono_font
 
 
@@ -56,7 +53,7 @@ class AuditPage(QWidget):
         # 标题行
         title_row = QHBoxLayout()
         title = QLabel("审计底稿预览")
-        title.setStyleSheet("font-size: 15px; font-weight: 600;")
+        title.setObjectName("PageTitle")
         title_row.addWidget(title)
         title_row.addStretch()
 
@@ -162,48 +159,8 @@ class AuditPage(QWidget):
             self._table.setItem(i, 6, tol_item)
 
     def _on_export(self) -> None:
-        summary = self._state.results
-        if summary is None:
-            InfoBar.warning(
-                "提示", "请先执行校验，再导出底稿",
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=3000, parent=self,
-            )
-            return
-
-        period = summary.period or "未命名"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_name = f"审计底稿_{period}_{timestamp}.xlsx"
-
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "导出审计底稿",
-            default_name,
-            "Excel 文件 (*.xlsx)",
-        )
-        if not path:
-            return
-
-        try:
-            exporter = AuditExporter()
-            exporter.export(summary, path)
-            InfoBar.success(
-                "导出成功", f"已导出到 {path}",
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=5000, parent=self,
-            )
-        except PermissionError:
-            InfoBar.error(
-                "导出失败", "文件被占用，请关闭已打开的 Excel 文件后重试",
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=5000, parent=self,
-            )
-        except OSError:
-            InfoBar.error(
-                "导出失败", "无法写入文件，请检查路径权限",
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=5000, parent=self,
-            )
+        """导出审计底稿 (公共逻辑见 export_helper.py)。"""
+        export_audit_workbook(self, self._state.results, show_progress=False)
 
     def _on_print_preview(self) -> None:
         summary = self._state.results

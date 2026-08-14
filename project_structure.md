@@ -1,8 +1,19 @@
 # 项目结构与开发计划
 
+> ## ⚠️ 已归档 / 已过时
+>
+> **本文档是早期规划稿（更新日期 2026-08-07），内容已严重过时，仅供参考，不再维护。**
+> 与实际代码不符之处包括：
+> - 目录结构：实际模块为 `src/fsa/` 下的顶层包 `agent/ core/ gui/ services/ storage/ updater/`，
+>   不存在 `ui/`、`core/generator/`、`core/storage/` 等旧路径（详见 AGENTS.md §1.2）
+> - 依赖：已移除 `camelot-py`、`requests`（updater/agent 用 stdlib urllib）
+> - 规则数：本文写 44 条，实际为 **42 条（v1.3.0）**
+>
+> **请以 [AGENTS.md](./AGENTS.md) 为权威文档（模块布局见其 §1.2，规则库见其 §5.1）。**
+
 > **配套文档**: [design.md](./design.md)  
 > **许可证**: MIT  
-> **更新日期**: 2026-08-07
+> **更新日期**: 2026-08-07（已过时，见上）
 
 ---
 

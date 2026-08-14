@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import FluentIcon
 
+from fsa.core.version import APP_VERSION
+
 # 导航项配置: (section, object_name, label, icon)
 _NAV_ITEMS: list[tuple[str, str, str, FluentIcon]] = [
     ("工作区", "navImport", "数据导入", FluentIcon.DOWNLOAD),
@@ -125,7 +127,7 @@ class Sidebar(QFrame):
         footer_layout = QVBoxLayout(footer)
         footer_layout.setContentsMargins(12, 8, 12, 8)
 
-        version = QLabel("版本 0.1.0 (MVP)")
+        version = QLabel(f"版本 {APP_VERSION} (MVP)")
         version.setObjectName("SidebarVersion")
         footer_layout.addWidget(version)
 
@@ -140,7 +142,13 @@ class Sidebar(QFrame):
             btn.set_active(nid == nav_id)
         self.nav_changed.emit(nav_id)
 
-    def set_active_nav(self, nav_id: str) -> None:
+    def set_active_nav(self, nav_id: str, emit: bool = True) -> None:
+        """高亮指定导航项; emit=True 时同时发出 nav_changed 信号。
+
+        程序化切换页面时传 emit=False, 由调用方显式触发导航,
+        避免经信号再次触发 _on_nav 造成双重执行。
+        """
         for nid, btn in self._nav_buttons.items():
             btn.set_active(nid == nav_id)
-        self.nav_changed.emit(nav_id)
+        if emit:
+            self.nav_changed.emit(nav_id)

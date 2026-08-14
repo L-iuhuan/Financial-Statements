@@ -7,6 +7,10 @@
 - 每页提取表格，识别标题行（包含"资产负债表"/"利润表"/"现金流量表"）
 - 标题下方第一行为列标题（项目 + 金额列）
 - 后续行为数据行
+
+行号语义 (与 Excel 路径对齐, 见 D-01):
+- 数据行 "_row" = 页码 * _PDF_ROW_BASE + 表内行号（1-based），
+  保证「第X页表内第N行」可定位到 PDF 原始文件。
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from pathlib import Path
 import pdfplumber
 from loguru import logger
 
+from fsa.core.importer.amount_parser import parse_amount
 from fsa.core.importer.excel_reader import RawSheetData
 
 # 报表标题关键词 -> 报表类型（用于边界检测）
@@ -35,6 +40,11 @@ _AMOUNT_HEADER_CANDIDATES: list[str] = [
     "本期金额", "本期数", "本期",
     "上期金额", "上期数", "上期",
 ]
+
+# PDF 行号编码基数: 行号 = 页码 * _PDF_ROW_BASE + 表内行号（1-based）。
+# Excel 工作表最大行号为 1,048,576，恒小于该基数，
+# 因此 audit_exporter 可按 `row >= _PDF_ROW_BASE` 判定来源并解码为「第X页表内第N行」。
+_PDF_ROW_BASE = 10_000_000
 
 
 def read_pdf(file_path: str) -> dict[str, RawSheetData]:
@@ -118,7 +128,7 @@ def _extract_sheet_from_page(
         return None
 
     # 解析数据行
-    rows = _parse_data_rows(table, headers, header_row_idx + 1)
+    rows = _parse_data_rows(table, headers, header_row_idx + 1, page_num)
     if not rows:
         logger.debug(f"  第 {page_num} 页: 无有效数据行")
         return None
@@ -185,26 +195,31 @@ def _parse_data_rows(
     table: list[list[str | None]],
     headers: list[str],
     start_row: int,
+    page_num: int,
 ) -> list[dict[str, object]]:
     """解析数据行。
+
+    每行的 "_row" 编码为 `page_num * _PDF_ROW_BASE + 表内行号`，
+    表内行号为该页提取表格中的 1-based 行（含标题行/表头行），
+    保证用户可按「第X页表内第N行」定位到 PDF 原始文件 (P3 可审计可溯源)。
 
     Args:
         table: 表格数据
         headers: 列标题列表
-        start_row: 数据起始行号
+        start_row: 数据起始行号（0-based 表格下标）
+        page_num: 页码（从 1 开始）
 
     Returns:
         数据行列表，每行为 dict
     """
     rows: list[dict[str, object]] = []
-    row_num = start_row
 
     for i in range(start_row, len(table)):
         table_row = table[i]
         if _is_empty_row(table_row):
             continue
 
-        row_data: dict[str, object] = {"_row": row_num}
+        row_data: dict[str, object] = {"_row": page_num * _PDF_ROW_BASE + i + 1}
         is_empty = True
 
         for col_idx, header in enumerate(headers):
@@ -217,8 +232,6 @@ def _parse_data_rows(
 
         if not is_empty:
             rows.append(row_data)
-
-        row_num += 1
 
     return rows
 
@@ -238,6 +251,9 @@ def _safe_str(value: str | None) -> str:
 def _parse_cell_value(value: str | None) -> object:
     """解析单元格值：尝试转为数字，失败则返回原字符串。
 
+    支持千分位逗号/空格、括号负数、占位符（"-"、"—"→0.0）、科学计数法。
+    空单元格（None/纯空白）返回 None，占位符不被当作真空值丢弃。
+
     Args:
         value: 单元格原始值
 
@@ -249,9 +265,7 @@ def _parse_cell_value(value: str | None) -> object:
     text = str(value).strip()
     if not text:
         return None
-    # 尝试转为数字
-    try:
-        cleaned = text.replace(",", "").replace(" ", "")
-        return float(cleaned)
-    except ValueError:
+    parsed = parse_amount(value)
+    if parsed is None:
         return text
+    return parsed

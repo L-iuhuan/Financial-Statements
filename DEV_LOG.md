@@ -22,7 +22,7 @@
   - 推荐: 自研 ~200行 AST DSL (基于 simpleeval MIT 安全求值器)
   - SQLite: 4MB数据量, WAL模式46万QPS, 绰绰有余
 - **bg_e69fd166** - CAS 勾稽规则目录
-  - 44 条规则落盘 `cas_gouji_rule_library.json`
+  - 44 条规则落盘 `cas_gouji_rule_library.json`（v1.2.0 起调整为 37 条，v1.3.0 起为 42 条）
   - A表内平衡16 + B表间勾稽14 + C逻辑合理性14
   - 官方准则引用: CAS 30号/31号/18号, 审计准则1313号
 

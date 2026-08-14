@@ -25,9 +25,9 @@ def _write_json(tmp_path: Path, payload: dict) -> Path:
 class TestLoadFromRealFile:
     """从真实规则库文件加载。"""
 
-    def test_load_all_39_rules(self) -> None:
+    def test_load_all_rules(self) -> None:
         rules = load_rules_from_json(RULE_LIBRARY)
-        assert len(rules) == 37
+        assert len(rules) == 42
 
     def test_first_rule_fields(self) -> None:
         rules = load_rules_from_json(RULE_LIBRARY)
@@ -68,6 +68,10 @@ class TestLoadFromRealFile:
             "SCE-IS-002",
             "SCE-IS-003",
             "SCE-BS-001",
+            "SCE-BS-002",
+            "SCE-BS-003",
+            "SCE-BS-004",
+            "SCE-BS-005",
             "IS-TAX-001",
             "NOTES-001",
             "NOTES-002",
@@ -83,6 +87,7 @@ class TestLoadFromRealFile:
             "LR-QUICK-001",
             "LR-OCF-002",
             "LR-NONREC-001",
+            "IS-LR-001",
         }
         assert {r.rule_id for r in rules} == expected_ids
 

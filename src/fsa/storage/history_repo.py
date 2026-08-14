@@ -7,12 +7,40 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from typing import TypedDict
 
 from loguru import logger
 
 from fsa.core.models.result import ValidationResult, ValidationSummary
 from fsa.core.models.rule import Severity
 from fsa.storage.database import Database
+
+
+class HistoryRecord(TypedDict):
+    """单条校验历史记录（不含明细）。
+
+    Attributes:
+        id: 历史记录 ID
+        created_at: 创建时间
+        period: 会计期间
+        total: 规则总数
+        passed: 通过数
+        failed: 不通过数
+        errored: 异常数
+        skipped: 跳过数
+        report_types: 涉及的报表类型
+    """
+
+    id: int
+    created_at: str
+    period: str
+    total: int
+    passed: int
+    failed: int
+    errored: int
+    skipped: int
+    report_types: list[str]
 
 
 class HistoryRepo:
@@ -66,7 +94,7 @@ class HistoryRepo:
         return history_id
 
     def _insert_result(
-        self, conn, history_id: int, result: ValidationResult
+        self, conn: sqlite3.Connection, history_id: int, result: ValidationResult
     ) -> None:
         """插入单条校验结果明细。"""
         conn.execute(
@@ -82,15 +110,14 @@ class HistoryRepo:
              int(result.errored)),
         )
 
-    def get_recent(self, limit: int = 20) -> list[dict]:
+    def get_recent(self, limit: int = 20) -> list[HistoryRecord]:
         """获取最近的校验历史记录 (不含明细)。
 
         Args:
             limit: 最多返回的记录数
 
         Returns:
-            历史记录列表, 每条为字典:
-            {id, created_at, period, total, passed, failed, errored, skipped, report_types}
+            历史记录列表，每条为 HistoryRecord 字典
         """
         conn = self._db.connection
         rows = conn.execute(
@@ -102,7 +129,7 @@ class HistoryRepo:
             (limit,),
         ).fetchall()
 
-        result: list[dict] = []
+        result: list[HistoryRecord] = []
         for row in rows:
             result.append({
                 "id": row["id"],
@@ -116,6 +143,37 @@ class HistoryRepo:
                 "report_types": json.loads(row["report_types"]),
             })
         return result
+
+    def get_by_id(self, history_id: int) -> HistoryRecord | None:
+        """按 ID 获取单条历史记录（不含明细）。
+
+        Args:
+            history_id: 历史记录 ID
+
+        Returns:
+            HistoryRecord 字典；记录不存在时返回 None
+        """
+        conn = self._db.connection
+        row = conn.execute(
+            """SELECT id, created_at, period, total, passed,
+                      failed, errored, skipped, report_types
+               FROM validation_history
+               WHERE id = ?""",
+            (history_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "period": row["period"],
+            "total": row["total"],
+            "passed": row["passed"],
+            "failed": row["failed"],
+            "errored": row["errored"],
+            "skipped": row["skipped"],
+            "report_types": json.loads(row["report_types"]),
+        }
 
     def get_detail(self, history_id: int) -> list[ValidationResult]:
         """获取指定历史记录的校验结果明细。

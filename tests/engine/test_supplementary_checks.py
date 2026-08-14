@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fsa.core.engine.supplementary_checks import (
+    _rp_breakdown_field_names,
     check_internal_cash_flow_vs_statement,
     check_related_party_purchase_breakdown,
     check_sales_detail_consistency,
@@ -60,6 +61,31 @@ class TestRelatedPartyPurchase:
         assert result.passed is False
         assert "对方A" in result.message
 
+    def test_breakdown_uses_all_numeric_fields(self) -> None:
+        """分类合计覆盖全部数值字段（含非常规字段 rnd_expense/admin_expense）。"""
+        dataset = DetailDataset(
+            related_party_purchases=[
+                RelatedPartyPurchaseRow(
+                    "购买方", "对方A", "采购款", 1000.0,
+                    supply_chain=100.0, mold=100.0, inventory=100.0,
+                    main_cost=100.0, other_cost=100.0, rnd_expense=100.0,
+                    admin_expense=100.0, selling_expense=100.0, other=200.0,
+                ),
+            ]
+        )
+        result = check_related_party_purchase_breakdown(dataset, 0.01)[0]
+        assert result.passed is True
+
+    def test_breakdown_fields_dynamic_and_complete(self) -> None:
+        """分类字段基于模型动态收集: 覆盖全部 float 分类字段, 排除合计/行号。"""
+        fields = _rp_breakdown_field_names()
+        assert "supply_chain" in fields
+        assert "other" in fields
+        assert "total_amount" not in fields
+        assert "row" not in fields
+        # 已知的 9 个分类字段全部纳入（企业扩展 float 字段时自动加入）
+        assert len(fields) == 9
+
 
 class TestSalesDetail:
     """销售收入成本明细检查。"""
@@ -87,6 +113,45 @@ class TestSalesDetail:
         )
         result = check_sales_detail_consistency(dataset, 0.01)[0]
         assert result.passed is False
+
+    def test_margin_diff_within_default_tolerance_passes(self) -> None:
+        """毛利率与理论值差 0.01（=默认容差）边界内通过。"""
+        dataset = DetailDataset(
+            sales_details=[
+                SalesDetailRow(
+                    2026, 1, "主体", "客户A", "主营业务收入",
+                    1000.0, 600.0, 0.0, 0.0, 0.0, 0.0, 0.41,
+                )
+            ]
+        )
+        result = check_sales_detail_consistency(dataset, 0.01)[0]
+        assert result.passed is True
+
+    def test_margin_diff_over_default_tolerance_fails(self) -> None:
+        """毛利率与理论值差 0.02 超过默认容差 0.01 不通过。"""
+        dataset = DetailDataset(
+            sales_details=[
+                SalesDetailRow(
+                    2026, 1, "主体", "客户A", "主营业务收入",
+                    1000.0, 600.0, 0.0, 0.0, 0.0, 0.0, 0.42,
+                )
+            ]
+        )
+        result = check_sales_detail_consistency(dataset, 0.01)[0]
+        assert result.passed is False
+
+    def test_margin_tolerance_override_passes(self) -> None:
+        """margin_tolerance 覆写为 0.05: 差 0.02 的毛利率通过。"""
+        dataset = DetailDataset(
+            sales_details=[
+                SalesDetailRow(
+                    2026, 1, "主体", "客户A", "主营业务收入",
+                    1000.0, 600.0, 0.0, 0.0, 0.0, 0.0, 0.42,
+                )
+            ]
+        )
+        result = check_sales_detail_consistency(dataset, 0.01, margin_tolerance=0.05)[0]
+        assert result.passed is True
 
     def test_sales_sum_vs_income_statement(self) -> None:
         dataset = DetailDataset(

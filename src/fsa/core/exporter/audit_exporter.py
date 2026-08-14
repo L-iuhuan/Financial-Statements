@@ -11,38 +11,57 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from fsa.core.models.result import ValidationSummary
+from fsa.core.exporter._styles import (
+    ALIGN_CENTER,
+    ALIGN_LEFT,
+    ALIGN_RIGHT,
+    FILL_GRAY,
+    FILL_GREEN,
+    FILL_HEADER,
+    FILL_RED,
+    FILL_YELLOW,
+    FONT_HEADER,
+    FONT_NORMAL,
+    FONT_TITLE,
+    THIN_BORDER,
+)
+from fsa.core.models.result import ValidationResult, ValidationSummary
 from fsa.core.resources import resource_path
 
-# 状态颜色
-_FILL_GREEN = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-_FILL_RED = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-_FILL_YELLOW = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
-_FILL_GRAY = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-_FILL_HEADER = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-
-_FONT_HEADER = Font(name="微软雅黑", size=10, bold=True, color="FFFFFF")
-_FONT_NORMAL = Font(name="微软雅黑", size=10)
-_FONT_TITLE = Font(name="微软雅黑", size=14, bold=True)
-
-_THIN_BORDER = Border(
-    left=Side(style="thin"),
-    right=Side(style="thin"),
-    top=Side(style="thin"),
-    bottom=Side(style="thin"),
-)
-
-_ALIGN_CENTER = Alignment(horizontal="center", vertical="center")
-_ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
-_ALIGN_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+# PDF 来源行号编码基数 (见 importer/pdf_reader.py, D-01):
+# PDF 行号 = 页码 * _PDF_ROW_BASE + 表内行号（1-based）。
+# Excel 工作表最大行号为 1,048,576，恒小于该基数，
+# 因此 `row >= _PDF_ROW_BASE` 恒为 PDF 来源，可安全解码为「第X页表内第N行」。
+_PDF_ROW_BASE = 10_000_000
 
 # 规则库文件路径 (支持开发模式与 PyInstaller 冻结模式)
 _RULES_FILE = resource_path("cas_gouji_rule_library.json")
+
+
+def _format_source_row(row: int) -> str | int:
+    """将追溯行号转为可定位显示值 (P3 可审计可溯源)。
+
+    - row <= 0: 阈值变量或未在报表中找到的科目, 无源行号, 显示空字符串
+    - row >= _PDF_ROW_BASE: PDF 来源, 解码为「第X页表内第N行」
+    - 其余: Excel 来源, 直接显示工作表 1-based 行号
+
+    Args:
+        row: TraceItem 的行号
+
+    Returns:
+        可定位显示值 (PDF 为中文串, Excel 为数字, 无行号为 "")
+    """
+    if row <= 0:
+        return ""
+    if row >= _PDF_ROW_BASE:
+        page, table_row = divmod(row, _PDF_ROW_BASE)
+        return f"第{page}页表内第{table_row}行"
+    return row
 
 
 def _get_rule_library_version() -> str:
@@ -99,8 +118,8 @@ class AuditExporter:
         """写入校验汇总 sheet。"""
         ws.merge_cells("A1:B1")
         title_cell = ws.cell(row=1, column=1, value="财务报表勾稽校验审计底稿")
-        title_cell.font = _FONT_TITLE
-        title_cell.alignment = _ALIGN_CENTER
+        title_cell.font = FONT_TITLE
+        title_cell.alignment = ALIGN_CENTER
 
         rows: list[tuple[str, str]] = [
             ("报告期间", summary.period),
@@ -123,13 +142,13 @@ class AuditExporter:
         for i, (label, value) in enumerate(rows, start=2):
             label_cell = ws.cell(row=i, column=1, value=label)
             label_cell.font = Font(name="微软雅黑", size=10, bold=True)
-            label_cell.alignment = _ALIGN_RIGHT
-            label_cell.border = _THIN_BORDER
+            label_cell.alignment = ALIGN_RIGHT
+            label_cell.border = THIN_BORDER
 
             value_cell = ws.cell(row=i, column=2, value=value)
-            value_cell.font = _FONT_NORMAL
-            value_cell.alignment = _ALIGN_LEFT
-            value_cell.border = _THIN_BORDER
+            value_cell.font = FONT_NORMAL
+            value_cell.alignment = ALIGN_LEFT
+            value_cell.border = THIN_BORDER
 
         ws.column_dimensions["A"].width = 16
         ws.column_dimensions["B"].width = 40
@@ -157,22 +176,22 @@ class AuditExporter:
         ws.freeze_panes = "A2"
 
     def _write_detail_row(
-        self, ws: Worksheet, row: int, result
+        self, ws: Worksheet, row: int, result: ValidationResult
     ) -> None:
         """写入校验明细的一行数据。"""
         # 确定状态文本和颜色
         if result.errored:
             status = "异常"
-            fill = _FILL_YELLOW
+            fill = FILL_YELLOW
         elif result.skipped:
             status = "跳过"
-            fill = _FILL_GRAY
+            fill = FILL_GRAY
         elif result.passed:
             status = "通过"
-            fill = _FILL_GREEN
+            fill = FILL_GREEN
         else:
             status = "不通过"
-            fill = _FILL_RED
+            fill = FILL_RED
 
         values = [
             result.rule_id,
@@ -189,19 +208,19 @@ class AuditExporter:
 
         for col, value in enumerate(values, start=1):
             cell = ws.cell(row=row, column=col, value=value)
-            cell.font = _FONT_NORMAL
-            cell.border = _THIN_BORDER
+            cell.font = FONT_NORMAL
+            cell.border = THIN_BORDER
 
             if col == 4:  # 校验结果列
                 cell.fill = fill
-                cell.alignment = _ALIGN_CENTER
+                cell.alignment = ALIGN_CENTER
             elif col in (5, 6, 7):  # 金额列
                 cell.number_format = "#,##0.00"
-                cell.alignment = _ALIGN_RIGHT
+                cell.alignment = ALIGN_RIGHT
             elif col == 8:  # 容差列
-                cell.alignment = _ALIGN_CENTER
+                cell.alignment = ALIGN_CENTER
             elif col in (9, 10):  # 公式和说明
-                cell.alignment = _ALIGN_LEFT
+                cell.alignment = ALIGN_LEFT
 
     # ── 科目追溯 sheet ──
 
@@ -227,24 +246,24 @@ class AuditExporter:
                     side_label,
                     trace_item.name,
                     trace_item.amount,
-                    trace_item.row,
+                    _format_source_row(trace_item.row),
                     trace_item.column,
                 ]
                 for col, value in enumerate(values, start=1):
                     cell = ws.cell(row=row, column=col, value=value)
-                    cell.font = _FONT_NORMAL
-                    cell.border = _THIN_BORDER
+                    cell.font = FONT_NORMAL
+                    cell.border = THIN_BORDER
                     if col == 5:  # 金额列
                         cell.number_format = "#,##0.00"
-                        cell.alignment = _ALIGN_RIGHT
-                    elif col in (6, 7):  # 行列
-                        cell.alignment = _ALIGN_CENTER
+                        cell.alignment = ALIGN_RIGHT
+                    elif col in (6, 7):  # 行列（原始行可能为「第X页表内第N行」中文串）
+                        cell.alignment = ALIGN_CENTER
                     else:
-                        cell.alignment = _ALIGN_LEFT
+                        cell.alignment = ALIGN_LEFT
                 row += 1
 
         # 列宽
-        col_widths = [14, 28, 6, 24, 18, 10, 12]
+        col_widths = [14, 28, 6, 24, 18, 14, 22]
         for col_idx, width in enumerate(col_widths, start=1):
             ws.column_dimensions[get_column_letter(col_idx)].width = width
 
@@ -257,7 +276,7 @@ class AuditExporter:
         """写入表头行并应用样式。"""
         for col, header in enumerate(headers, start=1):
             cell = ws.cell(row=1, column=col, value=header)
-            cell.font = _FONT_HEADER
-            cell.fill = _FILL_HEADER
-            cell.alignment = _ALIGN_CENTER
-            cell.border = _THIN_BORDER
+            cell.font = FONT_HEADER
+            cell.fill = FILL_HEADER
+            cell.alignment = ALIGN_CENTER
+            cell.border = THIN_BORDER

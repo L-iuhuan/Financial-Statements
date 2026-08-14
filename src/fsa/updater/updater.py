@@ -6,11 +6,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+
+from loguru import logger
 
 
 class UpdateError(Exception):
@@ -160,6 +164,9 @@ class Updater:
     ) -> str:
         """从指定 URL 流式下载文件到本地路径。
 
+        下载前从更新清单读取期望的 sha256；清单提供该字段时，下载完成后
+        比对文件哈希，不匹配则删除文件并抛出 UpdateError。
+
         Args:
             url: 下载地址
             dest_path: 目标文件路径
@@ -169,8 +176,9 @@ class Updater:
             目标文件路径
 
         Raises:
-            UpdateError: 网络错误或写入文件失败时抛出。
+            UpdateError: 网络错误、写入失败或哈希校验失败时抛出。
         """
+        expected_sha256 = self._fetch_expected_sha256()
         try:
             response = urllib.request.urlopen(url, timeout=self._timeout)
         except urllib.error.URLError as e:
@@ -183,6 +191,7 @@ class Updater:
         try:
             with response:
                 downloaded = 0
+                total = self._read_content_length(response)
                 with open(dest_path, "wb") as f:
                     while True:
                         chunk = response.read(self._CHUNK_SIZE)
@@ -191,8 +200,105 @@ class Updater:
                         f.write(chunk)
                         downloaded += len(chunk)
                         if progress_cb is not None:
-                            progress_cb(downloaded, -1)
+                            progress_cb(downloaded, total)
         except OSError as e:
             raise UpdateError(f"下载失败: 磁盘写入错误 ({e})") from e
 
+        if expected_sha256 is not None:
+            self._verify_sha256(dest_path, expected_sha256)
+
         return dest_path
+
+    def _fetch_expected_sha256(self) -> str | None:
+        """从更新清单读取期望的 sha256 哈希值。
+
+        清单获取失败、格式错误或缺少 sha256 字段时返回 None，并记录警告后
+        跳过校验（保持向后兼容，不阻塞下载）。
+
+        Returns:
+            期望的 sha256 十六进制小写值；无法获取时返回 None
+        """
+        try:
+            response = urllib.request.urlopen(self._manifest_url, timeout=self._timeout)
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            logger.warning(f"获取更新清单失败，跳过安装包完整性校验: {e}")
+            return None
+        try:
+            with response:
+                data = json.loads(response.read())
+        except (OSError, ValueError) as e:
+            logger.warning(f"更新清单解析失败，跳过安装包完整性校验: {e}")
+            return None
+        if not isinstance(data, dict):
+            logger.warning("更新清单格式错误，跳过安装包完整性校验")
+            return None
+        expected = data.get("sha256")
+        if not expected:
+            logger.warning("更新清单未提供 sha256 字段，跳过安装包完整性校验")
+            return None
+        return str(expected).strip().lower()
+
+    def _read_content_length(self, response: object) -> int:
+        """从响应头读取 Content-Length，无该头或值非法时返回 -1。
+
+        Args:
+            response: urlopen 返回的响应对象
+
+        Returns:
+            Content-Length 数值；缺失或非法时返回 -1
+        """
+        headers = getattr(response, "headers", None)
+        getter = getattr(headers, "get", None)
+        if getter is None:
+            return -1
+        content_length = getter("Content-Length")
+        if not isinstance(content_length, str):
+            return -1
+        try:
+            return int(content_length)
+        except ValueError:
+            return -1
+
+    def _verify_sha256(self, file_path: str, expected_sha256: str) -> None:
+        """计算文件 SHA256 并与期望值比对，不匹配则删除文件并抛出 UpdateError。
+
+        Args:
+            file_path: 已下载的安装包路径
+            expected_sha256: 期望的 SHA256 十六进制小写值
+
+        Raises:
+            UpdateError: 哈希不匹配或无法读取文件时抛出
+        """
+        try:
+            actual = compute_sha256(file_path)
+        except OSError as e:
+            raise UpdateError(f"安装包校验失败: 无法读取下载文件 ({e})") from e
+        if actual == expected_sha256:
+            return
+        try:
+            os.remove(file_path)
+        except OSError:
+            logger.warning(f"删除校验失败的安装包失败: {file_path}")
+        raise UpdateError("安装包校验失败，文件可能被篡改或损坏，请重试")
+
+
+def compute_sha256(file_path: str) -> str:
+    """流式计算文件 SHA256 十六进制小写摘要。
+
+    Args:
+        file_path: 文件路径
+
+    Returns:
+        SHA256 十六进制小写摘要
+
+    Raises:
+        OSError: 无法读取文件时抛出
+    """
+    digest = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while True:
+            chunk = f.read(8192)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()

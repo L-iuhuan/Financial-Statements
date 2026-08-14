@@ -2,9 +2,52 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 from PySide6.QtCore import QSettings
 
 from fsa.gui.pages.settings_page import SettingsPage
+from fsa.gui.pages.settings_sections import _rule_library_label
+
+
+class TestResetToDefaultsConfirm:
+    """测试恢复默认设置的二次确认 (C5-4)。"""
+
+    def test_reset_cancelled_keeps_settings(self, qapp, qtbot, app_state) -> None:
+        """确认框选"否"时不重置任何设置。"""
+        from PySide6.QtWidgets import QMessageBox
+
+        settings = QSettings("FSA", "FinancialAudit")
+        settings.setValue("history_retention_days", "180")
+        page = SettingsPage(app_state)
+        qtbot.addWidget(page)
+
+        with patch.object(
+            QMessageBox, "question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.No,
+        ):
+            page._reset_to_defaults()
+
+        assert settings.value("history_retention_days") == "180"
+
+    def test_reset_confirmed_restores_defaults(self, qapp, qtbot, app_state) -> None:
+        """确认框选"是"时恢复默认值。"""
+        from PySide6.QtWidgets import QMessageBox
+
+        settings = QSettings("FSA", "FinancialAudit")
+        settings.setValue("history_retention_days", "180")
+        page = SettingsPage(app_state)
+        qtbot.addWidget(page)
+
+        with patch.object(
+            QMessageBox, "question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        ):
+            page._reset_to_defaults()
+
+        assert settings.value("history_retention_days") == "90"
+        assert settings.value("default_tolerance") == "0.01"
 
 
 class TestSettingsPersistence:
@@ -72,3 +115,33 @@ class TestSettingsPersistence:
         qtbot.addWidget(page)
         page._set_theme("dark")
         assert page.is_dark_theme() is True
+
+    def test_save_update_url_calls_sync(self, qapp, qtbot, app_state) -> None:
+        """保存更新清单地址时调用 settings.sync() (B-11)。"""
+        page = SettingsPage(app_state)
+        qtbot.addWidget(page)
+        with patch.object(page._settings, "sync") as mock_sync:
+            page._update_url_input.setText("http://192.168.1.5/version.json")
+            page._save_update_url()
+        assert (
+            page._settings.value("update_manifest_url")
+            == "http://192.168.1.5/version.json"
+        )
+        mock_sync.assert_called_once()
+
+
+class TestAboutSection:
+    """关于分区: 规则库版本串动态读取。"""
+
+    def test_rule_library_label_shows_registry_count(self, qapp, app_state) -> None:
+        """有 registry 时显示条数, 条数与注册表一致。"""
+        label = _rule_library_label(app_state)
+        assert "CAS" in label
+        assert f"{app_state.registry.count()} 条规则" in label
+
+    def test_rule_library_label_no_registry_omits_count(self, qapp) -> None:
+        """无 registry 时降级, 不显示条数。"""
+        state = SimpleNamespace(registry=None)
+        label = _rule_library_label(state)
+        assert "条规则" not in label
+        assert label  # 非空, 仍有可读文案

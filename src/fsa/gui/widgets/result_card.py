@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
@@ -24,6 +23,7 @@ from fsa.core.models.result import ValidationResult
 from fsa.gui.theme import (
     current_palette,
     get_mono_font,
+    get_shadow_color,
     register_theme_listener,
 )
 
@@ -67,7 +67,7 @@ class ResultCard(QFrame):
     def _setup_shadow(self) -> None:
         self._shadow = QGraphicsDropShadowEffect()
         self._shadow.setBlurRadius(6)
-        self._shadow.setColor(QColor(0, 0, 0, 10))
+        self._shadow.setColor(get_shadow_color(hover=False))
         self._shadow.setOffset(0, 1)
         self.setGraphicsEffect(self._shadow)
 
@@ -112,7 +112,7 @@ class ResultCard(QFrame):
         id_label.setObjectName("ResultIdLabel")
         header.addWidget(id_label)
         name_label = QLabel(self._result.rule_name)
-        name_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+        name_label.setObjectName("RuleName")
         name_label.setWordWrap(False)
         header.addWidget(name_label, stretch=1)
         if self._result.category:
@@ -122,7 +122,7 @@ class ResultCard(QFrame):
         self._status_label = QLabel(_STATUS_TEXT[self._status])
         self._status_label.setObjectName("ResultStatusLabel")
         self._status_label.setProperty("status", self._status)
-        self._status_label.setStyleSheet("font-weight: 500; font-size: 13px;")
+        self._status_label.setStyleSheet("")
         header.addWidget(self._status_label)
         return header
 
@@ -134,7 +134,7 @@ class ResultCard(QFrame):
         self._diff_label.setFont(get_mono_font(11))
         self._diff_label.setObjectName("ResultDiffLabel")
         self._diff_label.setProperty("status", self._status)
-        self._diff_label.setStyleSheet("font-size: 12px; font-weight: 600;")
+        self._diff_label.setStyleSheet("")
         row.addWidget(self._diff_label)
         tol_label = QLabel(f"  ·  容差: {self._result.tolerance}")
         tol_label.setObjectName("ResultTolerance")
@@ -177,6 +177,11 @@ class ResultCard(QFrame):
         # trace 表格
         if self._result.trace:
             layout.addWidget(self._build_trace_table())
+        else:
+            empty = QLabel("— 无科目追溯 —")
+            empty.setObjectName("MetaLabel")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(empty)
         # 消息
         if self._result.message and not self._result.passed:
             msg = QLabel(self._result.message)
@@ -192,7 +197,10 @@ class ResultCard(QFrame):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        table.setAlternatingRowColors(True)
         table.horizontalHeader().setStretchLastSection(True)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setFixedHeight(180)
         for i, t in enumerate(self._result.trace):
             table.setItem(i, 0, QTableWidgetItem(t.name))
             amt = QTableWidgetItem(f"{t.amount:,.2f}")
@@ -201,10 +209,9 @@ class ResultCard(QFrame):
             table.setItem(i, 1, amt)
             side_text = "左" if t.side == "left" else "右" if t.side == "right" else t.side
             table.setItem(i, 2, QTableWidgetItem(side_text))
-            pos = f"行{t.row} · {t.column}" if t.row > 0 else t.column
+            pos = self._format_trace_pos(t.row, t.column)
             table.setItem(i, 3, QTableWidgetItem(pos))
         table.resizeColumnsToContents()
-        table.setMaximumHeight(table.horizontalHeader().height() + table.rowCount() * 36 + 4)
         return table
 
     def _build_diagnose_button(self) -> QHBoxLayout:
@@ -232,6 +239,17 @@ class ResultCard(QFrame):
         btn_row.addWidget(diagnose_btn)
         return btn_row
 
+    @staticmethod
+    def _format_trace_pos(row: int, column: str) -> str:
+        """格式化追溯位置，PDF 来源解码为「第X页表内第N行」。"""
+        _PDF_ROW_BASE = 10_000_000
+        if row <= 0:
+            return column
+        if row >= _PDF_ROW_BASE:
+            page, table_row = divmod(row, _PDF_ROW_BASE)
+            return f"第{page}页表内第{table_row}行"
+        return f"行{row} · {column}"
+
     def _on_theme_changed(self) -> None:
         self._apply_card_style()
         p = current_palette()
@@ -247,12 +265,12 @@ class ResultCard(QFrame):
 
     def enterEvent(self, event) -> None:  # type: ignore[override]
         self._shadow.setBlurRadius(12)
-        self._shadow.setColor(QColor(0, 0, 0, 25))
+        self._shadow.setColor(get_shadow_color(hover=True))
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:  # type: ignore[override]
         self._shadow.setBlurRadius(6)
-        self._shadow.setColor(QColor(0, 0, 0, 10))
+        self._shadow.setColor(get_shadow_color(hover=False))
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]

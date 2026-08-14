@@ -13,6 +13,7 @@ from loguru import logger
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
+from qfluentwidgets import InfoBar, InfoBarPosition
 
 from fsa.gui.app_state import AppState
 from fsa.gui.main_window import MainWindow
@@ -26,8 +27,10 @@ def _is_system_dark() -> bool:
         style_hints = QGuiApplication.styleHints()
         if hasattr(style_hints, "colorScheme"):
             return style_hints.colorScheme() == Qt.ColorScheme.Dark
-    except Exception:
-        pass
+    except (RuntimeError, AttributeError) as e:
+        # 防御性兜底: QGuiApplication 未就绪或缺 colorScheme 时无法判定,
+        # 一律按亮色处理, 不影响启动 (仅记录调试日志)
+        logger.debug(f"系统暗色模式检测失败, 按亮色处理: {e}")
     return False
 
 
@@ -80,6 +83,18 @@ def main() -> None:
 
     window = MainWindow(state, initial_dark=dark, theme_mode=mode)
     window.show()
+
+    # 规则库加载失败: 主窗口就绪后再提示用户 (中文, 可感知)
+    if not ok:
+        InfoBar.error(
+            "规则库加载失败",
+            f"勾稽规则库未能加载，校验功能可能不可用，请重新安装或联系管理员。\n{msg}",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=8000,
+            parent=window,
+        )
 
     sys.exit(app.exec())
 

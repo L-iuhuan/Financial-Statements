@@ -28,8 +28,8 @@ class TestPackageImport:
     """一次导入主表与明细文件并执行合并校验。"""
 
     def test_import_files_then_validate(self, qapp, qtbot, app_state, tmp_path) -> None:
-        from tests.importer.conftest import make_multi_sheet_excel
         from fsa.gui.main_window import MainWindow
+        from tests.importer.conftest import make_multi_sheet_excel
 
         main = make_multi_sheet_excel(tmp_path)
         detail = _make_detail_workbook(tmp_path)

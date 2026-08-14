@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from fsa.core.exceptions import FSAError
 from fsa.core.importer.excel_reader import read_excel
 
 
@@ -316,3 +317,35 @@ class TestReadXls:
         assert sheet.headers[:3] == ["项目", "行次", "期末余额"]
         assert len(sheet.rows) == 3
         assert sheet.rows[0]["项目"] == "资产总计"
+
+
+class TestReadXlsMissingDependency:
+    """测试 .xls 读取缺依赖（xlrd/pandas）时走 COM 回退并抛中文 FSAError。"""
+
+    def test_missing_xlrd_import_error_falls_back_to_com(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """缺 xlrd 的 ImportError 应被 COM 回退链路捕获，最终抛中文 FSAError。"""
+        import fsa.core.importer.excel_reader as excel_reader
+
+        monkeypatch.setattr(
+            excel_reader,
+            "_read_xls",
+            lambda path: (_ for _ in ()).throw(
+                ImportError("读取 .xls 需要安装 pandas 与 xlrd")
+            ),
+        )
+        monkeypatch.setattr(
+            excel_reader,
+            "read_excel_com",
+            lambda path: (_ for _ in ()).throw(
+                FSAError("未安装 pywin32，无法使用 Excel COM 读取加密文件")
+            ),
+        )
+
+        with pytest.raises(FSAError) as excinfo:
+            read_excel("missing_dep.xls")
+
+        message = str(excinfo.value)
+        assert "读取 .xls 需要安装 pandas 与 xlrd" in message
+        assert "Excel COM 打开也失败" in message

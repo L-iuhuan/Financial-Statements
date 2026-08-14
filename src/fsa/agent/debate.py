@@ -10,11 +10,13 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from loguru import logger
 
-from fsa.agent.llm_client import ChatMessage, LLMClient
+from fsa.agent.llm_client import DISCLAIMER_TEXT, ChatMessage, LLMClient, response_text
 
 
 @dataclass
@@ -59,35 +61,47 @@ class DebateEngine:
         self._critic = critic
         self._judge = judge
 
-    def debate(self, case_data: str) -> DebateResult:
+    def debate(
+        self,
+        case_data: str,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> DebateResult:
         """对一个校验差异案例进行三方辩论。
 
         Args:
             case_data: 案例数据 (校验结果+追溯, 由调用方组装)
+            on_stage: 可选的阶段回调, 依次在分析师/反方/裁判开始前调用
+                ("分析师正在分析…" / "反方审计师正在质疑…" / "裁判正在出具结论…")
 
         Returns:
             DebateResult 三方观点 + 最终结论
         """
         # 第一轮: 分析师提出诊断
+        if on_stage is not None:
+            on_stage("分析师正在分析…")
         logger.info("辩论轮1: 分析师诊断")
-        analyst_view = self._analyst.chat([
+        analyst_view = response_text(self._analyst.chat([
             ChatMessage(role="system", content=_ANALYST_PROMPT),
             ChatMessage(role="user", content=f"校验差异数据:\n{case_data}"),
-        ]).content
+        ]))
 
         # 第二轮: 反方质疑
+        if on_stage is not None:
+            on_stage("反方审计师正在质疑…")
         logger.info("辩论轮2: 反方审计师质疑")
-        critic_view = self._critic.chat([
+        critic_view = response_text(self._critic.chat([
             ChatMessage(role="system", content=_CRITIC_PROMPT),
             ChatMessage(
                 role="user",
                 content=f"校验差异数据:\n{case_data}\n\n分析师的诊断:\n{analyst_view}",
             ),
-        ]).content
+        ]))
 
         # 第三轮: 裁判综合
+        if on_stage is not None:
+            on_stage("裁判正在出具结论…")
         logger.info("辩论轮3: 裁判综合裁决")
-        verdict = self._judge.chat([
+        verdict = response_text(self._judge.chat([
             ChatMessage(role="system", content=_JUDGE_PROMPT),
             ChatMessage(
                 role="user",
@@ -97,7 +111,10 @@ class DebateEngine:
                     f"反方质疑:\n{critic_view}"
                 ),
             ),
-        ]).content
+        ]))
+
+        # 免责标注 (P0): 仅追加到最终结论, Analyst/Critic 中间发言不加
+        verdict = verdict + "\n\n" + DISCLAIMER_TEXT
 
         confidence = self._extract_confidence(verdict)
         return DebateResult(
@@ -109,8 +126,13 @@ class DebateEngine:
 
     @staticmethod
     def _extract_confidence(verdict: str) -> str:
-        """从裁判结论中提取置信度标注。"""
-        for level in ("高", "中", "低"):
-            if f"置信度{level}" in verdict or f"置信度: {level}" in verdict or f"置信度：{level}" in verdict:
-                return level
-        return "未标注"
+        """从裁判结论中提取置信度标注。
+
+        兼容 "置信度高" / "置信度: 高" / "置信度：高" / "置信度 高" 等变体。
+        提取失败时置信度设为 "未标识" 并记录警告日志。
+        """
+        match = re.search(r"置信度\s*[:：]?\s*(高|中|低)", verdict)
+        if match:
+            return match.group(1)
+        logger.warning("未从裁判结论中提取到置信度标注, 置信度设为「未标识」")
+        return "未标识"

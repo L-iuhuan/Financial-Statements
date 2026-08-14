@@ -208,6 +208,7 @@ class RulePage(QWidget):
         self._search = QLineEdit()
         self._search.setPlaceholderText("搜索规则 ID 或名称...")
         self._search.setFixedHeight(36)
+        self._search.setMinimumWidth(200)
         self._search.setObjectName("SearchInput")
         self._search.textChanged.connect(self._on_search)
         toolbar.addWidget(self._search, stretch=1)
@@ -388,6 +389,15 @@ class RulePage(QWidget):
         """删除自定义规则 (仅自定义规则可删)。"""
         registry = self._state.registry
         if registry is None:
+            return
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定删除自定义规则 {rule_id} 吗？此操作不可撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
             return
         if not registry.remove_rule(rule_id):
             self._show_toast("内置规则不可删除", "warning")

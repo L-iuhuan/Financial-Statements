@@ -42,7 +42,16 @@ try:
 except ImportError:
     _XLRD_ERRORS = ()
 
-_NATIVE_READ_ERRORS = (BadZipFile, OSError, ValueError, KeyError, TypeError) + _XLRD_ERRORS
+# 常规读取失败类型: 缺依赖 (ImportError, 如 .xls 缺 xlrd/pandas)、
+# 加密/损坏文件 (BadZipFile/XLRDError) 等统一回退到 Excel COM 读取
+_NATIVE_READ_ERRORS = (
+    BadZipFile,
+    OSError,
+    ValueError,
+    KeyError,
+    TypeError,
+    ImportError,
+) + _XLRD_ERRORS
 
 
 @dataclass
@@ -276,7 +285,7 @@ def _normalize_cell(value: object) -> str:
 def read_excel_com(file_path: str) -> dict[str, RawSheetData]:
     """通过 Excel COM（pywin32）读取 Excel 文件。
 
-    适用于公司 DLP 透明加密环境：openpyxl/xlrd 看到的是密文，
+    适用于透明加密环境（如 DLP）：openpyxl/xlrd 看到的是密文，
     而 Excel 本体被加密客户端信任，可透明解密。
 
     Args:
@@ -312,6 +321,8 @@ def read_excel_com(file_path: str) -> dict[str, RawSheetData]:
         try:
             excel = win32com.client.DispatchEx("Excel.Application")
         except Exception as error:
+            # 防御性兜底: pywintypes.com_error 等 COM 异常类型不统一,
+            # 且不同 Excel 版本差异大, 统一转为中文业务异常 (见 7.1 DLP)
             raise FSAError(f"无法启动 Excel 进程: {error}") from error
         excel.Visible = False
         excel.DisplayAlerts = False

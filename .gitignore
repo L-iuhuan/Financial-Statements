@@ -52,6 +52,10 @@ verify_*.png
 ux_*.png
 *.xlsx.tmp
 
+# 真实报表数据 (合规红线: 严禁提交 git; 目录整体忽略。
+# 注: 已入 index 的历史测试 fixture 不受 gitignore 影响, 仍保持追踪。)
+tests/fixtures/real_reports/
+
 # Database
 *.db
 *.db-journal

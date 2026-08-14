@@ -43,7 +43,7 @@ KNOWN_LINE_ITEM_KEYS: frozenset[str] = frozenset({
     # NOTE: total_revenue/total_operating_cost intentionally excluded.
     # 仅 IS-BAL-001 使用 (营业总收入/总成本格式)。若预填 0, 标准分项格式报表
     # (营业收入/营业成本) 会误报不通过。移出后此类报表 IS-BAL-001 跳过 (P1).
-    # 茅台/格力报表实际包含这两项, 仍会被提取入 namespace, 校验不受影响。
+    # 部分企业报表实际包含这两项, 仍会被提取入 namespace, 校验不受影响。
     "interest_income", "interest_expense", "fee_commission_income",
     "fee_commission_expense", "earned_premium", "surrender_value",
     "claim_payment", "insurance_reserve_change", "policy_dividend_expense",
@@ -74,7 +74,7 @@ KNOWN_LINE_ITEM_KEYS: frozenset[str] = frozenset({
     # NOTE: dividends/surplus_withheld/prior_period_adjust/restricted_adjust
     # intentionally EXCLUDED — they have no data source in the three main
     # statements. If pre-filled with 0, BS-IS-001 would falsely fail for
-    # companies with real dividend distributions (e.g. Moutai 2023 paid ~65.8B).
+    # companies with real dividend distributions.
     # Per P1 (宁可漏报不可误报), rules using them skip instead.
 })
 

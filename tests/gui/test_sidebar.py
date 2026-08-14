@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from PySide6.QtWidgets import QLabel
+
+from fsa.core.version import APP_VERSION
 from fsa.gui.main_window import MainWindow
 
 
@@ -79,3 +82,15 @@ class TestSidebarActiveState:
         window._sidebar._nav_buttons["navHistory"].clicked_nav.emit("navHistory")
         assert window._sidebar._nav_buttons["navRules"].property("active") is False
         assert window._sidebar._nav_buttons["navHistory"].property("active") is True
+
+
+class TestSidebarVersion:
+    """侧边栏版本号引用 (B-17)。"""
+
+    def test_version_label_uses_app_version(self, qapp, qtbot, app_state) -> None:
+        """版本号来自 fsa.core.version.APP_VERSION, 而非硬编码。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        labels = window._sidebar.findChildren(QLabel, "SidebarVersion")
+        text = " ".join(lbl.text() for lbl in labels)
+        assert APP_VERSION in text

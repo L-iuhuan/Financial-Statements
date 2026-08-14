@@ -75,6 +75,27 @@ class TestJournalVoucherBalance:
         assert results[0].passed is False
         assert "记-0002" in results[0].message
 
+    def test_large_mixed_sum_uses_fsum(self) -> None:
+        """大额混合累加: 聚合值使用 math.fsum，避免 naive sum 的浮点抵消误差。
+
+        1e16 + 1 + (-1e16) 用 sum() 得 0.0，fsum() 得精确的 1.0。
+        """
+        dataset = DetailDataset(
+            journal=[
+                JournalRow("2026-06-30", "记-0001", "银行存款", "1002", "银行存款", "a", "借", 1e16),
+                JournalRow("2026-06-30", "记-0001", "银行存款", "1002", "银行存款", "a", "贷", 1e16),
+                JournalRow("2026-06-30", "记-0002", "银行存款", "1002", "银行存款", "b", "借", 1.0),
+                JournalRow("2026-06-30", "记-0002", "银行存款", "1002", "银行存款", "b", "贷", 1.0),
+                JournalRow("2026-06-30", "记-0003", "银行存款", "1002", "银行存款", "c", "借", -1e16),
+                JournalRow("2026-06-30", "记-0003", "银行存款", "1002", "银行存款", "c", "贷", -1e16),
+            ]
+        )
+        result = check_journal_voucher_balance(dataset, tolerance=0.01)[0]
+        assert result.passed is True
+        assert result.left_value == 1.0
+        assert result.right_value == 1.0
+        assert result.diff == 0.0
+
 
 class TestCashFlowDetailVsStatement:
     """现金流量明细合计与主表核对。"""
@@ -119,6 +140,29 @@ class TestCashFlowDetailVsJournal:
         # 口径含 1012：序时账净额为 0，暴露口径差异
         mismatched = check_cash_flow_detail_vs_journal(dataset, ("1001", "1002", "1012"), 0.01)
         assert mismatched[0].passed is False
+
+    def test_large_mixed_sum_uses_fsum(self) -> None:
+        """大额混合净额: 聚合值使用 math.fsum，避免浮点抵消误差。"""
+        dataset = DetailDataset(
+            cash_flow_detail=[
+                CashFlowDetailRow("记-0001", "销售商品、提供劳务收到的现金(01)", "货款", "流入", 1e16),
+                CashFlowDetailRow("记-0001", "销售商品、提供劳务收到的现金(01)", "货款", "流出", 1e16),
+                CashFlowDetailRow("记-0001", "销售商品、提供劳务收到的现金(01)", "货款", "流入", 1.0),
+                CashFlowDetailRow("记-0002", "投资所支付的现金(14)", "理财", "流出", 1e16),
+                CashFlowDetailRow("记-0002", "投资所支付的现金(14)", "理财", "流入", 1e16),
+            ],
+            journal=[
+                JournalRow("2026-06-30", "记-0001", "银行存款", "1002", "银行存款", "a", "借", 1e16),
+                JournalRow("2026-06-30", "记-0001", "银行存款", "1002", "银行存款", "a", "贷", 1e16),
+                JournalRow("2026-06-30", "记-0001", "银行存款", "1002", "银行存款", "a", "借", 1.0),
+                JournalRow("2026-06-30", "记-0002", "银行存款", "1002", "银行存款", "b", "借", 1e16),
+                JournalRow("2026-06-30", "记-0002", "银行存款", "1002", "银行存款", "b", "贷", 1e16),
+            ],
+        )
+        result = check_cash_flow_detail_vs_journal(dataset, ("1002",), 0.01)[0]
+        assert result.passed is True
+        assert result.left_value == 1.0
+        assert result.right_value == 1.0
 
 
 class TestTrialBalanceVsBalanceSheet:

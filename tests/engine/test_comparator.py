@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from fsa.core.engine.comparator import ToleranceComparator
-from fsa.core.exceptions import InvalidToleranceError
+from fsa.core.engine.comparator import RelativeBaseZeroError, ToleranceComparator
+from fsa.core.exceptions import EvaluationError, InvalidToleranceError
 from fsa.core.models.rule import ToleranceType
 
 
@@ -200,11 +200,28 @@ class TestCompareRelative:
         assert diff == 0.0
 
     def test_relative_right_zero_left_nonzero_raises(self) -> None:
-        """基准值为0但左值非0时抛异常。"""
-        with pytest.raises(ValueError, match="基准值"):
+        """基准值为0但左值非0时抛专用异常（中文财务文案）。"""
+        with pytest.raises(
+            RelativeBaseZeroError,
+            match="基准科目金额为 0，无法计算相对差异，本规则跳过校验",
+        ):
             ToleranceComparator.compare(
                 100.0, 0.0, ToleranceType.RELATIVE, 0.30
             )
+
+    def test_relative_right_zero_left_nonzero_message(self) -> None:
+        """异常消息为面向财务用户的中文，不含技术术语。"""
+        with pytest.raises(RelativeBaseZeroError) as excinfo:
+            ToleranceComparator.compare(
+                100.0, 0.0, ToleranceType.RELATIVE, 0.30
+            )
+        assert "基准科目金额为 0" in str(excinfo.value)
+        assert "跳过校验" in str(excinfo.value)
+        assert "right" not in str(excinfo.value)
+
+    def test_relative_base_zero_error_is_evaluation_error(self) -> None:
+        """专用异常继承 EvaluationError，服务层将其归入跳过路径 (P1)。"""
+        assert issubclass(RelativeBaseZeroError, EvaluationError)
 
     def test_relative_negative_values(self) -> None:
         """负值: 相对差异基于绝对值。"""
@@ -212,3 +229,43 @@ class TestCompareRelative:
             -130.0, -100.0, ToleranceType.RELATIVE, 0.30
         )
         assert passed is True
+
+
+class TestPrecisionWarning:
+    """大额比较时精度边界提示（不改变判断结果）。"""
+
+    def test_large_magnitude_logs_warning(self) -> None:
+        """|值| > 1e14 时 logger.warning 提示精度边界。"""
+        import io
+
+        from loguru import logger
+
+        sink = io.StringIO()
+        sink_id = logger.add(sink, level="WARNING")
+        try:
+            ToleranceComparator.compare(1e15, 1e15, ToleranceType.EXACT, 0.01)
+        finally:
+            logger.remove(sink_id)
+        assert "精度边界" in sink.getvalue()
+
+    def test_large_magnitude_does_not_change_result(self) -> None:
+        """精度提示不改变判断结果：大额仍正确通过。"""
+        passed, diff = ToleranceComparator.compare(
+            1e15, 1e15, ToleranceType.EXACT, 0.01
+        )
+        assert passed is True
+        assert diff == 0.0
+
+    def test_small_magnitude_no_warning(self) -> None:
+        """|值| <= 1e14 时不触发精度提示。"""
+        import io
+
+        from loguru import logger
+
+        sink = io.StringIO()
+        sink_id = logger.add(sink, level="WARNING")
+        try:
+            ToleranceComparator.compare(100.0, 100.0, ToleranceType.EXACT, 0.01)
+        finally:
+            logger.remove(sink_id)
+        assert "精度边界" not in sink.getvalue()

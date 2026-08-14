@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
+from fsa.agent.debate import DebateEngine
 from fsa.agent.diagnosis import DiagnosisEngine
+from fsa.agent.llm_client import DISCLAIMER_TEXT, ChatMessage
 from fsa.core.models.result import TraceItem, ValidationResult
 from fsa.core.models.rule import Severity
 
@@ -228,3 +230,181 @@ class TestDiagnosisChinese:
 
         assert "差额" in diagnosis
         assert len(diagnosis) > 100  # 有实质性内容
+
+
+class TestExtractConfidence:
+    """裁判结论置信度提取 (B-24): 正则兼容多种标注变体。"""
+
+    def test_extract_high_with_ascii_colon(self) -> None:
+        assert DebateEngine._extract_confidence("结论...置信度: 高，理由如下") == "高"
+
+    def test_extract_high_with_fullwidth_colon(self) -> None:
+        assert DebateEngine._extract_confidence("置信度：高") == "高"
+
+    def test_extract_high_without_separator(self) -> None:
+        assert DebateEngine._extract_confidence("综合判断置信度高") == "高"
+
+    def test_extract_high_with_space(self) -> None:
+        assert DebateEngine._extract_confidence("置信度 高") == "高"
+
+    def test_extract_middle(self) -> None:
+        assert DebateEngine._extract_confidence("置信度: 中") == "中"
+
+    def test_extract_low(self) -> None:
+        assert DebateEngine._extract_confidence("置信度：低") == "低"
+
+    def test_fallback_to_middle_when_missing(self) -> None:
+        """未标注置信度时设为「未标识」(P2 辩论增强)。"""
+        assert DebateEngine._extract_confidence("没有置信度标注的结论") == "未标识"
+
+    def test_fallback_to_middle_when_empty(self) -> None:
+        assert DebateEngine._extract_confidence("") == "未标识"
+
+
+class TestDiagnoseWithClientReasoning:
+    """P1: diagnose_with_client 兼容推理模型 content 为空 (reasoning 兜底)。"""
+
+    def test_reasoning_fallback_when_content_null(self) -> None:
+        """content=null + reasoning 非空 -> 返回推理摘要而非规则化回退。"""
+
+        class ReasoningLLM:
+            base_url = "http://fake"
+            model = "m"
+
+            def is_available(self) -> bool:
+                return True
+
+            def chat(self, messages, tools=None, timeout=None):
+                return ChatMessage(role="assistant", content="", reasoning="推理内容A")
+
+            def chat_stream(
+                self, messages, tools=None, timeout=None,
+                on_chunk=None, on_reasoning_chunk=None,
+            ):
+                return self.chat(messages, tools=tools, timeout=timeout)
+
+        engine = DiagnosisEngine()
+        text = engine.diagnose_with_client(_make_result(), ReasoningLLM())
+        assert "推理内容A" in text
+        assert "max_tokens" in text
+
+    def test_content_priority(self) -> None:
+        """content 非空时使用正式内容, 不追加推理提示。"""
+
+        class NormalLLM:
+            base_url = "http://fake"
+            model = "m"
+
+            def is_available(self) -> bool:
+                return True
+
+            def chat(self, messages, tools=None, timeout=None):
+                return ChatMessage(
+                    role="assistant", content="正式诊断", reasoning="思考"
+                )
+
+            def chat_stream(
+                self, messages, tools=None, timeout=None,
+                on_chunk=None, on_reasoning_chunk=None,
+            ):
+                return self.chat(messages, tools=tools, timeout=timeout)
+
+        engine = DiagnosisEngine()
+        text = engine.diagnose_with_client(_make_result(), NormalLLM())
+        # LLM 输出末尾追加 DISCLAIMER_TEXT (P0 免责标注)
+        assert text.startswith("正式诊断")
+        assert text.endswith(DISCLAIMER_TEXT)
+
+    def test_empty_response_falls_back_to_rules(self) -> None:
+        """content 与 reasoning 均为空 -> 回退规则化诊断。"""
+
+        class EmptyLLM:
+            base_url = "http://fake"
+            model = "m"
+
+            def is_available(self) -> bool:
+                return True
+
+            def chat(self, messages, tools=None, timeout=None):
+                return ChatMessage(role="assistant", content="")
+
+            def chat_stream(
+                self, messages, tools=None, timeout=None,
+                on_chunk=None, on_reasoning_chunk=None,
+            ):
+                return self.chat(messages, tools=tools, timeout=timeout)
+
+        engine = DiagnosisEngine()
+        text = engine.diagnose_with_client(_make_result(), EmptyLLM())
+        assert "BS-BAL-001" in text
+
+
+class TestDiagnosisDisclaimer:
+    """P0 免责标注: 诊断输出后缀。"""
+
+    def test_diagnose_ends_with_rule_engine_disclaimer(self) -> None:
+        """规则化诊断末尾带「（规则引擎确定性诊断 · 未使用 AI）」标注。"""
+        engine = DiagnosisEngine()
+        text = engine.diagnose(_make_result())
+        assert text.endswith("（规则引擎确定性诊断 · 未使用 AI）")
+
+    def test_diagnose_with_client_fallback_includes_rule_engine_disclaimer(self) -> None:
+        """LLM 不可用回退规则化诊断时同样带规则引擎标注。"""
+        engine = DiagnosisEngine()
+        text = engine.diagnose_with_client(_make_result(), client=None)
+        assert text.endswith("（规则引擎确定性诊断 · 未使用 AI）")
+
+
+class TestDebateOnStage:
+    """P2 辩论增强: on_stage 回调按序调用 + 免责标注仅加最终结论。"""
+
+    def test_on_stage_called_in_order(self) -> None:
+        calls: list[str] = []
+
+        class FakeLLM:
+            base_url = "http://fake"
+            model = "m"
+
+            def is_available(self) -> bool:
+                return True
+
+            def chat(self, messages, tools=None, timeout=None):
+                return ChatMessage(role="assistant", content="观点")
+
+            def chat_stream(
+                self, messages, tools=None, timeout=None,
+                on_chunk=None, on_reasoning_chunk=None,
+            ):
+                return self.chat(messages, tools=tools, timeout=timeout)
+
+        engine = DebateEngine(analyst=FakeLLM(), critic=FakeLLM(), judge=FakeLLM())
+        engine.debate("case_data", on_stage=calls.append)
+        assert calls == [
+            "分析师正在分析…",
+            "反方审计师正在质疑…",
+            "裁判正在出具结论…",
+        ]
+
+    def test_only_final_verdict_has_disclaimer(self) -> None:
+        class FakeLLM:
+            base_url = "http://fake"
+            model = "m"
+
+            def is_available(self) -> bool:
+                return True
+
+            def chat(self, messages, tools=None, timeout=None):
+                return ChatMessage(role="assistant", content="观点")
+
+            def chat_stream(
+                self, messages, tools=None, timeout=None,
+                on_chunk=None, on_reasoning_chunk=None,
+            ):
+                return self.chat(messages, tools=tools, timeout=timeout)
+
+        engine = DebateEngine(analyst=FakeLLM(), critic=FakeLLM(), judge=FakeLLM())
+        result = engine.debate("case_data")
+        # 仅最终结论追加免责标注, Analyst/Critic 中间发言不加
+        assert result.final_verdict.endswith(DISCLAIMER_TEXT)
+        assert not result.analyst_view.endswith(DISCLAIMER_TEXT)
+        assert not result.critic_view.endswith(DISCLAIMER_TEXT)

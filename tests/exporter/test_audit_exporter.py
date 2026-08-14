@@ -113,6 +113,100 @@ def _make_summary(
     )
 
 
+class TestTraceSourceRowRendering:
+    """科目追溯 sheet 的行号/列渲染 (D-01 行号语义 + 中文列兼容)。"""
+
+    def test_pdf_row_rendered_as_page_and_row(self) -> None:
+        """PDF 来源行号 (页码编码) 渲染为「第X页表内第N行」。"""
+        trace = [
+            _make_trace(
+                key="asset_total", name="资产总计", amount=100.0,
+                row=10_000_005, column="期末余额",
+            ),
+        ]
+        results = [_make_result(rule_id="BS-BAL-001", trace=trace)]
+        summary = _make_summary(results=results)
+        exporter = AuditExporter()
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            tmp_path = f.name
+        try:
+            exporter.export(summary, tmp_path)
+            wb = load_workbook(tmp_path)
+            ws = wb["科目追溯"]
+            assert ws.cell(row=2, column=6).value == "第1页表内第5行"
+            assert ws.cell(row=2, column=7).value == "期末余额"
+            wb.close()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_excel_row_rendered_as_number(self) -> None:
+        """Excel 来源行号保持工作表 1-based 行号数字显示。"""
+        trace = [_make_trace(key="asset_total", row=35)]
+        results = [_make_result(trace=trace)]
+        summary = _make_summary(results=results)
+        exporter = AuditExporter()
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            tmp_path = f.name
+        try:
+            exporter.export(summary, tmp_path)
+            wb = load_workbook(tmp_path)
+            ws = wb["科目追溯"]
+            assert ws.cell(row=2, column=6).value == 35
+            wb.close()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_no_source_row_and_chinese_column(self) -> None:
+        """row=0 (未找到科目/阈值变量) 且 column 为中文说明串时不崩溃。
+
+        原始行显示为空字符串, 原始列原样显示中文说明。
+        """
+        trace = [
+            _make_trace(
+                key="income_tax_expense", name="income_tax_expense", amount=0.0,
+                row=0, column="未在报表中找到（按 0 处理）",
+            ),
+        ]
+        results = [_make_result(trace=trace)]
+        summary = _make_summary(results=results)
+        exporter = AuditExporter()
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            tmp_path = f.name
+        try:
+            exporter.export(summary, tmp_path)
+            wb = load_workbook(tmp_path)
+            ws = wb["科目追溯"]
+            # openpyxl 将空字符串读回为 None
+            assert ws.cell(row=2, column=6).value in ("", None)  # 无源行号
+            assert ws.cell(row=2, column=7).value == "未在报表中找到（按 0 处理）"
+            wb.close()
+        finally:
+            os.unlink(tmp_path)
+
+
+class TestFormatSourceRow:
+    """_format_source_row 解码逻辑 (D-01)。"""
+
+    def test_excel_row_passthrough(self) -> None:
+        from fsa.core.exporter.audit_exporter import _format_source_row
+
+        assert _format_source_row(35) == 35
+        # Excel 最大行号 (1,048,576) 仍按数字显示, 不误判为 PDF
+        assert _format_source_row(1048576) == 1048576
+
+    def test_pdf_row_decoded(self) -> None:
+        from fsa.core.exporter.audit_exporter import _format_source_row
+
+        assert _format_source_row(10_000_005) == "第1页表内第5行"
+        assert _format_source_row(20_000_003) == "第2页表内第3行"
+
+    def test_zero_or_negative_returns_empty(self) -> None:
+        from fsa.core.exporter.audit_exporter import _format_source_row
+
+        assert _format_source_row(0) == ""
+        assert _format_source_row(-1) == ""
+
+
 class TestAuditExporter:
     """AuditExporter 核心功能测试。"""
 

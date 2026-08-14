@@ -252,3 +252,56 @@ class TestReport:
             key="asset_total", name="资产总计", amount=100.0, beginning_amount=-50.0
         )
         assert item.beginning_amount == -50.0
+
+
+class TestReportFactories:
+    """测试 tests/conftest.py 中的报表工厂函数。"""
+
+    def test_make_income_statement_has_standard_keys(self) -> None:
+        from tests.conftest import make_income_statement
+
+        report = make_income_statement(
+            revenue=3000000.0, operating_cost=2000000.0, net_profit=405000.0
+        )
+        assert report.report_type == ReportType.INCOME_STATEMENT
+        assert report.get_amount("revenue") == 3000000.0
+        assert report.get_amount("operating_cost") == 2000000.0
+        assert report.get_amount("net_profit") == 405000.0
+
+    def test_make_income_statement_with_optional_items(self) -> None:
+        from tests.conftest import make_income_statement
+
+        report = make_income_statement(operating_profit=500000.0, total_profit=540000.0)
+        assert report.get_amount("operating_profit") == 500000.0
+        assert report.get_amount("total_profit") == 540000.0
+
+    def test_make_cash_flow_statement_has_standard_keys(self) -> None:
+        from tests.conftest import make_cash_flow_statement
+
+        report = make_cash_flow_statement(
+            operating_net=500000.0, investing_net=-200000.0, financing_net=-100000.0
+        )
+        assert report.report_type == ReportType.CASH_FLOW_STATEMENT
+        assert report.get_amount("operating_net") == 500000.0
+        assert report.get_amount("investing_net") == -200000.0
+        assert report.get_amount("financing_net") == -100000.0
+        assert report.get_amount("net_increase_cash") == 0.0
+
+    def test_make_cash_flow_statement_with_ending_cash(self) -> None:
+        from tests.conftest import make_cash_flow_statement
+
+        report = make_cash_flow_statement(
+            ending_cash_equiv=1005000.0, beginning_cash_equiv=800000.0
+        )
+        assert report.get_amount("ending_cash_equiv") == 1005000.0
+        assert report.get_amount("beginning_cash_equiv") == 800000.0
+
+    def test_make_sce_report_has_sce_keys(self) -> None:
+        from tests.conftest import make_sce_report
+
+        report = make_sce_report(
+            paid_in_capital=1000000.0, equity_total=2000000.0
+        )
+        assert report.report_type == ReportType.STATEMENT_OF_CHANGES_IN_EQUITY
+        assert report.get_amount("sce_paid_in_capital_ending") == 1000000.0
+        assert report.get_amount("sce_equity_total_ending") == 2000000.0

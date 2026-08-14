@@ -4,6 +4,8 @@
 校验结果以卡片形式直接显示在本页面。
 
 匹配 Demo v4 设计: 拖放区 + 报表卡片 + 汇总卡片 + 筛选标签 + 规则明细卡片。
+
+结果卡片渲染与筛选逻辑在 import_page_results.py (ImportPageResultsMixin)。
 """
 
 from __future__ import annotations
@@ -20,24 +22,24 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import FluentIcon, InfoBar, InfoBarPosition
+from qfluentwidgets import FluentIcon, IndeterminateProgressBar
 
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
 from fsa.core.importer.importer import ImportService
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report, ReportType
-from fsa.core.models.rule import Severity
+from fsa.core.models.result import ValidationResult
 from fsa.gui.app_state import AppState
+from fsa.gui.pages.import_page_results import ImportPageResultsMixin
 from fsa.gui.widgets.drop_zone import DropZone
-from fsa.gui.widgets.report_card import ReportCard
 from fsa.gui.widgets.result_card import ResultCard
 from fsa.gui.widgets.summary_card import SummaryCard
 from fsa.services.package_service import PackageValidationService
 
 
-class ImportPage(QWidget):
-    """数据导入与校验页面。"""
+class ImportPage(ImportPageResultsMixin):
+    """数据导入与校验页面 (继承 mixin 提供结果卡片渲染与筛选逻辑)。"""
 
     validate_enabled_changed = Signal(bool)
     diagnose_requested = Signal(str)  # rule_id -> 主窗口打开 AI 抽屉
@@ -50,7 +52,7 @@ class ImportPage(QWidget):
         self._importer = ImportService()
         self._detail_importer = DetailImporter()
         self._current_filter = "all"
-        self._result_cards: list[tuple[object, ResultCard]] = []
+        self._result_cards: list[tuple[ValidationResult, ResultCard]] = []
         self._setup_ui()
         self._connect_signals()
 
@@ -76,7 +78,7 @@ class ImportPage(QWidget):
         reports_layout.setSpacing(8)
 
         reports_title = QLabel("已导入报表")
-        reports_title.setStyleSheet("font-size: 15px; font-weight: 600;")
+        reports_title.setObjectName("PageTitle")
         reports_layout.addWidget(reports_title)
 
         self._cards_grid = QGridLayout()
@@ -91,7 +93,7 @@ class ImportPage(QWidget):
         summary_layout.setSpacing(12)
 
         summary_title = QLabel("校验概览")
-        summary_title.setStyleSheet("font-size: 15px; font-weight: 600;")
+        summary_title.setObjectName("PageTitle")
         summary_layout.addWidget(summary_title)
 
         # 4 列汇总卡片
@@ -139,7 +141,7 @@ class ImportPage(QWidget):
         detail_layout.setSpacing(12)
 
         detail_title = QLabel("校验明细")
-        detail_title.setStyleSheet("font-size: 15px; font-weight: 600;")
+        detail_title.setObjectName("PageTitle")
         detail_layout.addWidget(detail_title)
 
         self._cards_layout = QVBoxLayout()
@@ -171,6 +173,11 @@ class ImportPage(QWidget):
 
         layout.addWidget(self._empty_state)
 
+        # 进度指示 (导入/校验期间显示)
+        self._progress = IndeterminateProgressBar()
+        self._progress.setVisible(False)
+        layout.addWidget(self._progress)
+
         layout.addStretch()
 
         scroll.setWidget(content)
@@ -187,52 +194,76 @@ class ImportPage(QWidget):
         self._on_files([file_path])
 
     def _on_files(self, file_paths: list[str]) -> None:
-        """一次导入一个或多个文件（主表 + 附表），分别识别并合并。"""
-        logger.info(f"导入文件: {file_paths}")
-        self._importer.period = self._state.period
-        self._detail_importer.period = self._state.period
+        """一次导入一个或多个文件（主表 + 附表），分别识别并合并。
 
-        reports_by_type: dict[ReportType, Report] = {}
-        dataset = DetailDataset(period=self._state.period)
-        errors: list[str] = []
+        单文件失败不中断整批（错误信息含文件名）；
+        失败文件的主表与明细数据均不进入最终结果。
+        """
+        logger.info(f"导入文件: {file_paths}")
+        self._progress.setVisible(True)
         try:
+            self._importer.period = self._state.period
+            self._detail_importer.period = self._state.period
+
+            reports_by_type: dict[ReportType, Report] = {}
+            successful_datasets: list[DetailDataset] = []
+            errors: list[str] = []
             for path in file_paths:
                 try:
-                    for report in self._importer.import_file(path):
-                        if report.report_type not in reports_by_type:
-                            reports_by_type[report.report_type] = report
-                    dataset.merge(self._detail_importer.import_file(path))
+                    file_reports = self._importer.import_file(path)
+                    file_dataset = self._detail_importer.import_file(path)
                 except FileNotFoundError:
+                    logger.warning(f"文件「{path}」不存在")
                     errors.append(f"{path}: 文件不存在")
-                except (FSAError, ValueError, OSError, ImportError) as e:
+                    continue
+                except (FSAError, ValueError, OSError, ImportError, KeyError, TypeError) as e:
+                    logger.warning(f"文件「{path}」导入失败: {e}")
                     errors.append(f"{path}: {e}")
-        except (FSAError, ValueError, OSError, ImportError, KeyError, TypeError) as e:
-            logger.error(f"导入报表包异常: {e}")
-            errors.append(str(e))
+                    continue
+                for report in file_reports:
+                    if report.report_type not in reports_by_type:
+                        reports_by_type[report.report_type] = report
+                successful_datasets.append(file_dataset)
 
-        reports = list(reports_by_type.values())
-        if not reports and not dataset.trial_balance and not dataset.journal:
-            self._show_info("未识别到任何财务报表或明细数据", "warning")
-            return
+            dataset = DetailDataset(period=self._state.period)
+            for file_dataset in successful_datasets:
+                dataset.merge(file_dataset)
 
-        self._state.set_reports(reports)
-        self._state.set_detail_dataset(dataset)
-        detail_rows = (
-            len(dataset.trial_balance)
-            + len(dataset.journal)
-            + len(dataset.cash_flow_detail)
-            + len(dataset.reclassifications)
-            + len(dataset.related_party_purchases)
-            + len(dataset.sales_details)
-            + len(dataset.internal_cash_flows)
-        )
-        message = f"成功导入 {len(reports)} 张报表、{detail_rows} 行明细数据"
-        if errors:
-            message += f"；{len(errors)} 个文件失败"
-            self._show_info(message, "warning")
-        else:
-            self._show_info(message, "success")
-        self.validate_enabled_changed.emit(bool(reports) or detail_rows > 0)
+            reports = list(reports_by_type.values())
+            if not reports and dataset.is_empty:
+                if errors:
+                    self._show_info(
+                        f"{len(errors)} 个文件失败: {'; '.join(errors)}", "warning"
+                    )
+                else:
+                    self._show_info("未识别到任何财务报表或明细数据", "warning")
+                return
+
+            self._state.set_reports(reports)
+            self._state.set_detail_dataset(dataset)
+            detail_rows = (
+                len(dataset.trial_balance)
+                + len(dataset.trial_balance_current)
+                + len(dataset.journal)
+                + len(dataset.journal_current)
+                + len(dataset.cash_flow_detail)
+                + len(dataset.cash_flow_detail_current)
+                + len(dataset.reclassifications)
+                + len(dataset.related_party_purchases)
+                + len(dataset.sales_details)
+                + len(dataset.internal_cash_flows)
+            )
+            succeeded = len(file_paths) - len(errors)
+            message = f"成功导入 {succeeded} 个文件：{len(reports)} 张报表、{detail_rows} 行明细数据"
+            if errors:
+                message += f"；{len(errors)} 个文件失败: {'; '.join(errors)}"
+                self._show_info(message, "warning")
+            else:
+                self._show_info(message, "success")
+            self.validate_enabled_changed.emit(bool(reports) or detail_rows > 0)
+        finally:
+            # 任何退出路径 (成功/失败/空文件/异常) 都隐藏进度条
+            self._progress.setVisible(False)
 
     def trigger_validate(self) -> None:
         """触发校验 (供顶栏按钮调用)。"""
@@ -254,182 +285,4 @@ class ImportPage(QWidget):
         self._show_info(
             f"校验完成: 通过 {summary.passed}, 不通过 {summary.failed}",
             kind,
-        )
-
-    def _update_reports(self) -> None:
-        reports = self._state.reports
-        if not reports:
-            self._reports_section.setVisible(False)
-            self._drop_zone.setVisible(True)
-            self._empty_state.setVisible(True)
-            self.validate_enabled_changed.emit(False)
-            self._clear_report_cards()
-            return
-
-        self._reports_section.setVisible(True)
-        self._drop_zone.setVisible(False)
-        self._empty_state.setVisible(False)
-        self._clear_report_cards()
-        self.setUpdatesEnabled(False)
-        try:
-            for i, report in enumerate(reports):
-                card = ReportCard(report)
-                self._cards_grid.addWidget(card, i // 3, i % 3)
-        finally:
-            self.setUpdatesEnabled(True)
-
-        self.validate_enabled_changed.emit(True)
-
-    def _clear_report_cards(self) -> None:
-        while self._cards_grid.count():
-            item = self._cards_grid.takeAt(0)
-            if item is None:
-                continue
-            widget = item.widget()
-            if widget is not None:
-                # 先隐藏再删除: takeAt 使 widget 脱离父容器成为顶级窗口,
-                # deleteLater 仅排队删除, 不 hide 会闪现为无标题"python"独立窗口
-                widget.hide()
-                widget.deleteLater()
-
-    def _update_results(self) -> None:
-        summary = self._state.results
-        if summary is None:
-            # 无结果 (重置后): 隐藏结果区, 恢复初始引导由 _update_reports 负责
-            self._summary_section.setVisible(False)
-            self._filter_section.setVisible(False)
-            self._detail_section.setVisible(False)
-            return
-
-        # 有结果: 隐藏初始引导 (覆盖正常校验与查看历史两种场景)
-        # 历史查看时 reports 为空, 报表区不显示, 但结果区必须显示
-        self._drop_zone.setVisible(False)
-        self._empty_state.setVisible(False)
-
-        self._summary_section.setVisible(True)
-        self._filter_section.setVisible(True)
-        self._detail_section.setVisible(True)
-
-        # 统计: 错误 = failed&ERROR + errored; 警告 = failed&WARNING/INFO
-        error_count = sum(
-            1
-            for r in summary.results
-            if (
-                (not r.passed and not r.errored and r.severity is Severity.ERROR)
-                or r.errored
-            )
-        )
-        warn_count = sum(
-            1
-            for r in summary.results
-            if not r.passed and not r.errored and r.severity in (Severity.WARNING, Severity.INFO)
-        )
-
-        self._card_pass.set_data("通过", summary.passed, "校验通过的规则")
-        self._card_error.set_data("错误", error_count, "必须修正的差额")
-        self._card_warn.set_data("警告", warn_count, "建议关注的异常")
-        self._card_total.set_data("规则总数", summary.total, "规则库总数")
-
-        # 更新筛选标签计数
-        counts = {
-            "all": summary.total,
-            "error": error_count,
-            "warning": warn_count,
-            "pass": summary.passed,
-        }
-        labels = {"all": "全部", "error": "错误", "warning": "警告", "pass": "通过"}
-        for key, btn in self._filter_buttons.items():
-            btn.setText(f"{labels[key]} ({counts[key]})")
-
-        # 默认选中"全部"
-        if self._current_filter not in counts:
-            self._current_filter = "all"
-        self._update_filter_styles()
-        self._rebuild_cards()
-
-    def _on_filter(self, key: str) -> None:
-        """切换筛选标签 (仅切可见性, 不重建卡片, 避免闪动)。"""
-        self._current_filter = key
-        self._update_filter_styles()
-        self._apply_filter()
-
-    def _update_filter_styles(self) -> None:
-        """更新筛选按钮的选中/未选中样式。"""
-        for key, btn in self._filter_buttons.items():
-            active = key == self._current_filter
-            btn.setChecked(active)
-            btn.setProperty("active", active)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _rebuild_cards(self) -> None:
-        """结果变化时重建全部卡片并缓存 (仅在校验完成/查看历史时调用一次)。"""
-        summary = self._state.results
-        if summary is None:
-            return
-
-        self._clear_cards()
-        self._result_cards.clear()
-        self.setUpdatesEnabled(False)
-        try:
-            for result in summary.results:
-                card = ResultCard(result)
-                card.diagnose_clicked.connect(self.diagnose_requested.emit)
-                card.debate_clicked.connect(self.debate_requested.emit)
-                self._cards_layout.addWidget(card)
-                self._result_cards.append((result, card))
-        finally:
-            self.setUpdatesEnabled(True)
-        self._apply_filter()
-
-    def _apply_filter(self) -> None:
-        """按当前筛选条件切换卡片可见性 (不销毁/重建, 消除闪动)。"""
-        for result, card in self._result_cards:
-            card.setVisible(self._match_filter(result))
-
-    def _match_filter(self, result) -> bool:
-        """判断单个结果是否匹配当前筛选条件。"""
-        if self._current_filter == "all":
-            return True
-        if self._current_filter == "pass":
-            return result.passed and not result.errored
-        if self._current_filter == "error":
-            if result.errored:
-                return True
-            return not result.passed and result.severity is Severity.ERROR
-        if self._current_filter == "warning":
-            return (
-                not result.passed
-                and not result.errored
-                and result.severity in (Severity.WARNING, Severity.INFO)
-            )
-        return True
-
-    def _clear_cards(self) -> None:
-        while self._cards_layout.count():
-            item = self._cards_layout.takeAt(0)
-            if item is None:
-                continue
-            widget = item.widget()
-            if widget is not None:
-                # 先隐藏再删除, 避免脱离父容器后闪现为独立窗口
-                widget.hide()
-                widget.deleteLater()
-
-    def _show_info(self, message: str, kind: str = "info") -> None:
-        methods = {
-            "success": InfoBar.success,
-            "warning": InfoBar.warning,
-            "error": InfoBar.error,
-            "info": InfoBar.info,
-        }
-        method = methods.get(kind, InfoBar.info)
-        method(
-            "提示",
-            message,
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self,
         )

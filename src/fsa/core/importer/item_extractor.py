@@ -9,11 +9,11 @@
 
 from __future__ import annotations
 
-import math
 import re
 
 from loguru import logger
 
+from fsa.core.importer.amount_parser import parse_amount
 from fsa.core.importer.excel_reader import RawSheetData
 from fsa.core.importer.name_mapper import clean_name, get_key, get_supplementary_key
 from fsa.core.models.report import ReportItem, ReportType
@@ -216,13 +216,9 @@ def _append_item(
     if amount is None:
         logger.debug(f"  项目「{item_name_str}」的金额为空，跳过")
         return
-    try:
-        amount_float = float(amount)
-    except (ValueError, TypeError):
+    amount_float = parse_amount(amount)
+    if amount_float is None:
         logger.warning(f"  项目「{item_name_str}」的金额无法转换为数字: {amount}，跳过")
-        return
-    if math.isnan(amount_float):
-        logger.debug(f"  项目「{item_name_str}」的金额为 NaN，跳过")
         return
 
     beginning_amount = _read_optional_float(row, secondary)
@@ -360,13 +356,7 @@ def _read_optional_float(row: dict[str, object], column: str | None) -> float | 
     value = row.get(column)
     if value is None:
         return None
-    try:
-        result = float(value)
-    except (ValueError, TypeError):
-        return None
-    if math.isnan(result):
-        return None
-    return result
+    return parse_amount(value)
 
 
 def _is_skip_row(item_name_str: str) -> bool:

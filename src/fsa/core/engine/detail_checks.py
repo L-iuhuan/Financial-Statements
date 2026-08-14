@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import cast
 
@@ -60,9 +61,9 @@ def check_journal_voucher_balance(
             rule_name="序时账逐凭证借贷平衡",
             passed=passed,
             severity=Severity.ERROR,
-            left_value=sum(debit.values()),
-            right_value=sum(credit.values()),
-            diff=sum(debit.values()) - sum(credit.values()),
+            left_value=math.fsum(debit.values()),
+            right_value=math.fsum(credit.values()),
+            diff=math.fsum(debit.values()) - math.fsum(credit.values()),
             tolerance=tolerance,
             formula="借方合计 == 贷方合计（按凭证）",
             message=message,
@@ -153,11 +154,13 @@ def check_cash_flow_detail_vs_journal(
         detail_net[row.voucher_no] += sign * row.amount
 
     journal_net: dict[str, float] = defaultdict(float)
-    for row in dataset.journal:
-        if not any(row.account_code.startswith(code) for code in cash_equivalent_codes):
+    for journal_row in dataset.journal:
+        if not any(
+            journal_row.account_code.startswith(code) for code in cash_equivalent_codes
+        ):
             continue
-        sign = 1.0 if row.direction == "借" else -1.0
-        journal_net[row.voucher_no] += sign * row.amount
+        sign = 1.0 if journal_row.direction == "借" else -1.0
+        journal_net[journal_row.voucher_no] += sign * journal_row.amount
 
     mismatches = [
         (voucher, detail_net[voucher] - journal_net[voucher])
@@ -180,9 +183,9 @@ def check_cash_flow_detail_vs_journal(
             rule_name="现金流明细=序时账现金科目",
             passed=passed,
             severity=Severity.WARNING,
-            left_value=sum(detail_net.values()),
-            right_value=sum(journal_net.values()),
-            diff=sum(detail_net.values()) - sum(journal_net.values()),
+            left_value=math.fsum(detail_net.values()),
+            right_value=math.fsum(journal_net.values()),
+            diff=math.fsum(detail_net.values()) - math.fsum(journal_net.values()),
             tolerance=tolerance,
             formula="明细金额 == 现金等价物科目净变动（按凭证）",
             message=message,

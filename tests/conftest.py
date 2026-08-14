@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 from fsa.core.models.report import Report, ReportItem, ReportType
-from fsa.core.models.rule import ReconciliationRule, Severity, ToleranceType
 from fsa.core.models.result import ValidationContext
+from fsa.core.models.rule import ReconciliationRule, Severity, ToleranceType
 
 
 def make_item(
@@ -55,6 +55,98 @@ def make_balance_sheet(
         )
     return Report(
         report_type=ReportType.BALANCE_SHEET,
+        period=period,
+        items=items,
+    )
+
+
+def make_income_statement(
+    revenue: float = 0.0,
+    operating_cost: float = 0.0,
+    net_profit: float = 0.0,
+    operating_profit: float | None = None,
+    total_profit: float | None = None,
+    taxes_surcharges: float | None = None,
+    selling_exp: float | None = None,
+    admin_exp: float | None = None,
+    rnd_exp: float | None = None,
+    finance_exp: float | None = None,
+    period: str = "2024-12",
+) -> Report:
+    """创建利润表，包含利润表校验所需的标准项目。"""
+    items = [
+        make_item("revenue", "营业收入", revenue, row=1),
+        make_item("operating_cost", "营业成本", operating_cost, row=4),
+        make_item("net_profit", "净利润", net_profit, row=30),
+    ]
+    if operating_profit is not None:
+        items.append(make_item("operating_profit", "营业利润", operating_profit, row=20))
+    if total_profit is not None:
+        items.append(make_item("total_profit", "利润总额", total_profit, row=25))
+    if taxes_surcharges is not None:
+        items.append(make_item("taxes_surcharges", "税金及附加", taxes_surcharges, row=5))
+    if selling_exp is not None:
+        items.append(make_item("selling_exp", "销售费用", selling_exp, row=6))
+    if admin_exp is not None:
+        items.append(make_item("admin_exp", "管理费用", admin_exp, row=7))
+    if rnd_exp is not None:
+        items.append(make_item("rnd_exp", "研发费用", rnd_exp, row=8))
+    if finance_exp is not None:
+        items.append(make_item("finance_exp", "财务费用", finance_exp, row=9))
+    return Report(
+        report_type=ReportType.INCOME_STATEMENT,
+        period=period,
+        items=items,
+    )
+
+
+def make_cash_flow_statement(
+    operating_net: float = 0.0,
+    investing_net: float = 0.0,
+    financing_net: float = 0.0,
+    net_increase_cash: float = 0.0,
+    ending_cash_equiv: float | None = None,
+    beginning_cash_equiv: float | None = None,
+    period: str = "2024-12",
+) -> Report:
+    """创建现金流量表，包含现金流量表校验所需的标准项目。"""
+    items = [
+        make_item("operating_net", "经营活动产生的现金流量净额", operating_net, row=5),
+        make_item("investing_net", "投资活动产生的现金流量净额", investing_net, row=10),
+        make_item("financing_net", "筹资活动产生的现金流量净额", financing_net, row=15),
+        make_item("net_increase_cash", "现金及现金等价物净增加额", net_increase_cash, row=20),
+    ]
+    if ending_cash_equiv is not None:
+        items.append(make_item("ending_cash_equiv", "期末现金及现金等价物余额", ending_cash_equiv, row=25))
+    if beginning_cash_equiv is not None:
+        items.append(make_item("beginning_cash_equiv", "期初现金及现金等价物余额", beginning_cash_equiv, row=24))
+    return Report(
+        report_type=ReportType.CASH_FLOW_STATEMENT,
+        period=period,
+        items=items,
+    )
+
+
+def make_sce_report(
+    paid_in_capital: float = 0.0,
+    capital_reserve: float = 0.0,
+    other_comprehensive: float = 0.0,
+    surplus_reserve: float = 0.0,
+    undistributed_profit: float = 0.0,
+    equity_total: float = 0.0,
+    period: str = "2024-12",
+) -> Report:
+    """创建所有者权益变动表（SCE），项目使用 sce_ 前缀 key（期末口径）。"""
+    items = [
+        make_item("sce_paid_in_capital_ending", "实收资本(本年年末余额)", paid_in_capital, row=5, column="实收资本"),
+        make_item("sce_capital_reserve_ending", "资本公积(本年年末余额)", capital_reserve, row=6, column="资本公积"),
+        make_item("sce_other_comprehensive_ending", "其他综合收益(本年年末余额)", other_comprehensive, row=7, column="其他综合收益"),
+        make_item("sce_surplus_reserve_ending", "盈余公积(本年年末余额)", surplus_reserve, row=8, column="盈余公积"),
+        make_item("sce_undistributed_profit_ending", "未分配利润(本年年末余额)", undistributed_profit, row=9, column="未分配利润"),
+        make_item("sce_equity_total_ending", "所有者权益合计(本年年末余额)", equity_total, row=10, column="所有者权益合计"),
+    ]
+    return Report(
+        report_type=ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
         period=period,
         items=items,
     )

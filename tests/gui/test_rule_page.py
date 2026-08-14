@@ -64,6 +64,52 @@ class TestRuleCardSeverity:
         assert card.findChild(QLabel, "RuleSeverityLabel") is not None
 
 
+class TestRulePageDeleteConfirm:
+    """测试删除自定义规则的二次确认 (C5-5)。"""
+
+    def test_delete_cancelled_keeps_rule(self, qapp, qtbot, app_state) -> None:
+        """确认框选"否"时不删除规则。"""
+        from unittest.mock import patch
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from tests.gui.helpers import make_registry
+
+        app_state._registry = make_registry()
+        app_state.registry.add_rule(make_rule(rule_id="CUST-001"))
+        page = RulePage(app_state)
+        qtbot.addWidget(page)
+
+        with patch.object(
+            QMessageBox, "question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.No,
+        ):
+            page._on_delete_rule("CUST-001")
+
+        assert app_state.registry.get_by_id("CUST-001") is not None
+
+    def test_delete_confirmed_removes_rule(self, qapp, qtbot, app_state) -> None:
+        """确认框选"是"时删除自定义规则。"""
+        from unittest.mock import patch
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from tests.gui.helpers import make_registry
+
+        app_state._registry = make_registry()
+        app_state.registry.add_rule(make_rule(rule_id="CUST-002"))
+        page = RulePage(app_state)
+        qtbot.addWidget(page)
+
+        with patch.object(
+            QMessageBox, "question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        ):
+            page._on_delete_rule("CUST-002")
+
+        assert app_state.registry.get_by_id("CUST-002") is None
+
+
 class TestRulePageFilter:
     """测试规则页筛选。"""
 

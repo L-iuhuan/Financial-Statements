@@ -50,9 +50,14 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+# 默认跳过 slow 标记的压测用例 (test_drawer_stress.py, 单用例可达 500s+);
+# 改动抽屉/主题相关代码或发布前, 用 pytest -m slow 显式运行压测
+addopts = "-v --tb=short -m \"not slow\""
 pythonpath = ["src"]
 qt_api = "pyside6"
+markers = [
+    "slow: 耗时压测/压力测试, 默认跳过, 用 pytest -m slow 运行",
+]
 
 [tool.ruff]
 target-version = "py311"

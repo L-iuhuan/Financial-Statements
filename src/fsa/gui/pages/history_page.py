@@ -71,7 +71,7 @@ class HistoryCard(QFrame):
         info = QVBoxLayout()
         info.setSpacing(2)
         date_label = QLabel(date)
-        date_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+        date_label.setObjectName("RuleName")
         date_label.setMinimumWidth(0)
         info.addWidget(date_label)
 
@@ -92,7 +92,7 @@ class HistoryCard(QFrame):
         ]:
             stat = QVBoxLayout()
             stat.setSpacing(0)
-            num = QLabel(str(count))
+            num = QLabel(f"{count:,}")
             num.setFont(get_mono_font(14))
             num.setStyleSheet("font-size: 20px; font-weight: 700;")
             num.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -157,7 +157,7 @@ class HistoryPage(QWidget):
 
         # 标题
         title = QLabel("校验历史")
-        title.setStyleSheet("font-size: 15px; font-weight: 600;")
+        title.setObjectName("PageTitle")
         layout.addWidget(title)
 
         # 空状态

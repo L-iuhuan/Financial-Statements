@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from fsa.core.models.report import Report, ReportType
+from fsa.core.models.rule import ReconciliationRule, Severity, ToleranceType
 from fsa.services.validation_service import ValidationService
 from tests.conftest import make_balance_sheet, make_item, make_rule_bs_bal_001
 from tests.services.conftest import (
@@ -197,6 +198,92 @@ class TestErrorHandling:
         assert summary.results[0].skipped is False
         assert summary.results[0].errored is False
         assert summary.results[0].passed is False
+
+
+# ────────────────────── 相对容差基准为 0 ──────────────────────
+
+
+class TestRelativeBaseZero:
+    """相对容差规则: 基准值为 0 时按 P1 跳过而非计为异常。"""
+
+    @staticmethod
+    def _relative_rule(rule_id: str = "RL-001") -> ReconciliationRule:
+        """净利润=营业收入, 相对容差。"""
+        return make_rule(
+            rule_id=rule_id,
+            name="净利润=营业收入",
+            statements=["利润表"],
+            formula="net_profit == revenue",
+            tolerance_type=ToleranceType.RELATIVE,
+            tolerance=0.3,
+        )
+
+    def test_validate_relative_base_zero_left_nonzero_skips(self):
+        """基准值为0且左值非0 -> 跳过 (passed=True, skipped=True, errored=False)。"""
+        is_ = make_income_statement(revenue=0.0, net_profit=100.0)
+        service = ValidationService(make_registry([self._relative_rule()]))
+
+        summary = service.validate([is_])
+
+        result = summary.results[0]
+        assert result.skipped is True
+        assert result.errored is False
+        assert result.passed is True
+        assert "基准科目金额为 0" in result.message
+        assert "跳过" in result.message
+
+    def test_validate_relative_base_zero_both_zero_passes(self):
+        """基准值为0且左右均为0 -> 通过 (既有行为回归)。"""
+        is_ = make_income_statement(revenue=0.0, net_profit=0.0)
+        service = ValidationService(make_registry([self._relative_rule()]))
+
+        summary = service.validate([is_])
+
+        result = summary.results[0]
+        assert result.passed is True
+        assert result.skipped is False
+        assert result.errored is False
+
+    def test_validate_relative_base_zero_counts_as_skipped(self):
+        """跳过计入 summary.skipped, 不计入 total/errored。"""
+        is_ = make_income_statement(revenue=0.0, net_profit=100.0)
+        service = ValidationService(make_registry([self._relative_rule()]))
+
+        summary = service.validate([is_])
+
+        assert summary.skipped == 1
+        assert summary.total == 0
+        assert summary.errored == 0
+        assert summary.failed == 0
+
+    def test_validate_duplicate_variable_returns_errored(self):
+        """其他运行期异常 (重复变量) -> errored 而非跳过 (既有行为回归)。
+
+        相对容差基准为 0 已改为跳过, 但其余可预期异常仍应计为 errored。
+        """
+        dup_rule = make_rule(
+            rule_id="DUP-001",
+            name="跨表净利润一致",
+            statements=["资产负债表", "利润表"],
+            formula="net_profit == net_profit",
+        )
+        bs = Report(
+            report_type=ReportType.BALANCE_SHEET,
+            period="2024-12",
+            items=[
+                make_item("asset_total", "资产总计", 100.0),
+                make_item("net_profit", "净利润", 50.0),
+            ],
+        )
+        is_ = make_income_statement(revenue=0.0, net_profit=100.0)
+        service = ValidationService(make_registry([dup_rule]))
+
+        summary = service.validate([bs, is_])
+
+        assert len(summary.results) == 1
+        assert summary.results[0].errored is True
+        assert summary.results[0].skipped is False
+        assert summary.errored == 1
 
 
 # ────────────────────── 多规则 ──────────────────────
@@ -404,3 +491,62 @@ class TestSummaryProperties:
         summary = service.validate([bs], period="2025-06")
 
         assert summary.period == "2025-06"
+
+
+# ────────────────────── 行业阈值注入 ──────────────────────
+
+
+class TestIndustryThresholdInjection:
+    """threshold_vars 穿线: 逻辑合理性规则按行业阈值判定。"""
+
+    @staticmethod
+    def _dar_rule():
+        """LR-DAR-001 资产负债率合理性规则 (阈值变量 dar_threshold)。"""
+        return make_rule(
+            rule_id="LR-DAR-001",
+            name="资产负债率合理性",
+            category="C-逻辑合理性",
+            statements=["资产负债表"],
+            formula="asset_total <= 0 or liability_total / asset_total <= dar_threshold",
+            severity=Severity.WARNING,
+        )
+
+    def test_validate_default_general_threshold_fails(self):
+        """不传 threshold_vars -> general 0.85: 资产负债率 0.88 不通过 (默认行为)。"""
+        bs = make_balance_sheet(
+            asset_total=100.0, liability_total=88.0, equity_total=12.0
+        )
+        service = ValidationService(make_registry([self._dar_rule()]))
+
+        summary = service.validate([bs], period="2024-12")
+
+        assert summary.total == 1
+        assert summary.results[0].rule_id == "LR-DAR-001"
+        assert summary.results[0].passed is False
+
+    def test_validate_financial_threshold_passes(self):
+        """financial 阈值 0.92: 资产负债率 0.88 通过。"""
+        bs = make_balance_sheet(
+            asset_total=100.0, liability_total=88.0, equity_total=12.0
+        )
+        service = ValidationService(make_registry([self._dar_rule()]))
+
+        summary = service.validate(
+            [bs], period="2024-12", threshold_vars={"dar_threshold": 0.92}
+        )
+
+        assert summary.results[0].rule_id == "LR-DAR-001"
+        assert summary.results[0].passed is True
+
+    def test_validate_partial_threshold_vars_keep_general_defaults(self):
+        """只覆写 dar_threshold, 其他阈值变量仍回落 general 默认。"""
+        bs = make_balance_sheet(
+            asset_total=100.0, liability_total=85.0, equity_total=15.0
+        )
+        service = ValidationService(make_registry([self._dar_rule()]))
+
+        summary = service.validate(
+            [bs], period="2024-12", threshold_vars={"dar_threshold": 0.80}
+        )
+
+        assert summary.results[0].passed is False  # 0.85 > 0.80 仍不通过

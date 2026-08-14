@@ -56,18 +56,21 @@ class ExpressionEvaluator:
         return left, right
 
     @staticmethod
-    def evaluate(expression: str, namespace: dict[str, float]) -> float:
-        """用 simpleeval 求值表达式。
+    def _safe_eval(expression: str, namespace: dict[str, float]) -> bool | float:
+        """用 simpleeval 求值表达式并统一异常映射。
+
+        两个公开方法 (evaluate / evaluate_boolean) 共用此私有方法，
+        调用后各自做数值/布尔类型转换。
 
         Args:
-            expression: 表达式字符串，如 "liability_total + equity_total"
-            namespace: 变量命名空间，如 {"liability_total": 60.0, "equity_total": 40.0}
+            expression: 表达式字符串
+            namespace: 变量命名空间
 
         Returns:
-            求值结果 (float)
+            求值结果（数值或布尔）
 
         Raises:
-            EvaluationError: 变量未定义、除零、类型错误等
+            EvaluationError: 变量未定义、除零、类型错误、结果为 None 等
             FormulaParseError: 语法错误
         """
         try:
@@ -89,7 +92,26 @@ class ExpressionEvaluator:
         if result is None:
             raise EvaluationError(expression, "表达式求值结果为 None")
 
+        if isinstance(result, bool):
+            return result
         return float(result)
+
+    @staticmethod
+    def evaluate(expression: str, namespace: dict[str, float]) -> float:
+        """用 simpleeval 求值表达式。
+
+        Args:
+            expression: 表达式字符串，如 "liability_total + equity_total"
+            namespace: 变量命名空间，如 {"liability_total": 60.0, "equity_total": 40.0}
+
+        Returns:
+            求值结果 (float)
+
+        Raises:
+            EvaluationError: 变量未定义、除零、类型错误等
+            FormulaParseError: 语法错误
+        """
+        return float(ExpressionEvaluator._safe_eval(expression, namespace))
 
     @staticmethod
     def evaluate_boolean(expression: str, namespace: dict[str, float]) -> bool:
@@ -111,23 +133,4 @@ class ExpressionEvaluator:
             EvaluationError: 变量未定义、除零、类型错误等
             FormulaParseError: 语法错误
         """
-        try:
-            result = simple_eval(expression, names=namespace, functions=_EVAL_FUNCTIONS)
-        except NameNotDefined as e:
-            raise EvaluationError(
-                expression,
-                f"变量「{e.name}」未定义。请检查报表中是否包含该项目。",
-            ) from e
-        except ZeroDivisionError as e:
-            raise EvaluationError(
-                expression, "除零错误。公式中存在除以零的操作。"
-            ) from e
-        except (SyntaxError, InvalidExpression) as e:
-            raise FormulaParseError(expression, f"语法错误: {e}") from e
-        except TypeError as e:
-            raise EvaluationError(expression, f"类型错误: {e}") from e
-
-        if result is None:
-            raise EvaluationError(expression, "表达式求值结果为 None")
-
-        return bool(result)
+        return bool(ExpressionEvaluator._safe_eval(expression, namespace))

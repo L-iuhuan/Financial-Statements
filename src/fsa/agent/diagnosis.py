@@ -9,13 +9,26 @@ diagnose_with_llm() 方法支持可选的 Ollama LLM 增强诊断，LLM 不可�
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
+from urllib.error import URLError
 
+from fsa.agent.llm_client import DISCLAIMER_TEXT, LLMError
+from fsa.agent.sanitize import sanitize_llm_input
 from fsa.core.models.result import TraceItem, ValidationResult
 
 if TYPE_CHECKING:
     from fsa.agent.llm_client import LLMClient
     from fsa.agent.ollama_client import OllamaClient
+
+# LLM 调用可能抛出的具体异常 (用于诊断降级, 避免宽 catch)
+_LLM_ERRORS: tuple[type[BaseException], ...] = (
+    LLMError,
+    URLError,
+    TimeoutError,
+    OSError,
+    json.JSONDecodeError,
+)
 
 
 def _fmt_amount(value: float) -> str:
@@ -180,13 +193,13 @@ def _build_llm_prompt(result: ValidationResult) -> str:
         "请从财务审计角度分析以下勾稽校验未通过的原因，并给出排查建议。",
         "要求：中文、简洁、不超过300字。",
         "",
-        f"规则编号: {result.rule_id}",
-        f"规则名称: {result.rule_name}",
-        f"校验公式: {result.formula}",
+        f"规则编号: {sanitize_llm_input(result.rule_id)}",
+        f"规则名称: {sanitize_llm_input(result.rule_name)}",
+        f"校验公式: {sanitize_llm_input(result.formula)}",
         f"左侧计算值: {_fmt_amount(result.left_value)} 元",
         f"右侧计算值: {_fmt_amount(result.right_value)} 元",
         f"差额: {_fmt_amount(abs(result.diff))} 元",
-        f"容差阈值: {result.tolerance}",
+        f"容差阈值: {sanitize_llm_input(str(result.tolerance))}",
     ]
 
     if result.trace:
@@ -194,8 +207,10 @@ def _build_llm_prompt(result: ValidationResult) -> str:
         lines.append("涉及科目追溯:")
         for item in result.trace:
             lines.append(
-                f"  - {item.name}（{item.key}）: {_fmt_amount(item.amount)} 元"
-                f"（{item.side}侧，第{item.row}行 {item.column}）"
+                f"  - {sanitize_llm_input(item.name)}（{sanitize_llm_input(item.key)}）: "
+                f"{_fmt_amount(item.amount)} 元"
+                f"（{sanitize_llm_input(item.side)}侧，第{item.row}行 "
+                f"{sanitize_llm_input(item.column)}）"
             )
 
     lines.append("")
@@ -225,7 +240,8 @@ class DiagnosisEngine:
             result: 校验结果（通常为未通过状态）
 
         Returns:
-            结构化的中文诊断文本
+            结构化的中文诊断文本, 已含「（规则引擎确定性诊断 · 未使用 AI）」标注
+            (P0 免责, 调用方无需再拼接)
         """
         sections = [
             _build_header(result),
@@ -234,7 +250,7 @@ class DiagnosisEngine:
             _build_category_advice(result),
             _build_action_steps(),
         ]
-        return "\n\n".join(sections)
+        return "\n\n".join(sections) + "\n\n（规则引擎确定性诊断 · 未使用 AI）"
 
     def diagnose_with_llm(
         self,
@@ -253,6 +269,8 @@ class DiagnosisEngine:
         Returns:
             中文诊断文本（可能来自 LLM 或规则引擎）
         """
+        from fsa.agent.ollama_client import OllamaError
+
         # 无客户端 -> 回退
         if client is None:
             return self.diagnose(result)
@@ -268,8 +286,8 @@ class DiagnosisEngine:
                 prompt=prompt,
                 system=_LLM_SYSTEM_PROMPT,
             )
-        except Exception:
-            # 捕获所有异常（包括 OllamaError），保证不回传异常给调用方
+        except (OllamaError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+            # 捕获 LLM 调用相关异常 (含 OllamaError), 保证不回传异常给调用方
             return self.diagnose(result)
 
         # LLM 返回空 -> 回退
@@ -286,17 +304,18 @@ class DiagnosisEngine:
         """使用 LLMClient 协议（Ollama / OpenAI 兼容）的增强诊断。
 
         客户端不可用、调用失败或返回空内容时，回退到规则化诊断。
+        返回值已含 DISCLAIMER_TEXT 免责标注 (P0, 调用方无需再拼接)。
         """
         if client is None:
             return self.diagnose(result)
         try:
             available = client.is_available()
-        except Exception:
+        except _LLM_ERRORS:
             return self.diagnose(result)
         if not available:
             return self.diagnose(result)
 
-        from fsa.agent.llm_client import ChatMessage
+        from fsa.agent.llm_client import ChatMessage, response_text
 
         messages = [
             ChatMessage(role="system", content=_LLM_SYSTEM_PROMPT),
@@ -304,7 +323,10 @@ class DiagnosisEngine:
         ]
         try:
             response = client.chat(messages)
-        except Exception:
+        except _LLM_ERRORS:
             return self.diagnose(result)
-        text = (response.content or "").strip()
-        return text or self.diagnose(result)
+        # content 为空时用 reasoning 尾部兜底 (推理模型 max_tokens 耗尽场景)
+        text = response_text(response).strip()
+        if not text:
+            return self.diagnose(result)
+        return text + "\n\n" + DISCLAIMER_TEXT

@@ -3,7 +3,7 @@
 验证完整管线:
 1. Excel 文件读取 -> 识别三大报表 -> 提取科目数据
 2. 导入的 Report 对象包含正确的科目和金额
-3. ValidationService 执行 37 条规则 -> 产出 ValidationSummary
+3. ValidationService 执行规则库全部规则 -> 产出 ValidationSummary
 4. 校验结果中: 表内平衡规则全部通过, 部分跨表规则因缺项异常
 """
 
@@ -13,10 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from fsa.core.engine.registry import RuleRegistry
 from fsa.core.importer.importer import ImportService
 from fsa.core.models.report import ReportType
-from fsa.services.validation_service import ValidationService
-
 
 # ── 导入测试 ──
 
@@ -207,12 +206,17 @@ class TestValidationPipeline:
             assert result.rule_id, "结果缺少 rule_id"
             assert result.rule_name, "结果缺少 rule_name"
 
-    def test_summary_counts_are_consistent(self, validation_summary) -> None:
-        """汇总中的 passed + failed + errored = total (skipped 单独计)。"""
+    def test_summary_counts_are_consistent(
+        self, validation_summary, sample_registry: RuleRegistry
+    ) -> None:
+        """汇总中的 passed + failed + errored = total (skipped 单独计)。
+
+        skipped + total = 启用的规则总数 (含缺少报表而跳过的规则)。
+        规则总数从注册表动态读取, 规则库升级时无需修改本测试。
+        """
         s = validation_summary
         assert s.passed + s.failed + s.errored == s.total
-        # skipped + total = 规则库总数 (39)
-        assert s.skipped + s.total == 37
+        assert s.skipped + s.total == len(sample_registry.get_active())
 
 
 # ── 数据一致性测试 ──

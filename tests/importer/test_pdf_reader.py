@@ -17,6 +17,64 @@ FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "real_reports"
 THREE_REPORTS_PDF = FIXTURE_DIR / "测试报表_三大报表.pdf"
 MERGED_BS_PDF = FIXTURE_DIR / "测试报表_合并资产负债表.pdf"
 
+# PDF 行号编码基数 (与 src/fsa/core/importer/pdf_reader.py 保持一致, D-01)
+_PDF_ROW_BASE = 10_000_000
+
+
+# ── mock pdfplumber 的辅助类 ──────────────────────────────
+
+
+class _FakePage:
+    """模拟 pdfplumber 页面, 仅提供 extract_tables。"""
+
+    def __init__(self, table: list[list[str | None]]) -> None:
+        self._table = table
+
+    def extract_tables(self) -> list[list[list[str | None]]]:
+        return [self._table]
+
+
+class _FakePdf:
+    """模拟 pdfplumber.open 返回的上下文管理器。"""
+
+    def __init__(self, pages: list[_FakePage]) -> None:
+        self.pages = pages
+
+    def __enter__(self) -> _FakePdf:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class _FakePdfModule:
+    """模拟 pdfplumber 模块 (仅 open), 通过 monkeypatch 注入 pdf_reader。"""
+
+    def __init__(self, pages: list[_FakePage]) -> None:
+        self._pages = pages
+
+    def open(self, path: str, **kwargs: object) -> _FakePdf:
+        return _FakePdf(self._pages)
+
+
+_BS_TABLE: list[list[str | None]] = [
+    ["资产负债表", None, None],
+    ["项目", "期末余额", "年初余额"],
+    ["货币资金", "100", "80"],
+    ["应收账款", "200", "150"],
+    ["", "", ""],
+    ["资产总计", "300", "230"],
+    ["负债合计", "180", "130"],
+    ["所有者权益合计", "120", "100"],
+]
+
+_IS_TABLE: list[list[str | None]] = [
+    ["利润表", None, None],
+    ["项目", "本期金额", "上期金额"],
+    ["营业收入", "300", "250"],
+    ["净利润", "100", "80"],
+]
+
 
 class TestReadPdf:
     """测试 read_pdf 函数的基本功能。"""
@@ -306,6 +364,128 @@ class TestMergedReport:
         assert liability is not None
         assert equity is not None
         assert asset == liability + equity
+
+
+class TestParseCellValue:
+    """测试 PDF 单元格值解析（统一金额解析）。"""
+
+    def test_thousands_separator_parsed_to_float(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("1,000,000.50") == 1000000.50
+
+    def test_parenthesized_negative_parsed(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("(1,291,800.12)") == -1291800.12
+
+    def test_placeholder_parsed_to_zero(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("-") == 0.0
+        assert _parse_cell_value("—") == 0.0
+
+    def test_scientific_notation_parsed(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("1.5e6") == 1500000.0
+
+    def test_empty_returns_none(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value(None) is None
+        assert _parse_cell_value("") is None
+
+    def test_unparsable_returns_original_text(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("货币资金") == "货币资金"
+
+
+class TestPdfRowSemantics:
+    """D-01: PDF 行号应为「页码+表内行」可定位语义。"""
+
+    def test_read_pdf_encodes_page_and_table_row(self, monkeypatch) -> None:
+        """数据行 _row = 页码 * 基数 + 表内 1-based 行号。"""
+        from fsa.core.importer import pdf_reader
+
+        monkeypatch.setattr(
+            pdf_reader, "pdfplumber", _FakePdfModule([_FakePage(_BS_TABLE), _FakePage(_IS_TABLE)])
+        )
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
+        assert "资产负债表" in data
+        assert "利润表" in data
+
+        bs_rows = {str(r.get("项目", "")): r["_row"] for r in data["资产负债表"].rows}
+        # 货币资金在表内第 3 行 (标题行1, 表头行2, 数据行3)
+        assert bs_rows["货币资金"] == 1 * _PDF_ROW_BASE + 3
+        # 空行被跳过, 但真实行号保留: 资产总计在表内第 6 行
+        assert bs_rows["资产总计"] == 1 * _PDF_ROW_BASE + 6
+
+        is_rows = {str(r.get("项目", "")): r["_row"] for r in data["利润表"].rows}
+        # 第 2 页: 净利润在表内第 4 行
+        assert is_rows["净利润"] == 2 * _PDF_ROW_BASE + 4
+
+    def test_read_pdf_skips_empty_rows_but_preserves_table_index(self, monkeypatch) -> None:
+        """空行不产出数据行, 但后续行的表内行号保持真实位置。"""
+        from fsa.core.importer import pdf_reader
+
+        monkeypatch.setattr(pdf_reader, "pdfplumber", _FakePdfModule([_FakePage(_BS_TABLE)]))
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
+        bs = data["资产负债表"]
+        items = [str(r.get("项目", "")) for r in bs.rows]
+        assert items == ["货币资金", "应收账款", "资产总计", "负债合计", "所有者权益合计"]
+
+        rows = {str(r.get("项目", "")): r["_row"] for r in bs.rows}
+        assert rows["资产总计"] == 1 * _PDF_ROW_BASE + 6
+        assert rows["负债合计"] == 1 * _PDF_ROW_BASE + 7
+
+    def test_import_pdf_trace_rows_are_page_encoded(self, monkeypatch) -> None:
+        """导入 PDF 并校验后, trace 行号为页码编码, 可解码为「第X页表内第N行」。"""
+        from fsa.core.engine.registry import RuleRegistry
+        from fsa.core.importer import pdf_reader
+        from fsa.core.importer.importer import ImportService
+        from fsa.services.validation_service import ValidationService
+
+        monkeypatch.setattr(pdf_reader, "pdfplumber", _FakePdfModule([_FakePage(_BS_TABLE)]))
+
+        rules_path = Path(__file__).parent.parent.parent / "cas_gouji_rule_library.json"
+        registry = RuleRegistry.from_json(str(rules_path))
+        service = ImportService()
+        reports = service.import_file(str(THREE_REPORTS_PDF))
+        validation = ValidationService(registry)
+        summary = validation.validate(reports, period="2024-12")
+
+        result = _find_result(summary.results, "BS-BAL-001")
+        assert result is not None, "未找到 BS-BAL-001 结果"
+        trace = {t.key: t for t in result.trace}
+        assert trace["asset_total"].row == 1 * _PDF_ROW_BASE + 6
+        assert trace["liability_total"].row == 1 * _PDF_ROW_BASE + 7
+        assert trace["equity_total"].row == 1 * _PDF_ROW_BASE + 8
+        # 解码语义: divmod 还原「页码, 表内行」
+        assert divmod(trace["asset_total"].row, _PDF_ROW_BASE) == (1, 6)
+
+    def test_import_pdf_fixture_bs_rows_are_page_encoded(self) -> None:
+        """真实 PDF 夹具: 资产负债表各项行号编码为第 1 页表内行。"""
+        from fsa.core.importer.importer import ImportService
+
+        service = ImportService()
+        reports = service.import_file(str(THREE_REPORTS_PDF))
+        bs = _find_report(reports, ReportType.BALANCE_SHEET)
+        assert bs.get_item("asset_total").row == 1 * _PDF_ROW_BASE + 17
+        assert bs.get_item("liability_total").row == 1 * _PDF_ROW_BASE + 30
+        assert bs.get_item("equity_total").row == 1 * _PDF_ROW_BASE + 36
+
+    def test_import_pdf_fixture_page_2_row_encoding(self) -> None:
+        """真实 PDF 夹具: 利润表在第 2 页, 净利润行号编码为第 2 页表内行。"""
+        from fsa.core.importer.importer import ImportService
+
+        service = ImportService()
+        reports = service.import_file(str(THREE_REPORTS_PDF))
+        is_report = _find_report(reports, ReportType.INCOME_STATEMENT)
+        item = is_report.get_item("net_profit")
+        assert item is not None
+        assert divmod(item.row, _PDF_ROW_BASE) == (2, 20)
 
 
 # ── 辅助函数 ──────────────────────────────────────────────

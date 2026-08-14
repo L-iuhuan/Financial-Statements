@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
+import math
 from collections import defaultdict
 
 from fsa.core.importer.name_mapper import clean_name
-from fsa.core.models.detail import DetailDataset
+from fsa.core.models.detail import DetailDataset, RelatedPartyPurchaseRow
 from fsa.core.models.report import Report, ReportType
 from fsa.core.models.result import ValidationResult
 from fsa.core.models.rule import Severity
@@ -16,24 +18,35 @@ _INTERNAL_PROJECT_ALIASES: dict[str, str] = {
     "支付的其他与经营活动的现金": "支付其他与经营活动有关的现金",
 }
 
+# 毛利率核对容差的默认值（相对比例，非金额）
+DEFAULT_MARGIN_TOLERANCE: float = 0.01
+
+# RP-001 分类合计时排除的非分类数值字段（total_amount 是合计而非分类项）
+_RP_EXCLUDED_FIELDS: frozenset[str] = frozenset({"total_amount"})
+
+
+def _rp_breakdown_field_names() -> tuple[str, ...]:
+    """动态收集关联方采购模型的数值分类字段名。
+
+    基于 dataclasses 字段遍历而非硬编码，企业后续扩展数值分类字段
+    （如新增"运输费/佣金"等 float 字段）时自动纳入，无需修改本检查。
+    仅统计 float 类型字段并排除 total_amount（合计），向后兼容。
+    """
+    return tuple(
+        field_.name
+        for field_ in dataclasses.fields(RelatedPartyPurchaseRow)
+        if field_.type == "float" and field_.name not in _RP_EXCLUDED_FIELDS
+    )
+
 
 def check_related_party_purchase_breakdown(
     dataset: DetailDataset, tolerance: float
 ) -> list[ValidationResult]:
     """核对关联方采购总金额与成本/费用分类合计。"""
+    field_names = _rp_breakdown_field_names()
     mismatches: list[str] = []
     for row in dataset.related_party_purchases:
-        breakdown = (
-            row.supply_chain
-            + row.mold
-            + row.inventory
-            + row.main_cost
-            + row.other_cost
-            + row.rnd_expense
-            + row.admin_expense
-            + row.selling_expense
-            + row.other
-        )
+        breakdown = math.fsum(getattr(row, name) for name in field_names)
         diff = row.total_amount - breakdown
         if abs(diff) > tolerance:
             mismatches.append(
@@ -65,9 +78,19 @@ def check_related_party_purchase_breakdown(
 
 
 def check_sales_detail_consistency(
-    dataset: DetailDataset, tolerance: float
+    dataset: DetailDataset,
+    tolerance: float,
+    margin_tolerance: float | None = None,
 ) -> list[ValidationResult]:
-    """核对销售收入成本明细的成本构成与毛利率。"""
+    """核对销售收入成本明细的成本构成与毛利率。
+
+    Args:
+        dataset: 明细数据集
+        tolerance: 成本构成金额容差（元）
+        margin_tolerance: 毛利率核对容差（相对比例），默认 0.01，
+            可经 entity_config.margin_tolerance 覆写。
+    """
+    margin_tol = DEFAULT_MARGIN_TOLERANCE if margin_tolerance is None else margin_tolerance
     mismatches: list[str] = []
     for row in dataset.sales_details:
         cost_parts = (
@@ -78,7 +101,7 @@ def check_sales_detail_consistency(
         margin_ok = True
         if row.gross_margin is not None and row.revenue_amount > 0:
             expected = (row.revenue_amount - row.cost_amount) / row.revenue_amount
-            margin_ok = abs(row.gross_margin - expected) <= 0.01
+            margin_ok = abs(row.gross_margin - expected) <= margin_tol
         if not cost_ok or not margin_ok:
             mismatches.append(
                 f"行{row.row}「{row.customer}」成本构成 {cost_parts:,.2f} "
@@ -118,8 +141,8 @@ def check_sales_vs_income_statement(
     if report is None:
         return []
     statement = {item.key: item.amount for item in report.items}
-    revenue = sum(row.revenue_amount for row in dataset.sales_details)
-    cost = sum(row.cost_amount for row in dataset.sales_details)
+    revenue = math.fsum(row.revenue_amount for row in dataset.sales_details)
+    cost = math.fsum(row.cost_amount for row in dataset.sales_details)
 
     results: list[ValidationResult] = []
     for key, name, amount in (

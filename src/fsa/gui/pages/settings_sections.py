@@ -5,9 +5,14 @@
 
 from __future__ import annotations
 
+import json
+
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -17,9 +22,35 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import SwitchButton
 
+from fsa.core.resources import resource_path
 from fsa.core.version import APP_VERSION
 from fsa.gui.app_state import AppState
+
+_RULES_FILE = resource_path("cas_gouji_rule_library.json")
+
+
+def _rule_library_label(state: AppState) -> str:
+    """规则库版本与条数动态读取，用于「关于」分区展示。
+
+    版本从规则库 JSON 读取；条数从 AppState.registry 读取
+    (与当前实际加载的规则一致, 含自定义规则)。
+    规则库不可读时版本省略；无 registry 时降级不显示条数 (P6 中文文案)。
+    """
+    version = ""
+    try:
+        data = json.loads(_RULES_FILE.read_text(encoding="utf-8"))
+        version = str(data["ruleLibrary"].get("version", "")).strip()
+    except (OSError, ValueError, KeyError, TypeError):
+        version = ""
+    registry = state.registry
+    count = registry.count() if registry is not None else None
+
+    label = f"CAS v{version}" if version else "CAS 规则库"
+    if count is not None:
+        label += f" ({count} 条规则)"
+    return label
 
 
 def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -31,7 +62,7 @@ def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
     layout.setSpacing(12)
 
     label = QLabel(title)
-    label.setStyleSheet("font-size: 14px; font-weight: 600;")
+    label.setObjectName("SectionTitle")
     layout.addWidget(label)
 
     return frame, layout
@@ -55,7 +86,8 @@ def _row(label_text: str, desc: str = "") -> tuple[QHBoxLayout, QLabel]:
     info = QVBoxLayout()
     info.setSpacing(2)
     label = QLabel(label_text)
-    label.setStyleSheet("font-size: 13px; font-weight: 500;")
+    label.setObjectName("PageTitle")
+    label.setStyleSheet("font-size: 13px;")
     info.addWidget(label)
     if desc:
         d = QLabel(desc)
@@ -191,7 +223,7 @@ def build_about_section(
     for label_text, value in [
         ("软件版本", f"{APP_VERSION} (MVP)"),
         ("开源许可", "MIT License"),
-            ("规则库版本", "CAS v1.2.0 (37 条规则, 含权益变动表)"),
+        ("规则库版本", _rule_library_label(state)),
     ]:
         row, _ = _row(label_text)
         val = QLabel(value)
@@ -219,9 +251,7 @@ def build_update_section(
 
     # 更新清单 URL (可直接编辑/粘贴)
     row2, _ = _row("更新清单地址", "内网 JSON 清单文件的 URL (可直接粘贴编辑)")
-    url_input = QLineEdit(
-        str(settings.value("update_manifest_url", "http://localhost:8000/version.json"))
-    )
+    url_input = QLineEdit(str(settings.value("update_manifest_url", "")))
     url_input.setObjectName("StyledInput")
     url_input.setPlaceholderText("可直接粘贴内网清单 URL, 如 http://192.168.x.x/version.json")
     url_input.setMinimumWidth(280)
@@ -265,6 +295,63 @@ def build_update_section(
     return frame
 
 
+def _confirm_remote_risk(parent: QWidget | None) -> bool:
+    """远程大模型开关的风险确认弹窗 (P0 离线守卫).
+
+    需勾选「我已知晓风险」后「确认」才可开启;
+    未勾选时确认按钮禁用; 取消/关闭弹窗返回 False。
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("风险确认")
+    layout = QVBoxLayout(dialog)
+
+    body = QLabel(
+        "开启后可将财务数据发送至远程大模型服务（数据将离开本机）。\n"
+        "请确认您了解相关风险，并仅在可信、合规的网络环境中使用。"
+    )
+    body.setWordWrap(True)
+    layout.addWidget(body)
+
+    checkbox = QCheckBox("我已知晓风险")
+    layout.addWidget(checkbox)
+
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    )
+    ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+    ok_btn.setText("确认")
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+    ok_btn.setEnabled(False)  # 未勾选风险声明前禁止确认
+    checkbox.toggled.connect(ok_btn.setEnabled)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return False
+    return checkbox.isChecked()
+
+
+def _on_llm_remote_toggled(
+    checked: bool,
+    switch: SwitchButton,
+    settings: QSettings,
+    page: QWidget | None,
+) -> None:
+    """远程大模型开关处理: 开启需风险确认, 关闭移除确认标记。
+
+    确认弹窗取消/关闭时开关回弹为关, 不写确认标记。
+    """
+    if checked:
+        if not _confirm_remote_risk(page):
+            switch.setChecked(False)  # 回弹为关
+            return
+        settings.setValue("llm_allow_remote_ack", True)
+    else:
+        settings.remove("llm_allow_remote_ack")
+    settings.sync()
+
+
 def build_llm_section(
     page: QWidget,
     settings: QSettings,
@@ -293,11 +380,9 @@ def build_llm_section(
     row2, _ = _row(
         "服务地址", "Ollama: http://localhost:11434; 公司部署/在线: API base URL"
     )
-    base_url_input = QLineEdit(
-        str(settings.value("llm_base_url", "http://10.16.2.6:4434/v1"))
-    )
+    base_url_input = QLineEdit(str(settings.value("llm_base_url", "")))
     base_url_input.setObjectName("StyledInput")
-    base_url_input.setPlaceholderText("如 http://localhost:11434 或 https://api.xxx.com/v1")
+    base_url_input.setPlaceholderText("例如 http://localhost:11434 或 https://api.xxx.com/v1")
     base_url_input.setMinimumWidth(280)
     base_url_input.editingFinished.connect(page._save_llm_config)
     row2.addWidget(base_url_input)
@@ -305,8 +390,9 @@ def build_llm_section(
 
     # model
     row3, _ = _row("模型名称", "如 qwen2.5:7b / deepseek-r1 / 公司部署的模型名")
-    model_input = QLineEdit(str(settings.value("llm_model", "GLM-4.7-PF8")))
+    model_input = QLineEdit(str(settings.value("llm_model", "")))
     model_input.setObjectName("StyledInput")
+    model_input.setPlaceholderText("例如 qwen2.5:7b、GLM-4.7-PF8")
     model_input.setMinimumWidth(280)
     model_input.editingFinished.connect(page._save_llm_config)
     row3.addWidget(model_input)
@@ -322,6 +408,21 @@ def build_llm_section(
     row4.addWidget(key_input)
     layout.addLayout(row4)
 
+    # 远程大模型开关 (P0 离线守卫: 财务数据不允许离开本机, 远程需显式确认)
+    row5, _ = _row(
+        "允许远程大模型服务（云端）",
+        "开启后可将财务数据发送至远程大模型服务（数据将离开本机），默认关闭",
+    )
+    remote_container, remote_lay = _control_container(64)
+    remote_switch = SwitchButton()
+    remote_switch.setChecked(bool(settings.value("llm_allow_remote_ack", False)))
+    remote_switch.checkedChanged.connect(
+        lambda checked: _on_llm_remote_toggled(checked, remote_switch, settings, page)
+    )
+    remote_lay.addWidget(remote_switch)
+    row5.addWidget(remote_container)
+    layout.addLayout(row5)
+
     # 状态提示
     hint = QLabel("配置后, AI 助手可进行多轮对话式深入分析; 未配置时使用规则化诊断。")
     hint.setObjectName("MetaLabel")
@@ -332,5 +433,6 @@ def build_llm_section(
     page._llm_base_url_input = base_url_input
     page._llm_model_input = model_input
     page._llm_api_key_input = key_input
+    page._llm_remote_switch = remote_switch
 
     return frame
