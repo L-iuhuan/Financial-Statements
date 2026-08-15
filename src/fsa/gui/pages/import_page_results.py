@@ -63,7 +63,7 @@ class ImportPageResultsMixin(QWidget):
         if not reports:
             self._reports_section.setVisible(False)
             self._drop_zone.setVisible(True)
-            self._empty_state.setVisible(True)
+            self._empty_state.setVisible(False)
             self.validate_enabled_changed.emit(False)
             self._clear_report_cards()
             self._sync_history_banner()
@@ -104,6 +104,17 @@ class ImportPageResultsMixin(QWidget):
             self._summary_section.setVisible(False)
             self._filter_section.setVisible(False)
             self._detail_section.setVisible(False)
+            self._sync_history_banner()
+            return
+
+        # 历史回看统一展示在「校验结果」表格页; 导入页不再重建结果卡片,
+        # 避免 31+ 张卡片同步构建造成的整页重绘/闪烁
+        if self._state.history_view_id is not None:
+            self._summary_section.setVisible(False)
+            self._filter_section.setVisible(False)
+            self._detail_section.setVisible(False)
+            self._drop_zone.setVisible(True)
+            self._empty_state.setVisible(False)
             self._sync_history_banner()
             return
 

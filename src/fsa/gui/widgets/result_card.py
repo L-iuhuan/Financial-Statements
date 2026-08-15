@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import cast
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QMouseEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -50,6 +50,7 @@ class ResultCard(QFrame):
         self._result = result
         self._expanded = not result.passed
         self._detail_built = False
+        self._theme_dirty = False
         self._status = self._get_status_key()
         self.setObjectName("ResultCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -353,6 +354,11 @@ class ResultCard(QFrame):
         return f"行{row} · {column}"
 
     def _on_theme_changed(self) -> None:
+        """主题切换回调; 卡片不可见时只标记脏状态, 显示时再刷新。"""
+        if not self.isVisible():
+            self._theme_dirty = True
+            return
+        self._theme_dirty = False
         self._apply_card_style()
         p = current_palette()
         accent = p[_STATUS_PALETTE[self._status]]
@@ -364,6 +370,13 @@ class ResultCard(QFrame):
             self._diff_label.setStyleSheet(
                 f"color: {accent}; font-size: 12px; font-weight: 600;"
             )
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """卡片重新显示时补齐被延迟的主题刷新。"""
+        super().showEvent(event)
+        if self._theme_dirty:
+            self._theme_dirty = False
+            self._on_theme_changed()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:

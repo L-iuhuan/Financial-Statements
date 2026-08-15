@@ -21,7 +21,7 @@ from fsa.core.version import APP_VERSION
 # 导航项配置: (section, object_name, label, icon)
 _NAV_ITEMS: list[tuple[str, str, str, FluentIcon]] = [
     ("工作区", "navImport", "数据导入", FluentIcon.DOWNLOAD),
-    ("工作区", "navAudit", "审计底稿", FluentIcon.DOCUMENT),
+    ("工作区", "navAudit", "校验结果", FluentIcon.DOCUMENT),
     ("系统", "navRules", "规则管理", FluentIcon.LIBRARY),
     ("系统", "navHistory", "历史记录", FluentIcon.HISTORY),
     ("系统", "navSettings", "系统设置", FluentIcon.SETTING),

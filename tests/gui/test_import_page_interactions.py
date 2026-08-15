@@ -54,14 +54,15 @@ class TestImportRealFile:
         qtbot.wait(100)
         assert window._topbar._validate_btn.isEnabled() is True
 
-    def test_empty_state_visible_initially(self, qapp, qtbot, app_state) -> None:
-        """初始时显示空状态 (IP-14)。"""
+    def test_empty_state_hidden_initially(self, qapp, qtbot, app_state) -> None:
+        """首页只保留文件选择/拖放区, 旧的空状态虚线框默认隐藏 (IP-14)。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         # 确保在导入页
         window._sidebar._nav_buttons["navImport"].clicked_nav.emit("navImport")
         qtbot.wait(50)
-        assert not window._import_page._empty_state.isHidden()
+        assert window._import_page._empty_state.isHidden()
+        assert not window._import_page._drop_zone.isHidden()
 
     def test_empty_state_hidden_after_import(self, qapp, qtbot, app_state) -> None:
         """导入后空状态隐藏 (IP-14)。"""

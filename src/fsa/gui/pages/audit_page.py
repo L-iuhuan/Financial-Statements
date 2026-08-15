@@ -1,11 +1,11 @@
-"""审计底稿页面: 表格形式展示全部校验结果。
+"""校验结果页面: 表格形式展示全部校验结果。
 
-匹配 Demo v4 设计: 审计表格 + 导出按钮 + 打印预览。
+提供导出 Excel 与打印预览; 历史记录“查看”也跳转到本页展示。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtWidgets import (
@@ -29,7 +29,9 @@ from fsa.gui.theme import current_palette, get_mono_font
 
 
 class AuditPage(QWidget):
-    """审计底稿页面: 以表格展示校验结果。"""
+    """校验结果页面: 以表格展示校验结果。"""
+
+    history_view_exit_requested = Signal()
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -52,12 +54,12 @@ class AuditPage(QWidget):
 
         # 标题行
         title_row = QHBoxLayout()
-        title = QLabel("审计底稿预览")
+        title = QLabel("校验结果一览")
         title.setObjectName("PageTitle")
         title_row.addWidget(title)
         title_row.addStretch()
 
-        export_btn = QPushButton("导出 Excel")
+        export_btn = QPushButton("导出 Excel 底稿")
         export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         export_btn.setObjectName("BtnSecondary")
         export_btn.clicked.connect(self._on_export)
@@ -69,6 +71,23 @@ class AuditPage(QWidget):
         print_btn.clicked.connect(self._on_print_preview)
         title_row.addWidget(print_btn)
         layout.addLayout(title_row)
+
+        # 历史回看横幅 (默认隐藏)
+        self._history_banner = QFrame()
+        self._history_banner.setObjectName("HistoryViewBanner")
+        self._history_banner.setVisible(False)
+        banner_layout = QHBoxLayout(self._history_banner)
+        banner_layout.setContentsMargins(12, 8, 12, 8)
+        self._history_banner_text = QLabel()
+        self._history_banner_text.setObjectName("HistoryViewBannerText")
+        self._history_banner_text.setWordWrap(True)
+        banner_layout.addWidget(self._history_banner_text, stretch=1)
+        exit_btn = QPushButton("退出回看")
+        exit_btn.setObjectName("TextBtn")
+        exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        exit_btn.clicked.connect(self.history_view_exit_requested.emit)
+        banner_layout.addWidget(exit_btn)
+        layout.addWidget(self._history_banner)
 
         # 表格
         self._table = QTableWidget()
@@ -101,8 +120,23 @@ class AuditPage(QWidget):
     def _connect_signals(self) -> None:
         self._state.results_changed.connect(self._update_table)
 
+    def _sync_history_banner(self) -> None:
+        """按 AppState.history_view_id 刷新历史回看横幅。"""
+        history_id = self._state.history_view_id
+        summary = self._state.results
+        if history_id is None:
+            self._history_banner.setVisible(False)
+            return
+        period = summary.period if summary is not None else ""
+        self._history_banner_text.setText(
+            f"历史回看 #{history_id} · 期间 {period or '未设置'} · "
+            "以下为历史校验结果，导出内容为历史数据"
+        )
+        self._history_banner.setVisible(True)
+
     def _update_table(self) -> None:
         summary = self._state.results
+        self._sync_history_banner()
         if summary is None:
             self._table.setRowCount(0)
             self._empty.setVisible(True)

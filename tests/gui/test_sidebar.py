@@ -20,12 +20,12 @@ class TestSidebarNavigation:
         assert window._topbar._title.text() == "数据导入与校验"
 
     def test_click_nav_audit_switches_page_and_title(self, qapp, qtbot, app_state) -> None:
-        """点击"审计底稿"切换页面索引为1并更新顶栏标题 (SB-01)。"""
+        """点击"校验结果"切换页面索引为1并更新顶栏标题 (SB-01)。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         window._sidebar._nav_buttons["navAudit"].clicked_nav.emit("navAudit")
         assert window._stack.currentIndex() == 1
-        assert window._topbar._title.text() == "审计底稿"
+        assert window._topbar._title.text() == "校验结果"
 
     def test_click_nav_rules_switches_page_and_title(self, qapp, qtbot, app_state) -> None:
         """点击"规则管理"切换页面索引为2并更新顶栏标题 (SB-01)。"""

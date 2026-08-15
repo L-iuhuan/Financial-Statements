@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QResizeEvent
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -58,6 +58,8 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         self._chat_repo = chat_repo
         self._session_id: int | None = None
         self._context_rule_id: str | None = None
+        self._messages_loaded = False
+        self._theme_dirty = False
         self._setup_ui()
         self._apply_shell_styles()
         self._load_sessions_if_available()
@@ -453,6 +455,18 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
 
     def _on_handle_release(self, event: QMouseEvent) -> None:
         self._dragging = False
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """首次打开抽屉时才加载历史消息; 主题切换期间保持隐藏则延迟重渲染。"""
+        super().showEvent(event)
+        if not self._messages_loaded and self._session_id is not None:
+            self._load_session_messages(self._session_id)
+            self._messages_loaded = True
+        if self._theme_dirty:
+            self._theme_dirty = False
+            refresh = getattr(self, "refresh_theme", None)
+            if callable(refresh):
+                refresh()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         """抽屉宽度变化 (拖拽/窗口收窄) 时, 重排消息气泡宽度跟随容器。"""

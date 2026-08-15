@@ -48,7 +48,7 @@ __all__ = ["MainWindow", "_format_trace_loc"]
 # 页面 ID 到标题/副标题的映射
 _PAGE_TITLES: dict[str, tuple[str, str]] = {
     "navImport": ("数据导入与校验", "准备导入报表"),
-    "navAudit": ("审计底稿", "校验结果审计底稿"),
+    "navAudit": ("校验结果", "校验结果一览与导出"),
     "navRules": ("规则管理", "勾稽校验规则库"),
     "navHistory": ("历史记录", "校验历史记录"),
     "navSettings": ("系统设置", "系统参数配置"),
@@ -190,6 +190,7 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         self._import_page.diagnose_requested.connect(self._on_diagnose)
         self._import_page.debate_requested.connect(self._on_debate)
         self._import_page.history_view_exit_requested.connect(self._on_reset)
+        self._audit_page.history_view_exit_requested.connect(self._on_reset)
 
         # 注意: 历史页面和设置页的信号连接延迟到页面创建时 (见 _ensure_page)
 
@@ -358,11 +359,10 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
             results=results,
             report_types=report_types,
         )
-        # 先在隐藏状态下完成历史结果回填, 再一次切换页面, 避免先闪后显;
-        # 不使用 setUpdatesEnabled 包裹, 防止整屏延迟重绘产生黑/白空帧
+        # 历史结果用轻量表格页展示, 不触发导入页 31+ 张结果卡片的同步重建;
+        # 先回填数据, 再切页一次完成, 避免先闪后显
         self._state.set_history_view(summary, history_id)
-        self._on_nav("navImport")
-        self._import_page.scroll_to_top()
+        self._on_nav("navAudit")
         # 注意: 不再弹 InfoBar —— 页面跳转+结果回填已是充分反馈,
         # 额外提示条会在用户后续点击筛选按钮时造成"弹窗闪现"的干扰
         has_issues = summary.failed + summary.errored > 0

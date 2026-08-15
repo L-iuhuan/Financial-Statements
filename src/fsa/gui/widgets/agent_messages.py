@@ -387,6 +387,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
     _suggestions_frame: QFrame
     _last_bubble: QLabel | _AssistantBubble
     _last_user_bubble: QLabel | _AssistantBubble
+    _theme_dirty: bool
 
     # 流式节流渲染
     _streaming_handle: StreamMessageHandle | None
@@ -794,7 +795,13 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         """主题切换后重刷已渲染 AI 气泡 (含流式中) 与悬浮元素。
 
         接线由宿主负责 (例如在主题监听回调中调用)。
+        抽屉隐藏时不重渲染全部历史气泡, 只标记脏状态,
+        待 showEvent 首次显示时再一次性刷新, 避免主题切换卡顿。
         """
+        if not self.isVisible():
+            self._theme_dirty = True
+            return
+        self._theme_dirty = False
         for bubble in getattr(self, "_ai_bubbles", []):
             if isinstance(bubble, _AssistantBubble):
                 self._style_assistant_bubble(bubble)

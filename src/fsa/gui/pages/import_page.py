@@ -171,9 +171,10 @@ class ImportPage(ImportPageResultsMixin):
         detail_layout.addLayout(self._cards_layout)
         layout.addWidget(self._detail_section)
 
-        # 空状态
+        # 空状态 (已移除展示: 首页只保留一个明确的文件选择/拖放区)
         self._empty_state = QFrame()
         self._empty_state.setObjectName("EmptyContainer")
+        self._empty_state.setVisible(False)
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.setSpacing(8)
@@ -209,8 +210,22 @@ class ImportPage(ImportPageResultsMixin):
 
     def _connect_signals(self) -> None:
         self._drop_zone.files_dropped.connect(self._on_files)
+        self._drop_zone.clicked.connect(self._on_choose_files)
         self._state.reports_changed.connect(self._update_reports)
         self._state.results_changed.connect(self._update_results)
+
+    def _on_choose_files(self) -> None:
+        """点击文件选择区时打开文件选择框 (支持多选)。"""
+        from PySide6.QtWidgets import QFileDialog
+
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择财务报表",
+            "",
+            "财务报表 (*.xlsx *.xls *.pdf)",
+        )
+        if paths:
+            self._on_files(paths)
 
     def scroll_to_top(self) -> None:
         """将页面滚动位置重置到顶部 (查看历史时确保拖放区可见)。"""

@@ -14,8 +14,8 @@ _INSTALLER = _PROJECT_ROOT / "installer.iss"
 
 
 def test_app_version_is_current_release() -> None:
-    """当前发布版本按 git 里程碑应为 0.4.0。"""
-    assert APP_VERSION == "0.4.0"
+    """当前发布版本应为 0.4.1 (v0.4.0 后的补丁版本)。"""
+    assert APP_VERSION == "0.4.1"
 
 
 def test_pyproject_version_matches_app_version() -> None:

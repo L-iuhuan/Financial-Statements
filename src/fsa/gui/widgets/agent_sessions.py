@@ -30,9 +30,11 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
     _chat_repo: ChatRepo | None
     _session_btn: QPushButton
     _session_id: int | None
+    _messages_loaded: bool
 
     def _load_sessions_if_available(self) -> None:
-        """初始化时加载最近会话。"""
+        """初始化时只加载最近会话的元信息; 消息推迟到抽屉首次显示。"""
+        self._messages_loaded = False
         if self._chat_repo is None:
             self._session_btn.setVisible(False)
             return
@@ -45,7 +47,6 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
             sid = sessions[0]["id"]
             self._session_id = sid
             self._update_session_btn(sessions[0]["title"])
-            self._load_session_messages(sid)
 
     def _show_session_menu(self) -> None:
         """弹出会话选择菜单。"""
@@ -108,6 +109,7 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
             return
         self._update_session_btn("新对话")
         self._rebuild_messages([])
+        self._messages_loaded = True
 
     def _clear_current_session(self) -> None:
         """清空当前会话的全部消息 (保留会话本身)。"""
@@ -129,6 +131,7 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
             logger.exception("清空会话消息失败")
             return
         self._rebuild_messages([])
+        self._messages_loaded = True
 
     def _load_session_messages(self, session_id: int) -> None:
         """从数据库加载指定会话的消息。"""
@@ -140,6 +143,7 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
             logger.exception("加载会话消息失败")
             return
         self._rebuild_messages(messages)
+        self._messages_loaded = True
 
     def _update_session_btn(self, title: str) -> None:
         """更新会话按钮显示文本 (窄窗 elide, 防止长标题撑破布局)。"""

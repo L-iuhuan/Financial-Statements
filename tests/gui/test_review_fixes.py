@@ -99,15 +99,17 @@ class TestHistoryViewNavigation:
         window._on_view_history(history_id)
         qtbot.wait(20)
 
-        assert window._stack.currentIndex() == 0
-        assert window._get_current_nav() == "navImport"
-        assert window._sidebar._nav_buttons["navImport"].property("active") is True
+        assert window._stack.currentIndex() == 1
+        assert window._get_current_nav() == "navAudit"
+        assert window._sidebar._nav_buttons["navAudit"].property("active") is True
         assert window._sidebar._nav_buttons["navHistory"].property("active") is False
         assert app_state.history_view_id == history_id
         assert app_state.reports == []
-        assert window._import_page._history_banner.isVisible()
-        assert f"历史回看 #{history_id}" in window._import_page._history_banner_text.text()
-        assert window._import_page._scroll.verticalScrollBar().value() == 0
+        # 历史回看走轻量表格页, 不再构建导入页结果卡片
+        assert len(window._import_page._result_cards) == 0
+        assert window._audit_page._history_banner.isVisible()
+        assert f"历史回看 #{history_id}" in window._audit_page._history_banner_text.text()
+        assert window._audit_page._table.rowCount() == 2
 
     def test_importing_new_file_exits_history_view(
         self, qapp, qtbot, app_state
@@ -120,6 +122,49 @@ class TestHistoryViewNavigation:
 
         app_state.set_reports([])
         assert app_state.history_view_id is None
+
+
+class TestDropZoneClick:
+    def test_click_emits_clicked_signal(self, qapp, qtbot, app_state) -> None:
+        """文件选择/拖放区支持点击, 发出 clicked 信号用于打开文件对话框。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+        received: list[int] = []
+        # 断开真实文件对话框处理, 仅验证 DropZone 的点击信号
+        window._import_page._drop_zone.clicked.disconnect(
+            window._import_page._on_choose_files
+        )
+        window._import_page._drop_zone.clicked.connect(lambda: received.append(1))
+        QTest.mouseClick(
+            window._import_page._drop_zone,
+            Qt.MouseButton.LeftButton,
+            pos=window._import_page._drop_zone.rect().center(),
+        )
+        assert received == [1]
+
+
+class TestDrawerLazySessionLoad:
+    def test_session_messages_loaded_on_first_show(self, qapp, qtbot, app_state) -> None:
+        """隐藏抽屉不预载历史消息, 首次显示时才加载, 降低启动和主题切换开销。"""
+        session_id = app_state.chat_repo.create_session()  # type: ignore[union-attr]
+        app_state.chat_repo.add_message(session_id, "user", "测试消息")  # type: ignore[union-attr]
+        app_state.chat_repo.add_message(session_id, "assistant", "回复")  # type: ignore[union-attr]
+
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+        drawer = window._agent_drawer
+
+        assert drawer._session_id == session_id
+        assert drawer._messages_loaded is False
+        assert drawer._ai_bubbles == []
+
+        window._open_drawer()
+        qtbot.wait(20)
+        assert drawer._messages_loaded is True
+        assert len(drawer._ai_bubbles) == 1
+        assert len(drawer._user_bubbles) == 1
 
 
 class TestDrawerBubbleFitsViewport:
