@@ -11,9 +11,17 @@ from fsa.core.exceptions import FSAError
 from fsa.core.importer.excel_reader import read_excel, read_excel_com
 
 
+def _has_pywin32() -> bool:
+    """安全探测 pywin32 是否存在 (find_spec 子模块时父包缺失会抛异常)。"""
+    try:
+        return find_spec("win32com") is not None and find_spec("win32com.client") is not None
+    except (ImportError, ModuleNotFoundError):
+        return False
+
+
 def test_read_excel_com_roundtrip(tmp_path: Path) -> None:
     """有 pywin32 且 Excel 可用时，COM 读取结果与常规读取一致。"""
-    if find_spec("win32com.client") is None:
+    if not _has_pywin32():
         pytest.skip("未安装 pywin32")
     from tests.importer.conftest import make_multi_sheet_excel
 
@@ -30,7 +38,7 @@ def test_read_excel_com_roundtrip(tmp_path: Path) -> None:
 
 def test_native_failure_falls_back_without_pywin32(tmp_path: Path) -> None:
     """常规读取失败且无 pywin32 时，回退给出可读的中文错误。"""
-    if find_spec("win32com.client") is not None:
+    if _has_pywin32():
         pytest.skip("已安装 pywin32，跳过缺依赖分支")
 
     encrypted_like = tmp_path / "encrypted.xlsx"

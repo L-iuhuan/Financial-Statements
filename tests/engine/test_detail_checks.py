@@ -120,6 +120,20 @@ class TestCashFlowDetailVsStatement:
         assert results[0].passed is False
         assert results[0].diff == -200.0
 
+    def test_unmapped_detail_project_skipped_not_errored(self) -> None:
+        """明细项目未匹配主表: 跳过 (passed=True, skipped=True) 而非报错 (P1)。"""
+        dataset = DetailDataset(
+            cash_flow_detail=[
+                CashFlowDetailRow("记-0001", "不存在的项目", "货款", "流入", 300.0),
+            ]
+        )
+        results = check_cash_flow_detail_vs_statement(dataset, _cf_report(500.0), 0.01)
+        assert len(results) == 1
+        assert results[0].passed is True
+        assert results[0].skipped is True
+        assert results[0].errored is False
+        assert "已跳过核对" in results[0].message
+
 
 class TestCashFlowDetailVsJournal:
     """现金流明细与序时账现金科目按凭证核对。"""

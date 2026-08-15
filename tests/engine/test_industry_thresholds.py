@@ -244,7 +244,7 @@ class TestRunnerInjection:
         rule = _registry().get_by_id("LR-QUICK-001")
         assert rule is not None
         ctx = _context(_bs(current_assets=85.0, current_liabilities=100.0))
-        # 只传 dar_threshold 覆写, quick_ratio_threshold 仍为 general 1.0
+        # 只传 dar_threshold 覆写, current_ratio_threshold 仍为 general 1.0
         result = RuleRunner.run(rule, ctx, {"dar_threshold": 0.92})
         assert result.passed is False
 

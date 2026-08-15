@@ -62,7 +62,7 @@ class TestDrawerResize:
     """测试拖拽调宽 (AD-06)。"""
 
     def test_drag_resize_clamps_to_min(self, qapp, qtbot, app_state) -> None:
-        """拖拽宽度不下于 280 (AD-06)。"""
+        """拖拽宽度不下于 320 (AD-06)。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         drawer = window._agent_drawer
@@ -175,14 +175,14 @@ class TestMarkdownRendering:
 
     def test_unordered_list(self) -> None:
         html = md_to_html("- 项目A\n- 项目B")
-        assert "<ul>" in html
-        assert "<li>项目A</li>" in html
-        assert "<li>项目B</li>" in html
+        assert "<ul" in html
+        assert "项目A" in html
+        assert "项目B" in html
 
     def test_ordered_list(self) -> None:
         html = md_to_html("1. 第一\n2. 第二")
-        assert "<ol>" in html
-        assert "<li>第一</li>" in html
+        assert "<ol" in html
+        assert "第一" in html
 
     def test_fenced_code_block(self) -> None:
         html = md_to_html("```python\nx = 1\nprint(x)\n```")

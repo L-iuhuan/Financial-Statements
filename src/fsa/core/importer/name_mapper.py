@@ -13,8 +13,14 @@ from __future__ import annotations
 import re
 from types import MappingProxyType
 
-# 前缀正则: 匹配 一、二、...十、 减：加： 等
-_PREFIX_RE = re.compile(r"^[一二三四五六七八九十]+、|^减[：:]|^加[：:]|^其中[：:]|^\s+")
+# 前缀正则: 匹配 一、二、...十、 减：加： 等；
+# 同时匹配（一）/(1) 等数字序号前缀 (与 sce_extractor 对齐)
+_PREFIX_RE = re.compile(
+    r"^[一二三四五六七八九十]+、"
+    r"|^减[：:]|^加[：:]|^其中[：:]"
+    r"|^[（(][一二三四五六七八九十\d]+[)）]"
+    r"|^\s+"
+)
 
 # 后缀正则: 去除行尾的括号注释，如 "净利润（净亏损以“-”号填列）" -> "净利润"
 _SUFFIX_RE = re.compile(r"[（(][^）)]*[）)]\s*$")
@@ -34,6 +40,9 @@ _STANDARD_NAMES: dict[str, str] = {
     "存货": "inventory",
     "合同资产": "contract_assets",
     "持有待售资产": "held_for_sale_assets",
+    "应收款项融资": "receivables_financing",
+    "其他流动资产": "other_current_assets",
+    "一年内到期的非流动资产": "current_portion_non_current_assets",
     "流动资产合计": "current_assets",
     # === 资产负债表 - 非流动资产 ===
     "固定资产": "fixed_assets",
@@ -42,6 +51,10 @@ _STANDARD_NAMES: dict[str, str] = {
     "无形资产": "intangible_assets",
     "商誉": "goodwill",
     "长期待摊费用": "long_term_prepaid_expenses",
+    "投资性房地产": "investment_property",
+    "开发支出": "development_expenditure",
+    "长期应收款": "long_term_receivables",
+    "其他非流动资产": "other_non_current_assets",
     "递延所得税资产": "deferred_tax_assets",
     "非流动资产合计": "non_current_assets",
     "资产总计": "asset_total",
@@ -55,12 +68,18 @@ _STANDARD_NAMES: dict[str, str] = {
     "应交税费": "taxes_payable",
     "其他应付款": "other_payable",
     "一年内到期的非流动负债": "current_portion_non_current_liab",
+    "其他流动负债": "other_current_liabilities",
     "流动负债合计": "current_liabilities",
     # === 资产负债表 - 非流动负债 ===
     "长期借款": "long_term_borrowings",
     "应付债券": "bonds_payable",
     "租赁负债": "lease_liabilities",
     "递延所得税负债": "deferred_tax_liabilities",
+    "预计负债": "provisions",
+    "递延收益": "deferred_income",
+    "应付股利": "dividends_payable",
+    "长期应付款": "long_term_payables",
+    "其他非流动负债": "other_non_current_liabilities",
     "非流动负债合计": "non_current_liabilities",
     "负债合计": "liability_total",
     # === 资产负债表 - 所有者权益 ===
@@ -114,6 +133,11 @@ _STANDARD_NAMES: dict[str, str] = {
     "综合收益总额": "total_comprehensive_income",
     "税后其他综合收益": "other_comprehensive_income_after_tax",
     "扣除非经常性损益的净利润": "non_recurring_net_profit",
+    # === 利润表 - 补充 ===
+    "持续经营净利润": "net_profit_continuing",
+    "终止经营净利润": "net_profit_discontinued",
+    "归属于母公司股东的净利润": "net_profit_parent",
+    "少数股东损益": "minority_profit",
     # === 现金流量表 ===
     "销售商品、提供劳务收到的现金": "cash_received_from_sales",
     "收到的税费返还": "tax_refunds_received",
@@ -141,6 +165,10 @@ _STANDARD_NAMES: dict[str, str] = {
     "分配股利支付现金": "cash_for_dividends",
     "筹资活动现金流出小计": "financing_cash_outflow",
     "筹资活动产生的现金流量净额": "financing_net",
+    # === 现金流量表 - 补充 ===
+    "吸收投资收到的现金": "cash_from_investments_received",
+    "收到其他与筹资活动有关的现金": "other_financing_cash_inflow",
+    "支付其他与筹资活动有关的现金": "other_financing_cash_outflow",
     "现金及现金等价物净增加额": "net_increase_cash",
     "汇率变动对现金的影响": "fx_effect",
     "期初现金及现金等价物余额": "beginning_cash_equiv",
@@ -176,6 +204,7 @@ _ALIASES: dict[str, str] = {
     "归属于母公司股东权益合计": "parent_equity",
     "分配股利、利润或偿付利息支付的现金": "cash_for_dividends",
     "汇率变动对现金及现金等价物的影响": "fx_effect",
+    "归属于母公司所有者的净利润": "net_profit_parent",
 }
 
 # 合并: 标准名 + 别名 -> key

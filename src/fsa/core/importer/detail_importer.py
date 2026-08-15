@@ -33,11 +33,34 @@ class DetailImporter:
         self.period = period
 
     def import_file(self, file_path: str) -> DetailDataset:
-        """读取文件并解析为 DetailDataset（含 Excel COM 自动回退）。"""
-        raw_data = read_excel(file_path)
-        dataset = DetailDataset(source_file=str(file_path), period=self.period)
+        """读取文件并解析为 DetailDataset（含 Excel COM 自动回退）。
 
-        for sheet_name, raw in raw_data.items():
+        读取后委托 import_data 完成解析管线。
+        """
+        raw_data = read_excel(file_path)
+        dataset = self.import_data(raw_data)
+        dataset.source_file = str(file_path)
+        return dataset
+
+    def import_data(self, data: dict[str, RawSheetData]) -> DetailDataset:
+        """从已读取的 RawSheetData 解析明细数据（读取后的解析管线）。
+
+        与 import_file 的区别：import_file 负责读取文件，import_data
+        负责读取后的全部解析。调用方可以先读取一次文件，再分别传给
+        ImportService.import_data 和 DetailImporter.import_data，
+        避免重复读取。
+
+        仅支持 Excel 格式（DetailImporter 不处理 PDF）。
+
+        Args:
+            data: read_excel 返回的原始数据字典
+
+        Returns:
+            DetailDataset 对象（source_file 为空字符串，由调用方设置）
+        """
+        dataset = DetailDataset(period=self.period)
+
+        for sheet_name, raw in data.items():
             if _is_trial_balance(raw.headers):
                 self._collect_trial_balance(dataset, sheet_name, raw)
             elif _is_journal(raw.headers):
@@ -65,10 +88,10 @@ class DetailImporter:
     ) -> None:
         """解析科目余额表工作表。"""
         rows = [
-            parse_trial_balance_row(raw.headers, row)
+            r
             for row in raw.rows
+            if (r := parse_trial_balance_row(raw.headers, row)) is not None
         ]
-        rows = [r for r in rows if r is not None]
         target = (
             dataset.trial_balance
             if _is_cumulative(sheet_name)
@@ -80,8 +103,11 @@ class DetailImporter:
         self, dataset: DetailDataset, sheet_name: str, raw: RawSheetData
     ) -> None:
         """解析序时账工作表，按口径分流入累计/本月数据集。"""
-        rows = [parse_journal_row(raw.headers, row) for row in raw.rows]
-        rows = [r for r in rows if r is not None]
+        rows = [
+            r
+            for row in raw.rows
+            if (r := parse_journal_row(raw.headers, row)) is not None
+        ]
         if _is_cumulative(sheet_name):
             dataset.journal.extend(rows)
         else:
@@ -96,8 +122,11 @@ class DetailImporter:
         self, dataset: DetailDataset, sheet_name: str, raw: RawSheetData
     ) -> None:
         """解析现金流量明细工作表，按口径分流入累计/本月数据集。"""
-        rows = [parse_cash_flow_row(raw.headers, row) for row in raw.rows]
-        rows = [r for r in rows if r is not None]
+        rows = [
+            r
+            for row in raw.rows
+            if (r := parse_cash_flow_row(raw.headers, row)) is not None
+        ]
         if _is_cumulative(sheet_name):
             dataset.cash_flow_detail.extend(rows)
         else:
@@ -140,24 +169,43 @@ class DetailImporter:
 def _is_trial_balance(headers: list[str]) -> bool:
     """按表头判断是否为科目余额表。"""
     joined = "".join(_normalize(h) for h in headers)
-    return "科目编码" in joined and "余额借方" in joined
+    if "科目编码" not in joined:
+        return False
+    # M-f: 支持"期末借方余额"/"期末余额-借方"等变体
+    return (
+        "余额借方" in joined
+        or "期末借方余额" in joined
+        or "期末余额借方" in joined
+    )
 
 
 def _is_journal(headers: list[str]) -> bool:
     """按表头判断是否为序时账。"""
     joined = "".join(_normalize(h) for h in headers)
-    return (
+    # 标准特征: 科目编码 + 凭证号 + 摘要 + 方向
+    if (
         "科目编码" in joined
         and "凭证号" in joined
         and "摘要" in joined
         and "方向" in joined
+    ):
+        return True
+    # M-f: 无科目编码的序时账变体 (科目名称+凭证号+借/贷金额列)
+    return (
+        "凭证号" in joined
+        and "摘要" in joined
+        and "科目名称" in joined
+        and ("借方金额" in joined or "贷方金额" in joined or "借金额" in joined or "贷金额" in joined)
     )
 
 
 def _is_cash_flow_detail(headers: list[str]) -> bool:
     """按表头判断是否为现金流量明细（区别于现金流量表主表）。"""
     joined = "".join(_normalize(h) for h in headers)
-    return "现金流量项目" in joined and "方向" in joined
+    if "现金流量项目" not in joined:
+        return False
+    # M-f: 无独立方向列的变体 — 方向隐含在项目名称后缀中
+    return "方向" in joined or "金额" in joined
 
 
 def _is_reclassification(headers: list[str]) -> bool:

@@ -17,9 +17,10 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from fsa.agent.llm_client import ChatMessage, LLMError, OllamaProvider
+from fsa.core.exceptions import FSAError
 
 
-class OllamaError(Exception):
+class OllamaError(FSAError):
     """Ollama 客户端异常，所有错误信息使用中文。"""
 
     pass

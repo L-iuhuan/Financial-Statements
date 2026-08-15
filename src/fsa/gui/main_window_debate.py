@@ -13,6 +13,7 @@ from __future__ import annotations
 from loguru import logger
 
 from fsa.agent.debate import DebateResult
+from fsa.agent.llm_client import LLMClient
 from fsa.agent.sanitize import sanitize_llm_input
 from fsa.core.models.result import ValidationResult
 from fsa.gui.agent_worker import AgentWorker
@@ -34,6 +35,31 @@ def _format_trace_loc(row: int, column: str) -> str:
 
 class MainWindowDebateMixin(_MainWindowAgentContracts):
     """三方深度辩论集成逻辑 (继承 _MainWindowAgentContracts 提供跨 mixin 契约)。"""
+
+    def _debate_role_client(self, default_client: LLMClient, settings_key: str) -> LLMClient:
+        """为辩论角色构建可选的独立模型客户端 (高级配置, 无 UI)。
+
+        QSettings 中存在对应模型名时, 用相同 base_url/api_key 构建独立客户端;
+        否则返回 default_client (与主模型共用)。
+        """
+        from PySide6.QtCore import QSettings
+
+        from fsa.agent.llm_client import create_llm_client
+
+        model = str(QSettings("FSA", "FinancialAudit").value(settings_key, "")).strip()
+        if not model:
+            return default_client
+        settings = QSettings("FSA", "FinancialAudit")
+        try:
+            return create_llm_client(
+                provider=str(settings.value("llm_provider", "")),
+                base_url=str(settings.value("llm_base_url", "")),
+                model=model,
+                api_key=str(settings.value("llm_api_key", "")),
+            )
+        except (ValueError, KeyError) as e:
+            logger.warning(f"辩论角色模型配置无效 ({settings_key}={model}), 回退主模型: {e}")
+            return default_client
 
     def _on_debate(self, rule_id: str) -> None:
         """从校验卡片触发深度辩论: 打开抽屉, 三方模型对抗分析差异根因。"""
@@ -76,7 +102,12 @@ class MainWindowDebateMixin(_MainWindowAgentContracts):
         self._set_agent_busy(True)
 
         def run_debate() -> str:
-            engine = DebateEngine(analyst=client, critic=client, judge=client)
+            # 可选高级配置 (QSettings, 无 UI): llm_debate_critic_model /
+            # llm_debate_judge_model —— 为反方/裁判指定不同模型, 增强对抗性;
+            # 未配置时三个角色共用主模型 (原行为)
+            critic = self._debate_role_client(client, "llm_debate_critic_model")
+            judge = self._debate_role_client(client, "llm_debate_judge_model")
+            engine = DebateEngine(analyst=client, critic=critic, judge=judge)
             # 阶段提示: 分析师/反方/裁判开始时推给抽屉 (designer 契约 set_stage_hint)
             debate = engine.debate(case_data, on_stage=self._debate_stage_hint)
             return self._format_debate_result(debate)
@@ -88,8 +119,9 @@ class MainWindowDebateMixin(_MainWindowAgentContracts):
             logger.error(f"深度辩论失败: {message}")
             self._finish_agent_error(message, "深度辩论失败")
 
+        self._cancel_active_worker()
         worker = AgentWorker(
-            run_debate, on_success, on_error, on_finished=lambda: self._set_agent_busy(False)
+            run_debate, on_success, on_error, on_finished=self._on_worker_finished
         )
         self._active_worker = worker
         worker.start()

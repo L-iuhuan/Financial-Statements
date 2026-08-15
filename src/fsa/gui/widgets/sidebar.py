@@ -127,7 +127,7 @@ class Sidebar(QFrame):
         footer_layout = QVBoxLayout(footer)
         footer_layout.setContentsMargins(12, 8, 12, 8)
 
-        version = QLabel(f"版本 {APP_VERSION} (MVP)")
+        version = QLabel(f"版本 {APP_VERSION}")
         version.setObjectName("SidebarVersion")
         footer_layout.addWidget(version)
 

@@ -40,7 +40,7 @@ def formula_to_chinese(formula: str) -> str:
     Returns:
         中文公式, 如 "资产总计 == 负债合计 + 所有者权益合计"
     """
-    def _replace(match: re.Match) -> str:
+    def _replace(match: re.Match[str]) -> str:
         token = match.group(0)
         return _translate_token(token)
 

@@ -130,10 +130,13 @@ class AuditPage(QWidget):
                     stmts = ", ".join(rule.statements)
             self._table.setItem(i, 3, QTableWidgetItem(stmts))
 
-            # 校验结果 + 颜色
+            # 校验结果 + 颜色 (跳过先于通过判断: skipped=True 且 passed=True)
             if result.errored:
                 status_text = "异常"
                 status_color = p["warning"]
+            elif result.skipped:
+                status_text = "跳过"
+                status_color = p["text_secondary"]
             elif result.passed:
                 status_text = "通过"
                 status_color = p["success"]
@@ -187,6 +190,7 @@ class AuditPage(QWidget):
         for result in summary.results:
             status = (
                 "异常" if result.errored
+                else "跳过" if result.skipped
                 else "通过" if result.passed
                 else "不通过" if result.severity is Severity.ERROR
                 else "警告"
@@ -219,4 +223,4 @@ class AuditPage(QWidget):
         doc = QTextDocument()
         doc.setHtml(html)
         # print 是 QTextDocument 的有效方法 (PySide6 将 C++ print 映射至此)
-        doc.print(printer)
+        doc.print_(printer)

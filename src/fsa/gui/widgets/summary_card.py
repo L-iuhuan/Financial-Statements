@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
-from fsa.gui.theme import current_palette, get_mono_font, register_theme_listener
+from fsa.gui.theme import bind_theme_listener, current_palette, get_mono_font
 
 # 圆点类型 -> 主题调色板语义色键名
 _DOT_PALETTE_KEYS: dict[str, str] = {
@@ -27,7 +27,8 @@ class SummaryCard(QFrame):
         self._dot_type = dot_type
         self._setup_ui()
         self._apply_dot_color()
-        register_theme_listener(self._apply_dot_color)
+        # 注册主题监听并随控件销毁自动注销, 防止死监听器累积泄漏
+        bind_theme_listener(self, self._apply_dot_color)
 
     def _apply_dot_color(self) -> None:
         """圆点颜色跟随当前主题调色板 (深色下用暗色语义色, 避免刺眼)。"""

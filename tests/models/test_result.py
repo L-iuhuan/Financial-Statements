@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from fsa.core.models.report import Report, ReportItem, ReportType
-from fsa.core.models.rule import Severity, ToleranceType
 from fsa.core.models.result import (
     TraceItem,
     ValidationContext,
     ValidationResult,
 )
+from fsa.core.models.rule import Severity, ToleranceType
 
 
 class TestValidationResult:
@@ -447,3 +447,30 @@ class TestValidationContext:
         assert "surplus_withheld" not in ns
         assert "prior_period_adjust" not in ns
         assert "restricted_adjust" not in ns
+
+    def test_build_namespace_sce_suffixed_key_no_duplicate_suffix(self) -> None:
+        """build_namespace: SCE 报表 key 以 _ending 结尾时不生成 sce_x_ending_ending 等垃圾变量。"""
+        ctx = ValidationContext()
+        ctx.add_report(
+            Report(
+                report_type=ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
+                items=[
+                    ReportItem(
+                        key="sce_paid_in_capital_ending",
+                        name="实收资本",
+                        amount=100.0,
+                    ),
+                    ReportItem(
+                        key="sce_undistributed_profit_comprehensive",
+                        name="综合收益总额",
+                        amount=50.0,
+                    ),
+                ],
+            )
+        )
+        ns = ctx.build_namespace(["所有者权益变动表"])
+        assert ns["sce_paid_in_capital_ending"] == 100.0
+        assert ns["sce_undistributed_profit_comprehensive"] == 50.0
+        # 不应生成 sce_paid_in_capital_ending_ending
+        assert "sce_paid_in_capital_ending_ending" not in ns
+        assert "sce_undistributed_profit_comprehensive_ending" not in ns

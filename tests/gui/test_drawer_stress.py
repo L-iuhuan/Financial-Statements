@@ -173,12 +173,13 @@ class TestIconStates:
 
 class TestDrawerResize:
     def test_resize_clamped_to_min(self, window, qtbot) -> None:
-        """拖到最小宽度以下被钳制到 280。"""
+        """拖到最小宽度以下被钳制到 320。"""
         window._open_drawer()
         drawer = window._agent_drawer
-        drawer.setFixedWidth(100)  # 模拟拖到极小
-        clamped = max(drawer.MIN_WIDTH, min(drawer.MAX_WIDTH, 100))
-        assert clamped == 280
+        drawer.resize(100, drawer.height())  # 模拟拖到极小
+        qtbot.wait(5)
+        assert drawer.width() == 320
+        assert drawer.MIN_WIDTH == 320
         window._close_drawer()
 
     def test_resize_clamped_to_max(self, window, qtbot) -> None:
@@ -192,8 +193,8 @@ class TestDrawerResize:
         window._on_nav("navImport")
         window._open_drawer()
         drawer = window._agent_drawer
-        for width in (280, 400, 600):
-            drawer.setFixedWidth(width)
+        for width in (320, 400, 600):
+            drawer.resize(width, drawer.height())
             qtbot.wait(5)
             # 输入框 + 发送按钮总宽不应超过抽屉内容宽
             assert drawer._input.width() + 48 + 8 <= width
@@ -204,10 +205,10 @@ class TestDrawerResize:
         window._open_drawer()
         drawer = window._agent_drawer
         for _ in range(30):
-            drawer.setFixedWidth(280)
-            drawer.setFixedWidth(600)
+            drawer.resize(320, drawer.height())
+            drawer.resize(600, drawer.height())
         qtbot.wait(10)
-        assert 280 <= drawer.width() <= 600
+        assert 320 <= drawer.width() <= 600
         window._close_drawer()
 
 

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fsa.gui.theme import current_palette, register_theme_listener
+from fsa.gui.theme import bind_theme_listener, current_palette
 from fsa.gui.widgets.agent_messages import AgentMessageMixin
 from fsa.gui.widgets.agent_sessions import AgentSessionMixin
 from fsa.storage.chat_repo import ChatRepo
@@ -39,7 +40,7 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
     # P1 取消机制: 忙碌条"■ 停止"按钮触发, main_window_agent 经 getattr 防御接线
     cancelRequested = Signal()
 
-    MIN_WIDTH = 280
+    MIN_WIDTH = 320
     MAX_WIDTH = 600
     DEFAULT_WIDTH = 380
 
@@ -50,7 +51,9 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("AgentDrawer")
-        self.setFixedWidth(self.DEFAULT_WIDTH)
+        self.setMinimumWidth(self.MIN_WIDTH)
+        self.setMaximumWidth(self.MAX_WIDTH)
+        self.resize(self.DEFAULT_WIDTH, 600)
         self._dragging = False
         self._chat_repo = chat_repo
         self._session_id: int | None = None
@@ -58,7 +61,8 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         self._setup_ui()
         self._apply_shell_styles()
         self._load_sessions_if_available()
-        register_theme_listener(self._on_theme_changed)
+        # 注册主题监听并在控件销毁时注销, 防止死监听器累积泄漏
+        bind_theme_listener(self, self._on_theme_changed)
 
     # ── UI 构建 ──
 
@@ -99,9 +103,10 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         self._header_icon = QLabel()
         self._header_icon.setFixedSize(16, 16)
         self._header_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        from PySide6.QtGui import QColor
         from qfluentwidgets import FluentIcon
         self._header_icon.setPixmap(
-            FluentIcon.CHAT.colored("#ffffff", "#ffffff").icon().pixmap(10, 10)
+            FluentIcon.CHAT.icon(color=QColor("#ffffff")).pixmap(10, 10)
         )
         h.addWidget(self._header_icon)
 
@@ -381,7 +386,7 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
 
     # ── 发送 / 快速提问 ──
 
-    def _on_key_press(self, event) -> None:
+    def _on_key_press(self, event: QKeyEvent) -> None:
 
         if (
             event.key() == Qt.Key.Key_Return
@@ -407,15 +412,16 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         """主题切换时刷新抽屉样式。"""
         self._apply_shell_styles()
         # 消息渲染层 (AgentMessageMixin) 的 QTextBrowser 内联 CSS
-        # 不随 QSS polish 刷新, 需显式重注入深浅主题色。
+        # 不走 QSS polish 刷新, 需显式重渲染注入新颜色
         refresh = getattr(self, "refresh_theme", None)
         if callable(refresh):
             refresh()
-        self.style().unpolish(self)
-        self.style().polish(self)
-        for child in self.findChildren(QWidget):
-            child.style().unpolish(child)
-            child.style().polish(child)
+        # 仅 repolish 壳层关键控件 (抽屉自身/头部/上下文栏/输入区),
+        # 不遍历整棵子树 (消息气泡等由内联样式 + refresh_theme 处理)
+        shell_style = self.style()
+        for widget in (self, self._header, self._context_bar, self._input):
+            shell_style.unpolish(widget)
+            shell_style.polish(widget)
 
     # ── 拖拽缩放 ──
 
@@ -424,19 +430,19 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         self._resize_handle.mouseMoveEvent = self._on_handle_move  # type: ignore[method-assign]
         self._resize_handle.mouseReleaseEvent = self._on_handle_release  # type: ignore[method-assign]
 
-    def _on_handle_press(self, event) -> None:
+    def _on_handle_press(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._dragging = True
             self._drag_start_x = event.globalPosition().toPoint().x()
             self._drag_start_width = self.width()
 
-    def _on_handle_move(self, event) -> None:
+    def _on_handle_move(self, event: QMouseEvent) -> None:
         if not self._dragging:
             return
         delta = self._drag_start_x - event.globalPosition().toPoint().x()
         new_width = self._drag_start_width + delta
         new_width = max(self.MIN_WIDTH, min(self.MAX_WIDTH, new_width))
-        self.setFixedWidth(new_width)
+        self.resize(new_width, self.height())
         # 改宽后让父窗口重新定位: 抽屉右缘始终贴合窗口右侧 (锚定右缘)。
         # 否则仅 setFixedWidth 会让右缘随宽度右移 (拖左无反应/内容右扩),
         # 或左缘固定导致抽屉脱离右缘 (拖右时露出底层内容)。
@@ -445,5 +451,12 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         if callable(position_fn):
             position_fn()
 
-    def _on_handle_release(self, event) -> None:
+    def _on_handle_release(self, event: QMouseEvent) -> None:
         self._dragging = False
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """抽屉宽度变化 (拖拽/窗口收窄) 时, 重排消息气泡宽度跟随容器。"""
+        super().resizeEvent(event)
+        relayout = getattr(self, "relayout_bubbles", None)
+        if callable(relayout):
+            relayout()

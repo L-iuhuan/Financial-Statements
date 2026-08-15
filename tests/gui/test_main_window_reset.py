@@ -35,7 +35,7 @@ class TestResetNavigation:
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         window._on_nav("navSettings")
-        assert window._stack.currentIndex() == 4
+        assert window._stack.currentWidget() is window._settings_page
 
         window._on_reset()
 

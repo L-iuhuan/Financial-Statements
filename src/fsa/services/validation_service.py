@@ -39,7 +39,7 @@ class ValidationService:
         summary = service.validate(reports, period="2024-12")
         if not summary.all_passed:
             for r in summary.failed_results:
-                print(r.message)
+                logger.warning(r.message)
     """
 
     def __init__(self, registry: RuleRegistry) -> None:

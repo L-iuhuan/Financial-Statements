@@ -20,6 +20,7 @@ import pytest
 
 from fsa.agent.llm_client import ChatMessage, OllamaProvider
 from fsa.agent.ollama_client import OllamaClient, OllamaError
+from fsa.core.exceptions import FSAError
 
 
 def _mock_response(body: dict, status: int = 200) -> MagicMock:
@@ -327,8 +328,8 @@ class TestOllamaError:
     """OllamaError 异常类测试。"""
 
     def test_ollama_error_is_exception(self) -> None:
-        """OllamaError 继承自 Exception。"""
-        assert issubclass(OllamaError, Exception)
+        """OllamaError 继承自 FSAError。"""
+        assert issubclass(OllamaError, FSAError)
 
     def test_ollama_error_str(self) -> None:
         """OllamaError 的字符串表示包含消息。"""

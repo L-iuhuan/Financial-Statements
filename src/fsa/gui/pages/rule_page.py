@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -18,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import SwitchButton
 
-from fsa.core.models.rule import Severity
+from fsa.core.models.rule import ReconciliationRule, Severity
 from fsa.gui.app_state import AppState
 from fsa.gui.theme import get_mono_font
 from fsa.gui.widgets.custom_rule_dialog import CustomRuleDialog
@@ -46,12 +48,12 @@ class RuleCard(QFrame):
 
     def __init__(
         self,
-        rule,
+        rule: ReconciliationRule,
         is_active: bool,
         is_custom: bool,
-        on_toggle,
-        on_tolerance_change,
-        on_delete,
+        on_toggle: Callable[[str, bool], None],
+        on_tolerance_change: Callable[[str, float], None],
+        on_delete: Callable[[str], None],
     ) -> None:
         super().__init__()
         self._rule = rule
@@ -182,8 +184,8 @@ class RulePage(QWidget):
         super().__init__()
         self.setObjectName("RulePage")
         self._state = state
-        self._all_rules: list = []
-        self._filtered_rules: list = []
+        self._all_rules: list[ReconciliationRule] = []
+        self._filtered_rules: list[ReconciliationRule] = []
         self._active_filter = "全部"
         self._search_text = ""
         self._rule_cards: dict[str, RuleCard] = {}  # 卡片缓存 (消除筛选闪动)

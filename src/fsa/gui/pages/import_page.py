@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -26,6 +28,7 @@ from qfluentwidgets import FluentIcon, IndeterminateProgressBar
 
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
+from fsa.core.importer.excel_reader import read_excel
 from fsa.core.importer.importer import ImportService
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report, ReportType
@@ -44,6 +47,7 @@ class ImportPage(ImportPageResultsMixin):
     validate_enabled_changed = Signal(bool)
     diagnose_requested = Signal(str)  # rule_id -> 主窗口打开 AI 抽屉
     debate_requested = Signal(str)  # rule_id -> 主窗口打开深度辩论
+    history_view_exit_requested = Signal()
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -58,6 +62,7 @@ class ImportPage(ImportPageResultsMixin):
 
     def _setup_ui(self) -> None:
         scroll = QScrollArea()
+        self._scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
@@ -70,6 +75,23 @@ class ImportPage(ImportPageResultsMixin):
         # 拖放区
         self._drop_zone = DropZone()
         layout.addWidget(self._drop_zone)
+
+        # 历史回看横幅 (默认隐藏, 仅在查看历史结果时显示)
+        self._history_banner = QFrame()
+        self._history_banner.setObjectName("HistoryViewBanner")
+        self._history_banner.setVisible(False)
+        banner_layout = QHBoxLayout(self._history_banner)
+        banner_layout.setContentsMargins(12, 8, 12, 8)
+        self._history_banner_text = QLabel()
+        self._history_banner_text.setObjectName("HistoryViewBannerText")
+        self._history_banner_text.setWordWrap(True)
+        banner_layout.addWidget(self._history_banner_text, stretch=1)
+        exit_btn = QPushButton("退出回看")
+        exit_btn.setObjectName("TextBtn")
+        exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        exit_btn.clicked.connect(self.history_view_exit_requested.emit)
+        banner_layout.addWidget(exit_btn)
+        layout.addWidget(self._history_banner)
 
         # 已导入报表区域 (默认隐藏)
         self._reports_section = QFrame()
@@ -190,6 +212,24 @@ class ImportPage(ImportPageResultsMixin):
         self._state.reports_changed.connect(self._update_reports)
         self._state.results_changed.connect(self._update_results)
 
+    def scroll_to_top(self) -> None:
+        """将页面滚动位置重置到顶部 (查看历史时确保拖放区可见)。"""
+        self._scroll.verticalScrollBar().setValue(0)
+
+    def _sync_history_banner(self) -> None:
+        """按 AppState.history_view_id 刷新历史回看横幅。"""
+        history_id = self._state.history_view_id
+        summary = self._state.results
+        if history_id is None:
+            self._history_banner.setVisible(False)
+            return
+        period = summary.period if summary is not None else ""
+        self._history_banner_text.setText(
+            f"历史回看 #{history_id} · 期间 {period or '未设置'} · "
+            "当前为历史结果，导入新文件将自动退出回看"
+        )
+        self._history_banner.setVisible(True)
+
     def _on_file(self, file_path: str) -> None:
         self._on_files([file_path])
 
@@ -198,6 +238,13 @@ class ImportPage(ImportPageResultsMixin):
 
         单文件失败不中断整批（错误信息含文件名）；
         失败文件的主表与明细数据均不进入最终结果。
+
+        每个文件只读取一次：read_excel/read_pdf 一次，
+        然后分别调用 ImportService.import_data 和 DetailImporter.import_data，
+        避免重复磁盘 IO 与解析开销。
+        注：若文件读取本身失败（如损坏/加密），则主表与明细均失败；
+        但读取成功后，主表的识别/提取与明细的解析互相独立——
+        一个失败不影响另一个（各自 try/except 包裹）。
         """
         logger.info(f"导入文件: {file_paths}")
         self._progress.setVisible(True)
@@ -209,17 +256,42 @@ class ImportPage(ImportPageResultsMixin):
             successful_datasets: list[DetailDataset] = []
             errors: list[str] = []
             for path in file_paths:
+                # 第一步：读取文件（仅一次）
                 try:
-                    file_reports = self._importer.import_file(path)
-                    file_dataset = self._detail_importer.import_file(path)
+                    suffix = Path(path).suffix.lower()
+                    if suffix == ".pdf":
+                        from fsa.core.importer.pdf_reader import read_pdf
+
+                        raw_data = read_pdf(path)
+                    else:
+                        raw_data = read_excel(path)
                 except FileNotFoundError:
                     logger.warning(f"文件「{path}」不存在")
                     errors.append(f"{path}: 文件不存在")
                     continue
                 except (FSAError, ValueError, OSError, ImportError, KeyError, TypeError) as e:
-                    logger.warning(f"文件「{path}」导入失败: {e}")
+                    logger.warning(f"文件「{path}」读取失败: {e}")
                     errors.append(f"{path}: {e}")
                     continue
+
+                # 第二步：主表与明细的识别/解析互相独立
+                # 读取成功的前提下，一个失败不影响另一个
+                try:
+                    file_reports = self._importer.import_data(
+                        raw_data, path, suffix
+                    )
+                except Exception as e:
+                    logger.debug(f"主表导入失败（明细不受影响）: {path}: {e}")
+                    file_reports = []
+
+                try:
+                    file_dataset = self._detail_importer.import_data(raw_data)
+                except Exception as e:
+                    logger.debug(f"明细导入失败（主表不受影响）: {path}: {e}")
+                    file_dataset = DetailDataset(
+                        source_file=path, period=self._state.period
+                    )
+
                 for report in file_reports:
                     if report.report_type not in reports_by_type:
                         reports_by_type[report.report_type] = report

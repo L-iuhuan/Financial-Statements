@@ -93,7 +93,12 @@ def check_reclassification_rules(
             )
         elif book > tolerance:
             amount_ok = abs(reclassified - book) <= tolerance
-            account_ok = row.reclassified_account == row.original_account
+            # 与负数路径口径一致: 经别名归一后比较，避免"预收款项/预收账款"类差异误报 (P1)
+            original_canonical = _canonical_account(row.original_account) or row.original_account
+            reclassified_canonical = (
+                _canonical_account(row.reclassified_account) or row.reclassified_account
+            )
+            account_ok = reclassified_canonical == original_canonical
         else:
             continue
         if not amount_ok or not account_ok:
@@ -114,7 +119,7 @@ def check_reclassification_rules(
             rule_id="RC-001",
             rule_name="往来重分类规则",
             passed=passed,
-            severity=Severity.ERROR if not passed else Severity.ERROR,
+            severity=Severity.ERROR,
             left_value=0.0,
             right_value=0.0,
             diff=float(len(mismatches)),
@@ -188,7 +193,7 @@ def check_reclassification_vs_balance_sheet(
                 rule_id="RC-002",
                 rule_name="重分类后科目=资产负债表",
                 passed=passed,
-                severity=Severity.ERROR if not passed else Severity.ERROR,
+                severity=Severity.ERROR,
                 left_value=expected,
                 right_value=actual,
                 diff=diff,

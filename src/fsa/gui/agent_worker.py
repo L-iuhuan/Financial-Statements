@@ -115,7 +115,9 @@ class AgentWorker(QObject):
 
     @Slot(str)
     def _deliver_success(self, value: str) -> None:
-        """主线程: 成功回传。"""
+        """主线程: 成功回传。已取消的任务结果不再投递（取消后竞态守卫）。"""
+        if self._cancel_event.is_set():
+            return
         self._on_success(value)
 
     @Slot(str)

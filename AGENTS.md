@@ -78,7 +78,10 @@ pip install -e ".[dev]"
 python -m fsa
 
 # 测试（pytest 已配 testpaths=tests, pythonpath=src, qt_api=pyside6, 默认跳过 slow 压测）
-python -m pytest                 # 日常全量（1077 测试，约 3.5 分钟；不含 slow 压测）
+# 注意: 依赖真实年报 fixture 的用例需先准备 tests/fixtures/real_reports/
+# （可再生文件用 tests/fixtures/generate_*.py 重建；真实年报已移出 git，需手动放置，
+#  缺失时相关用例以 skipif 跳过而非失败）
+python -m pytest                 # 日常全量（1000+ 测试；不含 slow 压测；勿手填数字，以实际收集数为准）
 python -m pytest -q              # 安静模式
 python -m pytest -m slow         # 耗时压测（test_drawer_stress.py 20 例，改动抽屉/主题/布局或发布前跑）
 python -m pytest tests/engine/test_evaluator.py -q   # 单文件
@@ -97,6 +100,9 @@ python scripts/verify_agent.py         # AgentLoop mock 验证
 python scripts/verify_pdf_import.py    # PDF 导入
 python scripts/verify_export.py        # 导出
 python scripts/verify_ollama.py        # 本地 Ollama 连通
+# 其他: verify_{sce,update,diagnosis,theme,w3}.py / ux_shots.py (页面截图)
+#       build_real_corpus.py + validate_corpus.py (真实语料构建/校验)
+#       update_manifest_whitelist.py (更新清单白名单) / generate_logo.py (图标再生)
 ```
 
 提交前顺序：`ruff check` -> `mypy` -> `pytest`。
@@ -109,7 +115,8 @@ python scripts/verify_ollama.py        # 本地 Ollama 连通
 
 - Python 3.11+（`requires-python = ">=3.11"`）
 - **全类型注解**：所有函数参数、返回值必须有类型注解
-- **禁止** `Any`、`# type: ignore`、`Optional`（用 `X | None` 替代）
+- **禁止** `Any`、`Optional`（用 `X | None` 替代）
+- `# type: ignore` 原则上禁止；**唯一例外**：`gui/` 目录内 Qt 交互需要（如 override/method-assign），且必须带具体错误码（如 `# type: ignore[override]`），不得裸写
 - mypy `strict = true`、`warn_return_any = true`--类型不通过即报错
 
 ### 3.2 工具链配置（pyproject.toml 实际值）
@@ -120,11 +127,12 @@ python scripts/verify_ollama.py        # 本地 Ollama 连通
 - **pytest**: `qt_api = "pyside6"`, `pythonpath = ["src"]`（无需手动设 PYTHONPATH）
 - **coverage**: `source = ["src/fsa"]`, `fail_under = 90`, `omit = ["*/tests/*"]`
 
-### 3.3 函数与文件大小
+### 3.3 函数与文件大小（灵活限制）
 
-- 函数体 <= 50 行（不含空行和注释）
-- 文件 <= 250 行纯代码（不含测试、注释、空行）
-- 超过则拆分
+- 函数体 <= 50 行（不含空行和注释）——硬性约束，超过必须拆分
+- 逻辑文件以 **<= 250 行纯代码**为软目标，超过时优先考虑拆分，但不强制
+- **豁免**：数据密集型文件不受行数约束（如 `gui/theme.py` 的 QSS 令牌、`importer/name_mapper.py` 的映射表、`engine/thresholds.py` 的行业阈值表）——这类文件的"行数"是数据量而非复杂度
+- 非豁免文件超过 **400 行纯代码**时，必须在文件 docstring 中写明不拆分的理由；超过 **600 行**强制拆分
 
 ### 3.4 错误处理
 
@@ -286,7 +294,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 ## 8. Git 规范
 
 - 提交信息：`<type>: <description>`，type = feat | fix | test | refactor | docs | chore | build
-- 分支：`main`（稳定，可发布）/ `dev`（开发主干）/ `feat/<feature>`
+- 分支：`main`（稳定，可发布）/ `dev`（开发主干）/ `feat/<feature>` / `fix/<issue>`（修复分支）
 
 ---
 

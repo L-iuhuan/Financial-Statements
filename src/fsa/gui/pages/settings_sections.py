@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
@@ -27,6 +28,9 @@ from qfluentwidgets import SwitchButton
 from fsa.core.resources import resource_path
 from fsa.core.version import APP_VERSION
 from fsa.gui.app_state import AppState
+
+if TYPE_CHECKING:
+    from fsa.gui.pages.settings_page import SettingsPage
 
 _RULES_FILE = resource_path("cas_gouji_rule_library.json")
 
@@ -100,7 +104,7 @@ def _row(label_text: str, desc: str = "") -> tuple[QHBoxLayout, QLabel]:
 
 
 def build_appearance_section(
-    page: QWidget,
+    page: SettingsPage,
     settings: QSettings,
     state: AppState,
 ) -> QFrame:
@@ -135,7 +139,7 @@ def build_appearance_section(
 
 
 def build_validation_section(
-    page: QWidget,
+    page: SettingsPage,
     settings: QSettings,
     state: AppState,
 ) -> QFrame:
@@ -173,7 +177,7 @@ def build_validation_section(
 
 
 def build_storage_section(
-    page: QWidget,
+    page: SettingsPage,
     settings: QSettings,
     state: AppState,
 ) -> QFrame:
@@ -213,7 +217,7 @@ def build_storage_section(
 
 
 def build_about_section(
-    page: QWidget,
+    page: SettingsPage,
     settings: QSettings,
     state: AppState,
 ) -> QFrame:
@@ -221,9 +225,9 @@ def build_about_section(
     frame, layout = _section("关于")
 
     for label_text, value in [
-        ("软件版本", f"{APP_VERSION} (MVP)"),
-        ("开源许可", "MIT License"),
-        ("规则库版本", _rule_library_label(state)),
+        ("软件版本", APP_VERSION),
+        ("开源协议", "MIT License"),
+        ("规则版本", _rule_library_label(state)),
     ]:
         row, _ = _row(label_text)
         val = QLabel(value)
@@ -235,7 +239,7 @@ def build_about_section(
 
 
 def build_update_section(
-    page: QWidget,
+    page: SettingsPage,
     settings: QSettings,
     state: AppState,
 ) -> QFrame:
@@ -353,7 +357,7 @@ def _on_llm_remote_toggled(
 
 
 def build_llm_section(
-    page: QWidget,
+    page: SettingsPage,
     settings: QSettings,
     state: AppState,
 ) -> QFrame:

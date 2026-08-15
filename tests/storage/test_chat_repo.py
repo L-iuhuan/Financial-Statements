@@ -26,7 +26,7 @@ class TestChatRepoCreateSession:
         self, chat_repo: ChatRepo
     ) -> None:
         # Act
-        session_id = chat_repo.create_session(title="关于 BS-BAL-001")
+        chat_repo.create_session(title="关于 BS-BAL-001")
 
         # Assert
         sessions = chat_repo.get_sessions()
@@ -36,7 +36,7 @@ class TestChatRepoCreateSession:
         self, chat_repo: ChatRepo
     ) -> None:
         # Act
-        session_id = chat_repo.create_session(
+        chat_repo.create_session(
             context_rule_id="BS-BAL-001"
         )
 

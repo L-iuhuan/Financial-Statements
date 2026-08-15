@@ -28,6 +28,9 @@ _STRIP_RE = re.compile(r"[,，\s\u00a0\u3000]")
 # 括号包裹表示负数: 半角 (1,000) 与全角 （1,000）
 _PAREN_RE = re.compile(r"^[（(](.+)[)）]$")
 
+# 行尾"元"后缀 (如 "1,000.50元")
+_TRAILING_YUAN_RE = re.compile(r"元$")
+
 
 def parse_amount(value: object) -> float | None:
     """将单元格值解析为金额。
@@ -48,6 +51,10 @@ def parse_amount(value: object) -> float | None:
         return None if math.isnan(number) else number
 
     text = str(value).strip()
+    if not text:
+        return None
+    # P3: 去除行尾"元"后缀
+    text = _TRAILING_YUAN_RE.sub("", text).strip()
     if not text:
         return None
     if text in _PLACEHOLDERS:

@@ -86,3 +86,6 @@ temp/
 .codegraph/
 .omo/
 .opencode/
+
+# 架构审计产物
+.architecture-audit/

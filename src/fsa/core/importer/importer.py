@@ -37,7 +37,7 @@ class ImportService:
         - .xlsx/.xls → read_excel (Excel 读取器)
         - .pdf → read_pdf (PDF 读取器)
 
-        读取后统一通过 identify_reports + extract_items 处理。
+        读取后委托 import_data 完成识别→提取→构建管线。
 
         Args:
             file_path: 文件路径
@@ -58,17 +58,39 @@ class ImportService:
         else:
             raw_data = read_excel(file_path)
 
-        identified = identify_reports(raw_data)
+        return self.import_data(raw_data, str(file_path), suffix)
+
+    def import_data(
+        self, data: dict[str, RawSheetData], source_file: str, suffix: str
+    ) -> list[Report]:
+        """从已读取的 RawSheetData 导入报表（读取后的识别→提取→构建管线）。
+
+        与 import_file 的区别：import_file 负责读取文件，import_data
+        负责读取后的全部处理。调用方可以先读取一次文件，再分别传给
+        ImportService.import_data 和 DetailImporter.import_data，
+        避免重复读取。
+
+        Args:
+            data: read_excel 或 read_pdf 返回的原始数据字典
+            source_file: 源文件路径（用于 Report.source_file 和日志）
+            suffix: 文件扩展名（".xlsx" / ".xls" / ".pdf"），
+                    用于路由 SCE 提取器（PDF 的 SCE 矩阵暂不支持）
+
+        Returns:
+            Report 对象列表，仅包含成功识别的报表
+        """
+        identified = identify_reports(data)
 
         if not identified:
-            logger.warning(f"文件中未识别到任何报表: {file_path}")
+            logger.warning(f"文件中未识别到任何报表: {source_file}")
             return []
 
         reports: list[Report] = []
         for sheet_name, report_type in identified:
-            raw = raw_data[sheet_name]
-            items = self._extract_for_type(raw, report_type, suffix)
-            report = self._build_report(report_type, items, file_path)
+            raw = data[sheet_name]
+            unmapped: list[str] = []
+            items = self._extract_for_type(raw, report_type, suffix, unmapped)
+            report = self._build_report(report_type, items, source_file, unmapped)
             reports.append(report)
             logger.info(f"  导入报表: {report_type.value}，共 {len(items)} 个项目")
 
@@ -107,11 +129,16 @@ class ImportService:
 
         _, report_type = identified[0]
         raw = raw_data[sheet_name]
-        items = extract_items(raw, report_type)
-        return self._build_report(report_type, items, file_path)
+        unmapped: list[str] = []
+        items = self._extract_for_type(raw, report_type, suffix, unmapped)
+        return self._build_report(report_type, items, file_path, unmapped)
 
     def _extract_for_type(
-        self, raw: RawSheetData, report_type: ReportType, suffix: str
+        self,
+        raw: RawSheetData,
+        report_type: ReportType,
+        suffix: str,
+        unmapped: list[str] | None = None,
     ) -> list[ReportItem]:
         """按报表类型选择提取器。
 
@@ -124,13 +151,14 @@ class ImportService:
                 logger.warning("PDF 格式的所有者权益变动表矩阵提取暂不支持, 跳过")
                 return []
             return extract_sce_items(raw)
-        return extract_items(raw, report_type)
+        return extract_items(raw, report_type, unmapped)
 
     def _build_report(
         self,
         report_type: ReportType,
-        items: list,
+        items: list[ReportItem],
         source_file: str,
+        unmapped_names: list[str] | None = None,
     ) -> Report:
         """构建 Report 对象。
 
@@ -138,6 +166,7 @@ class ImportService:
             report_type: 报表类型
             items: ReportItem 列表
             source_file: 源文件路径
+            unmapped_names: 未能映射为标准科目的项目名称（可选）
 
         Returns:
             Report 对象
@@ -147,4 +176,5 @@ class ImportService:
             period=self.period,
             source_file=source_file,
             items=items,
+            unmapped_names=unmapped_names or [],
         )

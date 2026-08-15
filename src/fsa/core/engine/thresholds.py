@@ -19,7 +19,7 @@ INDUSTRY_THRESHOLD_RULES: dict[str, str] = {
     "LR-ART-001": "ar_to_revenue_threshold",
     "LR-FLUC-001": "yoy_fluctuation_threshold",
     "LR-SALES-001": "sales_cash_ratio_threshold",
-    "LR-QUICK-001": "quick_ratio_threshold",
+    "LR-QUICK-001": "current_ratio_threshold",
 }
 
 # 支持的行业枚举。未配置行业(未知值)时回落 general (P1: 保守, 不改变默认行为)。
@@ -73,7 +73,7 @@ INDUSTRY_THRESHOLDS: dict[str, dict[str, float]] = {
     },
     # 流动比率下限 (LR-QUICK-001):
     #   general 1.0; retail 70%: 零售行业多为负现金周期, 放宽至 0.7。
-    "quick_ratio_threshold": {
+    "current_ratio_threshold": {
         "general": 1.0,
         "retail": 0.7,
     },

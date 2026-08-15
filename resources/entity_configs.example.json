@@ -2,12 +2,18 @@
   "entities": {
     "杭州杰为科技有限公司": {
       "tolerance": 0.01,
+      "industry": "construction",
       "cash_equivalent_codes": ["1001", "1002"],
       "tb_to_bs_mappings": {
         "monetary_funds": {"codes": ["1001", "1002", "1012"], "side": "debit"},
         "accounts_receivable": {"codes": ["1122"], "side": "debit"},
         "accounts_payable": {"codes": ["2202"], "side": "credit"}
-      }
+      },
+      "reclass_pairs": {"应收账款": ["预收款项"]},
+      "balance_sheet_accounts": {"accounts_receivable": "应收账款"},
+      "margin_tolerance": 0.02,
+      "bilateral_pairs": {"收到的其他与投资活动的现金": "支付的其他与投资活动的现金"},
+      "bilateral_tolerance": 0.05
     }
-  }
+  ]
 }

@@ -9,8 +9,8 @@ _agent_drawer / _agent_fab / _overlay; 及 QMainWindow 的 centralWidget()。
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation, Qt
+from PySide6.QtGui import QGuiApplication, QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QWidget
 
 from fsa.gui.widgets.agent_drawer import AgentDrawer
@@ -20,7 +20,7 @@ from fsa.gui.widgets.agent_fab import AgentFAB
 _DRAWER_ANIM_MS = 250
 
 # 进行中的抽屉动画 (防止被 GC 提前回收)
-_active_drawer_anims: list = []
+_active_drawer_anims: list[QPropertyAnimation] = []
 
 
 class MainWindowDrawerMixin(QFrame):
@@ -93,13 +93,21 @@ class MainWindowDrawerMixin(QFrame):
 
     def _position_drawer(self) -> None:
         """定位 AI 抽屉和遮罩层到右侧。"""
-        drawer_width = self._agent_drawer.width()
+        drawer = self._agent_drawer
         rect = self.centralWidget().geometry()
+        # 窗口变窄时收窄抽屉, 避免超出容器右侧;
+        # 极端窄窗口下临时放宽最小宽度, 否则 setGeometry 会被 minimumWidth 钳制回原宽
+        available = max(1, rect.width())
+        if available < drawer.minimumWidth():
+            drawer.setMinimumWidth(available)
+        drawer_width = min(drawer.width(), available)
         x = rect.right() - drawer_width
-        self._agent_drawer.setGeometry(
-            x, rect.top(), drawer_width, rect.height()
+        drawer.setGeometry(x, rect.top(), drawer_width, rect.height())
+        if drawer.minimumWidth() < drawer.MIN_WIDTH and available >= drawer.MIN_WIDTH:
+            drawer.setMinimumWidth(drawer.MIN_WIDTH)
+        self._overlay.setGeometry(
+            rect.left(), rect.top(), max(0, rect.width() - drawer_width), rect.height()
         )
-        self._overlay.setGeometry(rect.left(), rect.top(), rect.width() - drawer_width, rect.height())
 
     def _position_fab(self) -> None:
         """定位 AI 浮动按钮到右下角 (demo: bottom 24px, right 24px)。"""
@@ -114,19 +122,19 @@ class MainWindowDrawerMixin(QFrame):
 
     # ── 窗口事件 (抽屉/FAB 相关) ──
 
-    def resizeEvent(self, event) -> None:
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._position_fab()
         if self._agent_drawer.isVisible():
             self._position_drawer()
 
-    def keyPressEvent(self, event) -> None:
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape and self._agent_drawer.isVisible():
             self._close_drawer()
             return
         super().keyPressEvent(event)
 
-    def eventFilter(self, obj, event) -> bool:
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.MouseButtonPress and obj == self._overlay:
             self._close_drawer()
             return True

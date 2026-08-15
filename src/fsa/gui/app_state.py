@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 
 from loguru import logger
 from PySide6.QtCore import QObject, Signal
@@ -49,6 +50,7 @@ class AppState(QObject):
         self._results: ValidationSummary | None = None
         self._registry: RuleRegistry | None = None
         self._period: str = ""
+        self._history_view_id: int | None = None
 
         # 持久化层
         self._db = Database()
@@ -56,6 +58,10 @@ class AppState(QObject):
         self._chat_repo: ChatRepo | None = None
         self._override_repo: RuleOverrideRepo | None = None
         self._init_storage()
+
+        # 异步持久化: 锁保证两次 persist 不交错; 线程引用用于 close() 等待
+        self._persist_lock = threading.Lock()
+        self._persist_thread: threading.Thread | None = None
 
     def _init_storage(self) -> None:
         """初始化 SQLite 持久化, 失败时降级为无持久化模式。"""
@@ -98,6 +104,11 @@ class AppState(QObject):
         return self._results
 
     @property
+    def history_view_id(self) -> int | None:
+        """当前正在回看的历史记录 ID；None 表示实时数据。"""
+        return self._history_view_id
+
+    @property
     def registry(self) -> RuleRegistry | None:
         return self._registry
 
@@ -119,6 +130,7 @@ class AppState(QObject):
 
     def set_reports(self, reports: list[Report]) -> None:
         self._reports = reports
+        self._history_view_id = None
         self.reports_changed.emit()
 
     def set_detail_dataset(self, dataset: DetailDataset | None) -> None:
@@ -129,30 +141,63 @@ class AppState(QObject):
         """设置校验结果并可选持久化到 SQLite。
 
         查看历史记录时传 persist=False，避免重复保存产生新历史条目。
-        持久化失败不影响内存中的结果, 仅记录日志。
+        results_changed 信号立即触发 (UI 不等待持久化完成);
+        history_changed 信号在持久化完成后触发 (后台线程)。
+
+        持久化失败不影响内存中的结果, 仅记录日志且不触发 history_changed。
         """
         self._results = results
         if persist:
-            self._persist_results(results)
+            self._history_view_id = None
         self.results_changed.emit()
+        if persist:
+            self._persist_results_async(results)
 
-    def _persist_results(self, results: ValidationSummary) -> None:
-        """将校验结果保存到 SQLite (如果可用)。"""
+    def _persist_results_async(self, results: ValidationSummary) -> None:
+        """在后台线程异步持久化校验结果, 完成后触发 history_changed。
+
+        使用 _persist_lock 保证两次 persist 顺序执行、不交错。
+        持久化失败时记录中文日志, 不触发 history_changed。
+        Qt 信号从 worker 线程发出是安全的 (AutoConnection 排队到 GUI 线程)。
+        """
         if self._history_repo is None:
             return
-        try:
-            self._history_repo.save(results)
-            self.history_changed.emit()
-        except sqlite3.OperationalError as e:
-            logger.error(f"保存校验历史失败: {e}")
-        except RuntimeError as e:
-            logger.error(f"保存校验历史失败: {e}")
+
+        repo = self._history_repo
+
+        def _persist_worker() -> None:
+            try:
+                with self._persist_lock:
+                    repo.save(results)
+                self.history_changed.emit()
+            except sqlite3.OperationalError as e:
+                logger.error(f"后台保存校验历史失败: {e}")
+            except RuntimeError as e:
+                logger.error(f"后台保存校验历史失败: {e}")
+
+        thread = threading.Thread(target=_persist_worker, daemon=True)
+        self._persist_thread = thread
+        thread.start()
+
+    def set_history_view(self, summary: ValidationSummary, history_id: int) -> None:
+        """进入历史回看模式：清空实时报表/明细并写入历史结果。
+
+        一次信号顺序：先清空实时报表，再发布历史结果，
+        保证导入页最终状态为“无实时报表 + 历史结果 + 回看横幅”。
+        """
+        self._reports = []
+        self._detail_dataset = None
+        self._results = summary
+        self._history_view_id = history_id
+        self.reports_changed.emit()
+        self.results_changed.emit()
 
     def clear_all(self) -> None:
         """清空报表和结果。"""
         self._reports = []
         self._detail_dataset = None
         self._results = None
+        self._history_view_id = None
         self.reports_changed.emit()
         self.results_changed.emit()
 
@@ -235,6 +280,12 @@ class AppState(QObject):
             logger.error(f"清理过期历史记录失败: {e}")
 
     def close(self) -> None:
-        """关闭数据库连接, 应在应用退出时调用。"""
+        """关闭数据库连接, 应在应用退出时调用。
+
+        等待后台持久化线程完成 (最多 2 秒), 避免丢失最后一次保存。
+        """
+        thread = self._persist_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
         self._db.close()
         logger.info("AppState 已关闭, 数据库连接已释放")

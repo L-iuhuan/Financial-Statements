@@ -18,12 +18,17 @@ import threading
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from http.client import HTTPException, HTTPResponse
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
+
+# 类型说明: JSON 网络报文边界使用 dict[str, Any]——这是线路格式的诚实类型;
+# Any 仅出现在 JSON 解析/组包边界, 不进入业务逻辑 (宪法 Any 禁令的边界例外)。
 from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from loguru import logger
+
+from fsa.core.exceptions import FSAError
 
 # 推理模型 content 为空 (max_tokens 耗尽于 reasoning) 时, 附在 reasoning 兜底后的中文提示
 REASONING_FALLBACK_HINT = "（模型推理过程较长，以上为推理摘要，建议增加 max_tokens）"
@@ -76,7 +81,7 @@ def is_local_url(url: str) -> bool:
     return host == "" or host in _LOCAL_HOSTS
 
 
-class LLMError(Exception):
+class LLMError(FSAError):
     """LLM 客户端异常, 错误信息使用中文。"""
 
 
@@ -85,7 +90,7 @@ class ToolCall:
     """一次工具调用 (LLM 请求执行某个工具)。"""
 
     name: str
-    arguments: dict
+    arguments: dict[str, Any]
     call_id: str = ""
 
 
@@ -134,7 +139,7 @@ class LLMClient(Protocol):
     def chat(
         self,
         messages: list[ChatMessage],
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
         cancel_event: threading.Event | None = None,
     ) -> ChatMessage:
@@ -150,7 +155,7 @@ class LLMClient(Protocol):
     def chat_stream(
         self,
         messages: list[ChatMessage],
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
@@ -164,8 +169,18 @@ class LLMClient(Protocol):
         ...
 
 
-def _post_json(url: str, payload: dict, timeout: float, api_key: str = "") -> dict:
+def _warn_if_insecure_remote(url: str) -> None:
+    """非本地地址且使用 http:// 时提示 API Key 将明文传输 (不强制阻断: 内网端点可能无 TLS)。"""
+    if url.startswith("http://") and not is_local_url(url):
+        logger.warning(
+            f"LLM 服务地址使用未加密的 http 连接 ({url})，"
+            "API Key 将以明文传输；若非内网受信环境，请改用 https 地址"
+        )
+
+
+def _post_json(url: str, payload: dict[str, Any], timeout: float, api_key: str = "") -> dict[str, Any]:
     """发送 JSON POST 请求并解析响应。"""
+    _warn_if_insecure_remote(url)
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -173,7 +188,7 @@ def _post_json(url: str, payload: dict, timeout: float, api_key: str = "") -> di
     req = Request(url, data=data, method="POST", headers=headers)
     try:
         with urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            return cast(dict[str, Any], json.loads(resp.read().decode("utf-8")))
     except URLError as e:
         raise LLMError(f"无法连接 LLM 服务 ({url}): {e}") from e
     except TimeoutError as e:
@@ -186,9 +201,10 @@ def _post_json(url: str, payload: dict, timeout: float, api_key: str = "") -> di
 
 
 def _open_stream(
-    url: str, payload: dict, timeout: float, api_key: str = ""
+    url: str, payload: dict[str, Any], timeout: float, api_key: str = ""
 ) -> HTTPResponse:
     """发起流式 POST 请求, 返回可迭代的响应对象 (连接异常统一转中文 LLMError)。"""
+    _warn_if_insecure_remote(url)
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -205,7 +221,7 @@ def _open_stream(
         raise LLMError(f"无法连接 LLM 服务 ({url}): {e}") from e
 
 
-def _iter_sse_json(stream: Iterable[bytes]) -> Iterator[dict]:
+def _iter_sse_json(stream: Iterable[bytes]) -> Iterator[dict[str, Any]]:
     """从流式响应逐行解析 JSON 数据块。
 
     兼容 OpenAI SSE 格式 ("data: {...}") 与 Ollama 纯 JSON 行格式;
@@ -256,14 +272,14 @@ class OllamaProvider:
         try:
             req = Request(f"{self.base_url}/api/tags", method="GET")
             with urlopen(req, timeout=3.0) as resp:
-                return resp.status == 200
+                return bool(resp.status == 200)
         except (URLError, TimeoutError, OSError):
             return False
 
     def chat(
         self,
         messages: list[ChatMessage],
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
         cancel_event: threading.Event | None = None,
     ) -> ChatMessage:
@@ -271,7 +287,7 @@ class OllamaProvider:
         if cancel_event is not None and cancel_event.is_set():
             raise LLMError("已取消")
         effective_timeout = timeout if timeout is not None else self.timeout
-        payload: dict = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [self._to_ollama_msg(m) for m in messages],
             "stream": False,
@@ -292,7 +308,7 @@ class OllamaProvider:
     def chat_stream(
         self,
         messages: list[ChatMessage],
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
@@ -301,7 +317,7 @@ class OllamaProvider:
         if cancel_event is not None and cancel_event.is_set():
             raise LLMError("已取消")
         effective_timeout = timeout if timeout is not None else self.timeout
-        payload: dict = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [self._to_ollama_msg(m) for m in messages],
             "stream": True,
@@ -344,10 +360,10 @@ class OllamaProvider:
         )
 
     @staticmethod
-    def _to_ollama_msg(m: ChatMessage | dict) -> dict:
+    def _to_ollama_msg(m: ChatMessage | dict[str, Any]) -> dict[str, Any]:
         if isinstance(m, dict):
             return {"role": m.get("role", "user"), "content": m.get("content", "")}
-        msg: dict = {"role": m.role, "content": m.content}
+        msg: dict[str, Any] = {"role": m.role, "content": m.content}
         if m.role == "assistant" and m.tool_calls:
             msg["tool_calls"] = [
                 {"function": {"name": tc.name, "arguments": tc.arguments}}
@@ -356,7 +372,7 @@ class OllamaProvider:
         return msg
 
     @staticmethod
-    def _parse_ollama_tools(raw: list) -> list[ToolCall]:
+    def _parse_ollama_tools(raw: list[dict[str, Any]]) -> list[ToolCall]:
         calls: list[ToolCall] = []
         for item in raw:
             fn = item.get("function", {})
@@ -394,14 +410,14 @@ class OpenAICompatProvider:
             if self.api_key:
                 req.add_header("Authorization", f"Bearer {self.api_key}")
             with urlopen(req, timeout=3.0) as resp:
-                return resp.status == 200
+                return bool(resp.status == 200)
         except (URLError, TimeoutError, OSError):
             return False
 
     def chat(
         self,
         messages: list[ChatMessage],
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
         cancel_event: threading.Event | None = None,
     ) -> ChatMessage:
@@ -409,7 +425,7 @@ class OpenAICompatProvider:
         if cancel_event is not None and cancel_event.is_set():
             raise LLMError("已取消")
         effective_timeout = timeout if timeout is not None else self.timeout
-        payload: dict = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [self._to_openai_msg(m) for m in messages],
             "max_tokens": self.max_tokens,
@@ -434,7 +450,7 @@ class OpenAICompatProvider:
     def chat_stream(
         self,
         messages: list[ChatMessage],
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
@@ -443,7 +459,7 @@ class OpenAICompatProvider:
         if cancel_event is not None and cancel_event.is_set():
             raise LLMError("已取消")
         effective_timeout = timeout if timeout is not None else self.timeout
-        payload: dict = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [self._to_openai_msg(m) for m in messages],
             "stream": True,
@@ -489,7 +505,7 @@ class OpenAICompatProvider:
 
     @staticmethod
     def _consume_stream_delta(
-        delta: dict,
+        delta: dict[str, Any],
         content_parts: list[str],
         reasoning_parts: list[str],
         tool_buffers: dict[int, tuple[str, str]],
@@ -528,7 +544,7 @@ class OpenAICompatProvider:
         for index in sorted(tool_buffers):
             name, call_id = tool_buffers[index]
             raw = arg_buffers.get(index, "")
-            arguments: dict = {}
+            arguments: dict[str, Any] = {}
             if raw.strip():
                 try:
                     arguments = json.loads(raw)
@@ -538,14 +554,14 @@ class OpenAICompatProvider:
         return calls
 
     @staticmethod
-    def _to_openai_msg(m: ChatMessage | dict) -> dict:
+    def _to_openai_msg(m: ChatMessage | dict[str, Any]) -> dict[str, Any]:
         if isinstance(m, dict):
             role = m.get("role", "user")
-            dict_msg: dict = {"role": role, "content": m.get("content", "")}
+            dict_msg: dict[str, Any] = {"role": role, "content": m.get("content", "")}
             if role == "tool":
                 dict_msg["tool_call_id"] = m.get("tool_call_id", "")
             return dict_msg
-        msg: dict = {"role": m.role, "content": m.content}
+        msg: dict[str, Any] = {"role": m.role, "content": m.content}
         if m.role == "assistant" and m.tool_calls:
             msg["tool_calls"] = [
                 {
@@ -563,7 +579,7 @@ class OpenAICompatProvider:
         return msg
 
     @staticmethod
-    def _parse_openai_tools(raw: list) -> list[ToolCall]:
+    def _parse_openai_tools(raw: list[dict[str, Any]]) -> list[ToolCall]:
         calls: list[ToolCall] = []
         for item in raw:
             fn = item.get("function", {})

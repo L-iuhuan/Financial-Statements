@@ -12,7 +12,7 @@ from typing import TypedDict
 
 from loguru import logger
 
-from fsa.core.models.result import ValidationResult, ValidationSummary
+from fsa.core.models.result import TraceItem, ValidationResult, ValidationSummary
 from fsa.core.models.rule import Severity
 from fsa.storage.database import Database
 
@@ -57,6 +57,9 @@ class HistoryRepo:
     def save(self, summary: ValidationSummary) -> int:
         """保存一次校验结果, 返回历史记录 ID。
 
+        使用显式事务 (BEGIN/COMMIT/ROLLBACK) 确保汇总记录与明细记录
+        的原子性: 明细插入中途失败时整个事务回滚，不留半截历史。
+
         Args:
             summary: 校验汇总结果
 
@@ -64,50 +67,71 @@ class HistoryRepo:
             新创建的历史记录 ID
 
         Raises:
-            RuntimeError: 数据库未连接
+            RuntimeError: 数据库未连接或事务失败
         """
         conn = self._db.connection
         report_types_json = json.dumps(
             [rt.value for rt in summary.report_types], ensure_ascii=False
         )
 
-        cursor = conn.execute(
-            """INSERT INTO validation_history
-               (period, total, passed, failed, errored, skipped, report_types)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (summary.period, summary.total, summary.passed,
-             summary.failed, summary.errored, summary.skipped,
-             report_types_json),
-        )
-        history_id = cursor.lastrowid
-        if history_id is None:
-            raise RuntimeError("插入历史记录失败, 未获取到 ID")
+        conn.execute("BEGIN")
+        try:
+            cursor = conn.execute(
+                """INSERT INTO validation_history
+                   (period, total, passed, failed, errored, skipped, report_types)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (summary.period, summary.total, summary.passed,
+                 summary.failed, summary.errored, summary.skipped,
+                 report_types_json),
+            )
+            history_id = cursor.lastrowid
+            if history_id is None:
+                raise RuntimeError("插入历史记录失败, 未获取到 ID")
 
-        for result in summary.results:
-            self._insert_result(conn, history_id, result)
+            for result in summary.results:
+                self._insert_result(conn, history_id, result)
 
-        conn.commit()
-        logger.info(
-            f"保存校验历史 #{history_id}: "
-            f"通过 {summary.passed}, 不通过 {summary.failed}, 异常 {summary.errored}"
-        )
-        return history_id
+            conn.commit()
+            logger.info(
+                f"保存校验历史 #{history_id}: "
+                f"通过 {summary.passed}, 不通过 {summary.failed}, 异常 {summary.errored}"
+            )
+            return history_id
+        except Exception:
+            conn.rollback()
+            logger.exception("保存校验历史失败, 事务已回滚")
+            raise
 
     def _insert_result(
         self, conn: sqlite3.Connection, history_id: int, result: ValidationResult
     ) -> None:
         """插入单条校验结果明细。"""
+        trace_json = json.dumps(
+            [
+                {
+                    "key": ti.key,
+                    "name": ti.name,
+                    "amount": ti.amount,
+                    "row": ti.row,
+                    "column": ti.column,
+                    "side": ti.side,
+                }
+                for ti in result.trace
+            ],
+            ensure_ascii=False,
+        )
         conn.execute(
             """INSERT INTO validation_results
                (history_id, rule_id, rule_name, passed, severity,
                 left_value, right_value, diff, tolerance, formula,
-                message, errored)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                message, errored, skipped, category, trace)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (history_id, result.rule_id, result.rule_name,
              int(result.passed), result.severity.value,
              result.left_value, result.right_value, result.diff,
              result.tolerance, result.formula, result.message,
-             int(result.errored)),
+             int(result.errored), int(result.skipped),
+             result.category, trace_json),
         )
 
     def get_recent(self, limit: int = 20) -> list[HistoryRecord]:
@@ -188,7 +212,7 @@ class HistoryRepo:
         rows = conn.execute(
             """SELECT rule_id, rule_name, passed, severity,
                       left_value, right_value, diff, tolerance,
-                      formula, message, errored
+                      formula, message, errored, skipped, category, trace
                FROM validation_results
                WHERE history_id = ?
                ORDER BY id""",
@@ -197,6 +221,12 @@ class HistoryRepo:
 
         results: list[ValidationResult] = []
         for row in rows:
+            # 兼容旧数据库: skipped/category/trace 可能为 None
+            skipped = bool(row["skipped"]) if row["skipped"] is not None else False
+            category = row["category"] if row["category"] is not None else ""
+            trace_raw = row["trace"] if row["trace"] is not None else "[]"
+            trace_items = self._parse_trace_json(trace_raw)
+
             results.append(ValidationResult(
                 rule_id=row["rule_id"],
                 rule_name=row["rule_name"],
@@ -209,8 +239,36 @@ class HistoryRepo:
                 formula=row["formula"],
                 message=row["message"],
                 errored=bool(row["errored"]),
+                skipped=skipped,
+                category=category,
+                trace=trace_items,
             ))
         return results
+
+    @staticmethod
+    def _parse_trace_json(trace_raw: str) -> list[TraceItem]:
+        """将 trace JSON 字符串解析为 TraceItem 列表。
+
+        解析失败时返回空列表 (兼容旧数据或损坏的 JSON)。
+        """
+        try:
+            raw_list = json.loads(trace_raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        items: list[TraceItem] = []
+        for item in raw_list:
+            try:
+                items.append(TraceItem(
+                    key=item.get("key", ""),
+                    name=item.get("name", ""),
+                    amount=float(item.get("amount", 0)),
+                    row=int(item.get("row", 0)),
+                    column=str(item.get("column", "")),
+                    side=str(item.get("side", "")),
+                ))
+            except (ValueError, TypeError):
+                continue
+        return items
 
     def delete(self, history_id: int) -> None:
         """删除指定历史记录 (含明细, CASCADE)。

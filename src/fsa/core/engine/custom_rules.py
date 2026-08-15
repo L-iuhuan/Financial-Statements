@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -60,7 +61,7 @@ def save_custom_rules(rules: list[ReconciliationRule]) -> None:
     logger.info(f"已保存 {len(rules)} 条自定义规则到 {path}")
 
 
-def _parse(raw: dict) -> ReconciliationRule:
+def _parse(raw: dict[str, Any]) -> ReconciliationRule:
     """将 JSON 字典解析为 ReconciliationRule。"""
     return ReconciliationRule(
         rule_id=raw["id"],
@@ -76,7 +77,7 @@ def _parse(raw: dict) -> ReconciliationRule:
     )
 
 
-def _to_dict(rule: ReconciliationRule) -> dict:
+def _to_dict(rule: ReconciliationRule) -> dict[str, Any]:
     """将 ReconciliationRule 转为 JSON 字典。"""
     return {
         "id": rule.rule_id,

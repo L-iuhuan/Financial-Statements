@@ -9,21 +9,22 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel, QWidget
 from qfluentwidgets import Theme, setTheme, setThemeColor
 
 # ── 设计令牌 (DESIGN_SYSTEM.md) ──
 
-# 品牌色 — 钢蓝灰 (steel slate blue): 稳重财务专业感, 与语义色明确区分
-# 色相 ~220° 远离 success 绿(~160°)/error 红/warning 黄, 低饱和克制
-BRAND_50 = "#eef2f7"
-BRAND_100 = "#d5dde8"
-BRAND_200 = "#a8b9d0"
-BRAND_500 = "#4e6fa7"
-BRAND_600 = "#3e5f8f"
-BRAND_700 = "#2e4f77"
+# 品牌色 — 精炼靛蓝 (refined indigo): 现代、活泼且专业, 与语义色明确区分
+# 色相 ~245° 远离 success 绿(~160°)/error 红/warning 黄, 同时与 info 天蓝(~200°)拉开距离
+# 白字在 BRAND_500/600 上对比度均 ≥4.5:1, 满足 WCAG AA
+BRAND_50 = "#eef2ff"
+BRAND_100 = "#e0e7ff"
+BRAND_200 = "#c7d2fe"
+BRAND_500 = "#5b5ee6"
+BRAND_600 = "#4f46e5"
+BRAND_700 = "#4338ca"
 
 # 语义色
 SUCCESS = "#10b981"
@@ -35,9 +36,18 @@ ERROR_BORDER = "#fecaca"
 WARNING = "#f59e0b"
 WARNING_BG = "#fffbeb"
 WARNING_BORDER = "#fde68a"
-INFO = "#3b82f6"
-INFO_BG = "#eff6ff"
-INFO_BORDER = "#bfdbfe"
+INFO = "#0ea5e9"
+INFO_BG = "#f0f9ff"
+INFO_BORDER = "#7dd3fc"
+
+# 金额语义色
+AMOUNT_NEGATIVE = ERROR
+AMOUNT_HIGHLIGHT = BRAND_600
+
+# UI 字体栈: Windows 上 Microsoft YaHei UI 可用性最好, HarmonyOS Sans SC 作为回退
+# 统一使用单一主族, 避免不同控件因回退字体不同导致的 hinting/粗细差异
+UI_FONT_FAMILY = "Microsoft YaHei UI"
+UI_FONT_FALLBACKS = '"HarmonyOS Sans SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif'
 
 # 间距
 SPACE = {
@@ -50,6 +60,7 @@ RADIUS_SM = "4px"
 RADIUS_MD = "6px"
 RADIUS_LG = "8px"
 RADIUS_XL = "12px"
+RADIUS_FULL = "9999px"
 
 
 # ── 模块级主题状态 ──
@@ -81,6 +92,8 @@ def _light_palette() -> dict[str, str]:
         "brand_50": BRAND_50, "brand_100": BRAND_100,
         "brand_200": BRAND_200, "brand_500": BRAND_500,
         "brand_600": BRAND_600, "brand_700": BRAND_700,
+        "amount_negative": AMOUNT_NEGATIVE,
+        "amount_highlight": AMOUNT_HIGHLIGHT,
     }
 
 
@@ -103,10 +116,12 @@ def _dark_palette() -> dict[str, str]:
         "success": "#34d399", "success_bg": "#052e1b", "success_border": "#065f46",
         "error": "#f87171", "error_bg": "#450a0a", "error_border": "#991b1b",
         "warning": "#fbbf24", "warning_bg": "#422006", "warning_border": "#92400e",
-        "info": "#60a5fa", "info_bg": "#0c1c33", "info_border": "#1e40af",
-        "brand_50": "#1a2332", "brand_100": "#233045",
-        "brand_200": "#2e405e", "brand_500": "#6b8fc5",
-        "brand_600": "#4a6d9f", "brand_700": "#3e5f8f",
+        "info": "#38bdf8", "info_bg": "#082f49", "info_border": "#0369a1",
+        "brand_50": "#1e1b4b", "brand_100": "#312e81",
+        "brand_200": "#4338ca", "brand_500": "#818cf8",
+        "brand_600": "#5b5ee6", "brand_700": "#4f46e5",
+        "amount_negative": "#f87171",
+        "amount_highlight": "#818cf8",
     }
 
 
@@ -115,7 +130,7 @@ def _generate_qss(p: dict[str, str]) -> str:
     return f"""
     /* ── 全局 ── */
     QWidget {{
-        font-family: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+        font-family: "{UI_FONT_FAMILY}", {UI_FONT_FALLBACKS};
         font-size: 13px;
         color: {p["text_primary"]};
     }}
@@ -137,8 +152,8 @@ def _generate_qss(p: dict[str, str]) -> str:
         color: {p["text_primary"]};
     }}
     QLabel#SidebarLogoIcon {{
-        background-color: {p["brand_600"]};
-        border-radius: 6px;
+        /* logo PNG 自带圆角方形品牌底色, 标签不再叠底, 避免双重底色边缘伪影 */
+        background: transparent;
         color: white;
         font-size: 16px;
         font-weight: bold;
@@ -443,6 +458,17 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["bg_surface_active"]};
     }}
 
+    /* ── 历史回看横幅 ── */
+    QFrame#HistoryViewBanner {{
+        background-color: {p["brand_50"]};
+        border: 1px solid {p["brand_200"]};
+        border-radius: 8px;
+    }}
+    QLabel#HistoryViewBannerText {{
+        font-size: 12px;
+        color: {p["brand_700"]};
+    }}
+
     /* ── 空状态 ── */
     QLabel#EmptyLabel {{
         font-size: 14px;
@@ -522,7 +548,7 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["brand_600"]};
         color: white;
         border: none;
-        border-radius: 24px;
+        border-radius: {RADIUS_FULL};
     }}
     QPushButton#AgentFAB:hover {{
         background-color: {p["brand_700"]};
@@ -782,6 +808,7 @@ def _generate_qss(p: dict[str, str]) -> str:
         border: 1px solid {p["border"]};
         border-radius: 8px;
         gridline-color: {p["border"]};
+        outline: none;
     }}
     QHeaderView::section {{
         background-color: {p["bg_surface_hover"]};
@@ -798,6 +825,11 @@ def _generate_qss(p: dict[str, str]) -> str:
     }}
     QTableWidget::item:alternate {{
         background-color: {p["bg_surface_hover"]};
+    }}
+    QTableWidget::item:selected {{
+        /* 显式选中态: 缺省时系统高亮会让单元格文字与底色相近, 看似"点击后内容消失" */
+        background-color: {p["brand_100"]};
+        color: {p["text_primary"]};
     }}
 
     /* ── 页面标题 ── */
@@ -880,9 +912,13 @@ def get_shadow_color(hover: bool = False) -> QColor:
     return QColor(0, 0, 0, 25 if hover else 10)
 
 
-def get_ui_font(size: int = 10) -> QFont:
-    """获取 UI 字体。"""
-    return QFont("HarmonyOS Sans SC", size)
+def get_ui_font(size: int = 13) -> QFont:
+    """获取 UI 字体 (size 为像素尺寸, 与 QSS 保持一致)。"""
+    font = QFont(UI_FONT_FAMILY)
+    font.setPixelSize(size)
+    font.setWeight(QFont.Weight.Normal)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
+    return font
 
 
 def get_color(name: str, dark: bool = False) -> str:
@@ -913,12 +949,42 @@ def register_theme_listener(fn: Callable[[], None]) -> None:
     _theme_listeners.append(fn)
 
 
+def unregister_theme_listener(fn: Callable[[], None]) -> None:
+    """注销主题切换监听器; 若未注册则静默。"""
+    with contextlib.suppress(ValueError):
+        _theme_listeners.remove(fn)
+
+
+def bind_theme_listener(widget: QObject, fn: Callable[[], None]) -> None:
+    """注册主题监听器，并随控件销毁自动注销（防死监听器泄漏）。
+
+    替代直接调用 register_theme_listener 的推荐方式。
+    """
+    register_theme_listener(fn)
+
+    def _cleanup(*_args: object) -> None:
+        unregister_theme_listener(fn)
+
+    widget.destroyed.connect(_cleanup)
+
+
 def notify_theme_listeners() -> None:
-    """通知所有监听器主题已切换。"""
+    """通知所有监听器主题已切换, 并清理已失效的条目。"""
+    dead: list[Callable[[], None]] = []
     for fn in _theme_listeners:
-        with contextlib.suppress(Exception):
-            # 避免单个监听器异常影响其他监听器
+        try:
             fn()
+        except RuntimeError as exc:
+            # Qt C++ 对象已销毁, 该监听器失效, 予以清理
+            msg = str(exc)
+            if "already deleted" in msg or "C++ object" in msg:
+                dead.append(fn)
+        except Exception:
+            # 避免单个监听器异常影响其他监听器
+            continue
+    for fn in dead:
+        with contextlib.suppress(ValueError):
+            _theme_listeners.remove(fn)
 
 
 # 进行中的主题过渡动画 (防止被 GC 提前回收)

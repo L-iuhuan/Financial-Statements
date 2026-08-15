@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from loguru import logger
 
+from fsa.core.exceptions import FSAError
 from fsa.updater.updater import (
     UpdateError,
     UpdateInfo,
@@ -185,8 +186,8 @@ class TestUpdateError:
     """UpdateError 测试。"""
 
     def test_update_error_is_exception(self) -> None:
-        """UpdateError 是 Exception 的子类。"""
-        assert issubclass(UpdateError, Exception)
+        """UpdateError 是 FSAError 的子类。"""
+        assert issubclass(UpdateError, FSAError)
 
     def test_update_error_message_in_chinese(self) -> None:
         """UpdateError 信息为中文。"""

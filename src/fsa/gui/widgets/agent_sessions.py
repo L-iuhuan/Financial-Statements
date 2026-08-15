@@ -10,6 +10,7 @@ _chat_repo / _session_btn / _session_id。
 from __future__ import annotations
 
 import sqlite3
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from PySide6.QtCore import QPoint, Qt
@@ -18,6 +19,9 @@ from PySide6.QtWidgets import QFrame, QMenu, QPushButton
 
 from fsa.gui.widgets.agent_messages import _AgentDrawerContracts
 from fsa.storage.chat_repo import ChatRepo
+
+if TYPE_CHECKING:
+    from fsa.agent.llm_client import ChatMessage
 
 
 class AgentSessionMixin(QFrame, _AgentDrawerContracts):
@@ -199,7 +203,7 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
         except (sqlite3.DatabaseError, RuntimeError):
             logger.exception("自动重命名会话失败")
 
-    def get_chat_history(self, limit: int = 10) -> list:
+    def get_chat_history(self, limit: int = 10) -> list[ChatMessage]:
         """获取当前会话的最近 N 条消息 (转为 ChatMessage, 供 AgentLoop 多轮上下文)。
 
         Returns:
@@ -214,7 +218,7 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
         except (sqlite3.DatabaseError, RuntimeError):
             logger.exception("读取会话历史失败")
             return []
-        history: list = []
+        history: list[ChatMessage] = []
         for m in messages[-limit:]:
             role = m.get("role", "user")
             content = m.get("content", "")

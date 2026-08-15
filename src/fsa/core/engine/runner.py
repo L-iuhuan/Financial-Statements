@@ -58,7 +58,7 @@ class RuleRunner:
         """
         logger.info(f"执行规则: {rule.rule_id} {rule.name}")
 
-        namespace = context.build_namespace(rule.statements)
+        namespace = dict(context.build_namespace(rule.statements))
         merged = RuleRunner._merged_thresholds(threshold_vars)
         namespace.update(merged)
 
@@ -306,7 +306,23 @@ def _add_trace_item(
         return
     seen.add(key)
 
+    # 先尝试完整 key 查找 (如 sce_paid_in_capital_ending 本身就是 SCE 报表中的 key)
+    item = context.get_item(key)
+    if item is not None:
+        trace.append(
+            TraceItem(
+                key=key,
+                name=item.name,
+                amount=item.amount,
+                row=item.row,
+                column=item.column,
+                side=side,
+            )
+        )
+        return
+
     # 处理双金额列后缀: {key}_ending 用期末值, {key}_beginning 用期初值
+    # (仅当完整 key 查找失败后才尝试 strip 后缀)
     lookup_key = key
     use_beginning = False
     if key.endswith("_ending"):

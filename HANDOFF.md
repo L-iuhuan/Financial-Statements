@@ -1,8 +1,8 @@
 # 财务报表勾稽校验系统 — 开发交接文档
 
-> 更新日期: 2026-08-13
+> 更新日期: 2026-08-15
 > 用途: 跨机器开发的交接与续作指南
-> 当前版本: v0.1.0 (MVP+), 规则库 CAS v1.3.0 (42 条)
+> 当前版本: v0.4.0 (MVP+), 规则库 CAS v1.3.0 (42 条)
 
 ---
 
@@ -20,7 +20,7 @@ pip install -e ".[dev]"
 python -m fsa
 
 # 4. 测试
-python -m pytest -q          # 1029 个测试 (收集数)
+python -m pytest -q          # 全量测试 (1000+，以实际收集数为准)
 python -m ruff check src/    # 静态检查
 ```
 
@@ -56,7 +56,7 @@ python -m ruff check src/    # 静态检查
 - [x] 会话管理: 新建/切换/清空/持久化/自动重命名
 
 ### UI/UX
-- [x] 深青玉配色 + 天平 logo + FluentIcon 图标 (无 Emoji)
+- [x] 靛蓝配色 (Indigo, BRAND_600 #4f46e5) + 天平 logo + FluentIcon 图标 (无 Emoji)
 - [x] 深色主题 (完整生效)
 - [x] 规则卡片重设计 + 自定义规则 (增删/持久化/公式校验)
 - [x] 公式中文化显示 (tooltip 保留英文)
@@ -75,7 +75,7 @@ python -m ruff check src/    # 静态检查
 - [x] 一键构建 scripts/build_installer.ps1
 
 ### 测试
-- [x] 1029 测试收集 (1028 通过 / 1 跳过; 含 GUI 134, 压力/边界 20)
+- [x] 全量测试套件 (含 GUI/压力/边界; slow 标记压测默认跳过)
 - [x] TEST_PLAN.md 测试方案 (9 模块 48 用例)
 
 ---

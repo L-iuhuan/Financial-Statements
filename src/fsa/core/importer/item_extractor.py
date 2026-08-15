@@ -58,12 +58,18 @@ _SERIAL_RE = re.compile(r"^\d{4,5}$")
 _NUMERIC_RATIO = 0.3
 
 
-def extract_items(raw: RawSheetData, report_type: ReportType) -> list[ReportItem]:
+def extract_items(
+    raw: RawSheetData,
+    report_type: ReportType,
+    unmapped: list[str] | None = None,
+) -> list[ReportItem]:
     """从原始工作表数据中提取 ReportItem 列表。
 
     Args:
         raw: 工作表原始数据
         report_type: 报表类型
+        unmapped: 可选输出列表，收集"有金额但无法映射为标准科目"的项目名称
+            （供 Agent 工具与人工排查；不参与校验）
 
     Returns:
         ReportItem 列表
@@ -89,6 +95,7 @@ def extract_items(raw: RawSheetData, report_type: ReportType) -> list[ReportItem
         items,
         seen_keys,
         allow_supplementary,
+        unmapped,
     )
 
     if report_type == ReportType.BALANCE_SHEET:
@@ -106,6 +113,7 @@ def extract_items(raw: RawSheetData, report_type: ReportType) -> list[ReportItem
                     items,
                     seen_keys,
                     allow_supplementary=False,
+                    unmapped=unmapped,
                 )
 
     logger.info(f"  从工作表「{raw.name}」提取了 {len(items)} 个项目")
@@ -120,6 +128,7 @@ def _extract_side(
     items: list[ReportItem],
     seen_keys: set[str],
     allow_supplementary: bool,
+    unmapped: list[str] | None = None,
 ) -> None:
     """按指定的项目列与金额列提取一侧的报表项目。"""
     in_supplementary = False
@@ -150,7 +159,7 @@ def _extract_side(
             continue
 
         _extract_item(
-            item_name_str, row, primary, secondary, row_num, items, seen_keys
+            item_name_str, row, primary, secondary, row_num, items, seen_keys, unmapped
         )
 
 
@@ -184,10 +193,15 @@ def _extract_item(
     row_num: int,
     items: list[ReportItem],
     seen_keys: set[str],
+    unmapped: list[str] | None = None,
 ) -> None:
     """提取主表中的一个项目。"""
     key = get_key(item_name_str)
     if key is None:
+        # 仅当该行主金额列有可解析数值时才记为"未映射丢失项"
+        # (纯标签行/小计行不属于数据丢失)
+        if unmapped is not None and parse_amount(row.get(primary)) is not None:
+            unmapped.append(clean_name(item_name_str))
         logger.debug(f"  未映射的项目: 「{item_name_str}」(行{row_num})，跳过")
         return
     _append_item(
@@ -245,10 +259,21 @@ def _find_name_column(headers: list[str]) -> str | None:
 
 
 def _find_right_name_column(headers: list[str]) -> str | None:
-    """查找资产负债表的右侧项目列（负债和所有者权益栏）。"""
+    """查找资产负债表的右侧项目列（负债和所有者权益栏）。
+
+    匹配策略:
+    1. 包含"负债"且包含"权益"的列 (如"负债和所有者权益"、"负债及股东权益"、"负债和股东权益")
+    2. 回退: 在右侧半区查找第二个"项目"/"科目"类列名
+    """
     for header in headers[1:]:
         normalized = _normalize(header)
-        if "负债" in normalized and "权益" in normalized:
+        # M-e: 扩展匹配 "负债及股东权益" / "负债和股东权益" 等变体
+        if "负债" in normalized and ("权益" in normalized or "股东权益" in normalized):
+            return header
+    # 回退: 在右侧半区查找第二个类似"项目"的列名
+    mid = len(headers) // 2
+    for header in headers[mid:]:
+        if _normalize(header) in ("项目", "项目名称", "科目", "科目名称"):
             return header
     return None
 
@@ -303,6 +328,7 @@ def _find_period_column(
     primary: bool,
 ) -> str | None:
     """按期间列模式（2026年1-6月 / 46174 序列号等）查找列名。"""
+    patterns: tuple[tuple[re.Pattern[str], ...], ...]
     if primary:
         patterns = ((_YTD_PERIOD_RE,), (_MONTH_PERIOD_RE,), (_SERIAL_RE,))
     else:
@@ -331,11 +357,9 @@ def _numeric_columns(
             value = row.get(header)
             if value is None:
                 continue
-            try:
-                float(value)
-            except (ValueError, TypeError):
-                continue
-            numeric += 1
+            # 走统一金额解析器, 支持千分位/括号负数等格式 (mypy: object->float)
+            if parse_amount(value) is not None:
+                numeric += 1
         if numeric >= threshold:
             result.append(header)
     return result

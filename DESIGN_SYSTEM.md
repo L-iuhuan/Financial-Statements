@@ -21,16 +21,19 @@
 
 ### 2.1 主色 (Brand)
 
-选用**钢蓝灰 (Steel Slate Blue)** 作为品牌主色（由早期靛蓝/深青玉演进而来，见文末修订记录）。理由：比 Windows 默认蓝更深沉、更独特，传达专业与可信，不与系统 UI 混淆，且与绿/红/黄语义色保持足够色相距离。
+选用**精炼靛蓝 (Refined Indigo)** 作为品牌主色（由钢蓝灰/深青玉演进而来，见文末修订记录）。理由：
+- 色相 ~245°，既远离 success 绿(~160°)、error 红、warning 黄，也与 info 天蓝(~200°)形成清晰区分；
+- 饱和度高于钢蓝灰，更现代、活泼，同时保持专业感；
+- 明暗双主题下，白字在 `BRAND_500`/`BRAND_600` 上对比度均 ≥4.5:1，满足 WCAG AA。
 
 | Token | Light | Dark | 用途 |
 |---|---|---|---|
-| `--brand-50` | #eef2f7 | #1a2332 | 悬浮态背景 |
-| `--brand-100` | #d5dde8 | #233045 | 选中态背景 |
-| `--brand-200` | #a8b9d0 | #2e405e | 边框/分割线 |
-| `--brand-500` | #4e6fa7 | #6b8fc5 | 主色 (按钮、链接) |
-| `--brand-600` | #3e5f8f | #4a6d9f | 主色 hover |
-| `--brand-700` | #2e4f77 | #3e5f8f | 主色 active |
+| `--brand-50` | #eef2ff | #1e1b4b | 悬浮态背景 |
+| `--brand-100` | #e0e7ff | #312e81 | 选中态背景 |
+| `--brand-200` | #c7d2fe | #4338ca | 边框/分割线 |
+| `--brand-500` | #5b5ee6 | #818cf8 | 主色 (聚焦边框、轻强调) |
+| `--brand-600` | #4f46e5 | #5b5ee6 | 主色 (Primary 按钮、链接) |
+| `--brand-700` | #4338ca | #4f46e5 | 主色 hover/active |
 
 ### 2.2 语义色 (Semantic)
 
@@ -47,8 +50,9 @@
 | `--warning` | #f59e0b | #fbbf24 | 警告 | 校验不通过 (warning 级别) |
 | `--warning-bg` | #fffbeb | #422006 | 警告背景 | 卡片背景色 |
 | `--warning-border` | #fde68a | #92400e | 警告边框 | 卡片左边框 |
-| `--info` | #3b82f6 | #60a5fa | 提示 | 信息提示 (info 级别) |
-| `--info-bg` | #eff6ff | #0c1c33 | 提示背景 | 卡片背景色 |
+| `--info` | #0ea5e9 | #38bdf8 | 提示 | 信息提示 (info 级别), 天蓝以区别于靛蓝品牌色 |
+| `--info-bg` | #f0f9ff | #082f49 | 提示背景 | 卡片背景色 |
+| `--info-border` | #7dd3fc | #0369a1 | 提示边框 | 卡片左边框 |
 
 **金额色** -- 用于财务数据展示：
 
@@ -95,12 +99,13 @@
 
 | 用途 | 字体栈 | 说明 |
 |---|---|---|
-| UI 文本 | `"HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif` | 中文优先, 英文兼容 |
+| UI 文本 | `"Microsoft YaHei UI", "HarmonyOS Sans SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif` | Windows 优先, 未安装时回退 HarmonyOS |
 | 等宽数字 | `"JetBrains Mono", "Cascadia Code", "Consolas", "Courier New", monospace` | 金额/数字对齐 |
 | 显示标题 | 同 UI 文本 | 统一字体, 通过字重区分 |
 
-> **选择理由**: HarmonyOS Sans 是华为开源字体, CJK 渲染优秀且免费。
-> 系统未安装时回退到 Microsoft YaHei UI (Windows 默认中文字体)。
+> **选择理由**: 系统未安装 HarmonyOS Sans SC 时, Qt 会回退到列表中的下一个字体,
+> 导致不同控件实际族不一致、hinting 与字重出现差异。Windows 环境下 Microsoft YaHei UI
+> 始终可用, 因此作为首族; HarmonyOS Sans SC 作为回退保持设计意图。
 > 等宽字体用于金额列对齐, JetBrains Mono 免费且数字渲染清晰。
 
 ### 3.2 字号阶梯
@@ -379,12 +384,12 @@
 ```css
 :root {
   /* === Brand === */
-  --brand-50: #eef2f7;
-  --brand-100: #d5dde8;
-  --brand-200: #a8b9d0;
-  --brand-500: #4e6fa7;
-  --brand-600: #3e5f8f;
-  --brand-700: #2e4f77;
+  --brand-50: #eef2ff;
+  --brand-100: #e0e7ff;
+  --brand-200: #c7d2fe;
+  --brand-500: #5b5ee6;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
 
   /* === Semantic === */
   --success: #10b981;
@@ -396,8 +401,9 @@
   --warning: #f59e0b;
   --warning-bg: #fffbeb;
   --warning-border: #fde68a;
-  --info: #3b82f6;
-  --info-bg: #eff6ff;
+  --info: #0ea5e9;
+  --info-bg: #f0f9ff;
+  --info-border: #7dd3fc;
 
   /* === Neutral (Light) === */
   --bg-app: #f8f9fa;
@@ -439,7 +445,7 @@
   --radius-full: 9999px;
 
   /* === Typography === */
-  --font-ui: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --font-ui: "Microsoft YaHei UI", "HarmonyOS Sans SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
   --text-xs: 11px;
   --text-sm: 12px;
@@ -457,12 +463,12 @@
 }
 
 [data-theme="dark"] {
-  --brand-50: #1a2332;
-  --brand-100: #233045;
-  --brand-200: #2e405e;
-  --brand-500: #6b8fc5;
-  --brand-600: #4a6d9f;
-  --brand-700: #3e5f8f;
+  --brand-50: #1e1b4b;
+  --brand-100: #312e81;
+  --brand-200: #4338ca;
+  --brand-500: #818cf8;
+  --brand-600: #5b5ee6;
+  --brand-700: #4f46e5;
 
   --success: #34d399;
   --success-bg: #052e1b;
@@ -473,8 +479,9 @@
   --warning: #fbbf24;
   --warning-bg: #422006;
   --warning-border: #92400e;
-  --info: #60a5fa;
-  --info-bg: #0c1c33;
+  --info: #38bdf8;
+  --info-bg: #082f49;
+  --info-border: #0369a1;
 
   --bg-app: #0a0a0b;
   --bg-surface: #18181b;
@@ -699,10 +706,17 @@ AgentDrawer (QFrame, 浮动在主窗口右侧)
 
 ---
 
-*设计语言文档版本: v2.2*
-*最后更新: 2026-08-13*
-*修订原因: 品牌色由靛蓝/深青玉演进为钢蓝灰(steel slate blue)，
-  理由：1) 深青玉(#15917f)色相与 success 绿(#10b981)过于接近，在界面中难以区分品牌与状态；
-  2) 钢蓝灰(~220° 低饱和蓝)与绿/红/黄三色均保持足够色相距离，财务专业感更强；
-  3) 深色主题下提亮后仍保持克制稳重，不"AI"、不廉价；
-  4) 明暗双主题白字对比度均 ≥4.5:1，大面积元素 ≥3:1。*
+*设计语言文档版本: v2.3*
+*最后更新: 2026-08-15*
+*修订原因: 品牌色由钢蓝灰演进为精炼靛蓝(refined indigo)，
+  理由：1) 精炼靛蓝(~245°)比钢蓝灰更现代、活泼，同时保持财务专业感；
+  2) 与 success 绿/error 红/warning 黄及 info 天蓝均保持足够色相距离，语义清晰；
+  3) 明暗双主题下白字在 BRAND_500/600 上对比度均 ≥4.5:1 (BRAND_500 5.01:1, BRAND_600 6.29:1)；
+  4) 同步调整 info 色为天蓝(#0ea5e9/#38bdf8)，避免与品牌靛蓝混淆。
+
+*字体渲染修订 (2026-08-15):*
+  1) 统一 UI 字体首族为 Microsoft YaHei UI (Windows 可用性最好)，消除 theme.py 与 app.py 字体族不一致；
+  2) app.py 全局字体改用 setPixelSize(13)，与 QSS 13px 基准对齐，避免 pt/px 混用导致的字号漂移；
+  3) hinting 由 PreferFullHinting 改为 PreferVerticalHinting，配合 PreferAntialias | PreferQuality，
+     减轻低分屏/分数缩放下横竖笔画粗细不均与锐化问题；
+  4) 高 DPI 取整策略保持 RoundPreferFloor，文档化其防止分数缩放字体发虚的取舍。

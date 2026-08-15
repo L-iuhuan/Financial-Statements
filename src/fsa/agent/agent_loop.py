@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from loguru import logger
 
@@ -73,7 +74,7 @@ class AgentLoop:
     def ask(
         self,
         user_message: str,
-        history: Sequence[ChatMessage | dict] | None = None,
+        history: Sequence[ChatMessage | dict[str, Any]] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> str:
         """处理一轮用户提问, 返回助手回答。
@@ -94,7 +95,7 @@ class AgentLoop:
     def ask_stream(
         self,
         user_message: str,
-        history: Sequence[ChatMessage | dict] | None = None,
+        history: Sequence[ChatMessage | dict[str, Any]] | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
@@ -114,7 +115,7 @@ class AgentLoop:
         )
 
     def _build_messages(
-        self, user_message: str, history: Sequence[ChatMessage | dict] | None
+        self, user_message: str, history: Sequence[ChatMessage | dict[str, Any]] | None
     ) -> list[ChatMessage]:
         """组装完整对话消息: 系统提示 + 规范化历史 + 当前用户问题。"""
         messages: list[ChatMessage] = [ChatMessage(role="system", content=_SYSTEM_PROMPT)]
@@ -193,6 +194,7 @@ class AgentLoop:
             messages.append(response)
             for call in response.tool_calls:
                 result = execute_tool(call.name, call.arguments, self._state)
+                result = sanitize_llm_input(result, max_len=2000)
                 logger.debug(f"  工具 {call.name}({call.arguments}) -> {len(result)} 字")
                 messages.append(
                     ChatMessage(
@@ -236,7 +238,7 @@ class AgentLoop:
 
 
 def _normalize_history(
-    history: Sequence[ChatMessage | dict] | None,
+    history: Sequence[ChatMessage | dict[str, Any]] | None,
 ) -> list[ChatMessage]:
     """把历史消息统一规范化为 ChatMessage。
 

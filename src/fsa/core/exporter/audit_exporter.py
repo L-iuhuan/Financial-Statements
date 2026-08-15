@@ -74,6 +74,50 @@ def _get_rule_library_version() -> str:
         return ""
 
 
+def _safe_text(value: str) -> str:
+    """将可能被误解析为公式的字符串转为安全文本。
+
+    当字符串以 =、+、-、@ 开头（去除首尾空白后）时，前缀单引号 ' 强制
+    openpyxl 将其作为文本写入，防止公式注入（如 "=HYPERLINK(...)" 被当作
+    公式执行）。
+
+    Args:
+        value: 原始字符串
+
+    Returns:
+        安全文本字符串
+    """
+    stripped = value.strip()
+    if stripped and stripped[0] in ("=", "+", "-", "@"):
+        return "'" + value
+    return value
+
+
+def _is_threshold_rule(formula: str) -> bool:
+    """判断公式是否为阈值/布尔型规则 (无 '==' 比较运算符)。
+
+    阈值规则 (如 "net_profit >= 0") 和布尔规则没有左右侧对比,
+    其 left_value/right_value/diff 无实际意义 (均为 0.0),
+    导出时应显示 "—" 而非 0.00。
+
+    判定标准: 公式中不包含 "==" 字符串, 即无等值比较。
+    这是保守判定 — 少数包含 "==" 但实际为阈值规则的公式不会被误判,
+    因为其 left_value/right_value 由引擎实际计算得出, 显示 0.00 也无害。
+
+    Args:
+        formula: 规则公式字符串
+
+    Returns:
+        True 表示阈值/布尔规则
+    """
+    return "==" not in formula
+
+
+def _dash_for_amounts() -> str:
+    """阈值规则和跳过行的金额显示占位符。"""
+    return "—"
+
+
 class AuditExporter:
     """审计底稿 Excel 导出器。
 
@@ -91,12 +135,14 @@ class AuditExporter:
         Raises:
             PermissionError: 文件被占用
             OSError: 写入失败
+            RuntimeError: 内部状态异常 (如 active sheet 缺失)
         """
         wb = Workbook()
 
         # Sheet 1: 校验汇总
         ws_summary = wb.active
-        assert ws_summary is not None
+        if ws_summary is None:
+            raise RuntimeError("无法获取活动工作表, 工作簿初始化异常")
         ws_summary.title = "校验汇总"
         self._write_summary_sheet(ws_summary, summary)
 
@@ -193,17 +239,29 @@ class AuditExporter:
             status = "不通过"
             fill = FILL_RED
 
+        # 阈值/布尔规则 (无 '==') 和跳过规则: 金额列显示 "—"
+        threshold = _is_threshold_rule(result.formula)
+        dash = _dash_for_amounts()
+        if result.skipped or threshold:
+            lv: str | float = dash
+            rv: str | float = dash
+            dv: str | float = dash
+        else:
+            lv = result.left_value
+            rv = result.right_value
+            dv = result.diff
+
         values = [
             result.rule_id,
             result.rule_name,
             result.category,
             status,
-            result.left_value,
-            result.right_value,
-            result.diff,
+            lv,
+            rv,
+            dv,
             result.tolerance,
-            result.formula,
-            result.message,
+            _safe_text(result.formula),
+            _safe_text(result.message),
         ]
 
         for col, value in enumerate(values, start=1):
@@ -215,8 +273,12 @@ class AuditExporter:
                 cell.fill = fill
                 cell.alignment = ALIGN_CENTER
             elif col in (5, 6, 7):  # 金额列
-                cell.number_format = "#,##0.00"
-                cell.alignment = ALIGN_RIGHT
+                if isinstance(value, str):
+                    # "—" 占位符 — 居中对齐，不设数字格式
+                    cell.alignment = ALIGN_CENTER
+                else:
+                    cell.number_format = "#,##0.00"
+                    cell.alignment = ALIGN_RIGHT
             elif col == 8:  # 容差列
                 cell.alignment = ALIGN_CENTER
             elif col in (9, 10):  # 公式和说明

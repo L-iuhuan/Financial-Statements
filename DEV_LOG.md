@@ -1,6 +1,22 @@
 # 开发日志 (DEV_LOG)
 
+> **归档说明 (2026-08-15)**: 本文为历史设计/过程文档，其中规则数量、目录结构、依赖清单等具体数值可能与现行代码不一致；一切以根 AGENTS.md 与代码为准。
+
+
 > 本文件记录项目从调研到开发的每一步进展，确保过程可追溯。
+
+---
+
+## 2026-08-15 | v0.4.0 审查修复
+
+### 完成事项
+
+- **历史查看链路**: 新增 `AppState.set_history_view` 原子回看状态；查看历史同步侧边栏高亮、清空实时报表、滚动复位，并在导入页显示“历史回看”横幅。
+- **结果渲染性能**: ResultCard 详情懒加载、移除每卡 QGraphicsDropShadowEffect；查看历史不再用 `setUpdatesEnabled` 包裹整页切换。
+- **AI 抽屉**: 宽度改为 min/max resize，气泡宽度受消息区视口约束；修复 FAB 与抽屉头部图标误用 `colored().icon()` 导致黑色图标的问题。
+- **审计表格**: QSS 显式 `outline: none`，消除 Windows 下点击单元格出现的黑色焦点框。
+- **版本与更新**: `APP_VERSION`/pyproject/installer 同步升级 `0.4.0`；新增版本一致性测试；启动后后台异步检查内网更新清单。
+- **测试**: 新增 `tests/gui/test_review_fixes.py` 等回归测试；修复 COM 测试在无 pywin32 环境的探测异常；ruff/mypy/全量测试与 slow 压测通过。
 
 ---
 

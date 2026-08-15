@@ -20,6 +20,7 @@ from fsa.agent.llm_client import (
     is_local_url,
     response_text,
 )
+from fsa.core.exceptions import FSAError
 
 
 class FakeStream(io.BytesIO):
@@ -491,3 +492,11 @@ class TestCancelEvent:
                 [ChatMessage(role="user", content="q")], cancel_event=cancel
             )
         assert resp.content == "hi"
+
+
+class TestLLMErrorInheritance:
+    """F6: LLMError 继承 FSAError。"""
+
+    def test_llm_error_is_fsa_error(self) -> None:
+        """LLMError 继承自 FSAError。"""
+        assert issubclass(LLMError, FSAError)

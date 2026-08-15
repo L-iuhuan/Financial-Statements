@@ -14,8 +14,8 @@ main_window_debate.py (MainWindowDebateMixin); 抽屉/FAB 管理在 main_window_
 from __future__ import annotations
 
 from loguru import logger
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QObject, QSettings, Qt
+from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -62,6 +62,9 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         Ctrl+D - 切换深色/亮色主题
         ESC - 关闭 AI 抽屉
     """
+
+    # 启动更新检查的信号桥 (app.py 注入, 防止被 GC)
+    _startup_update_bridge: QObject | None = None
 
     def __init__(
         self,
@@ -121,15 +124,18 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         self._stack = QStackedWidget()
         self._import_page = ImportPage(self._state)
         self._audit_page = AuditPage(self._state)
-        self._rule_page = RulePage(self._state)
-        self._history_page = HistoryPage(self._state)
-        self._settings_page = SettingsPage(self._state)
 
+        # 延迟创建: 仅首次导航到对应页面时才实例化
+        self._rule_page: RulePage | None = None
+        self._history_page: HistoryPage | None = None
+        self._settings_page: SettingsPage | None = None
+
+        # 记录已创建的页面索引 (避免重复添加)
+        self._page_indices: dict[str, int] = {}
         self._stack.addWidget(self._import_page)
+        self._page_indices["navImport"] = 0
         self._stack.addWidget(self._audit_page)
-        self._stack.addWidget(self._rule_page)
-        self._stack.addWidget(self._history_page)
-        self._stack.addWidget(self._settings_page)
+        self._page_indices["navAudit"] = 1
 
         main_layout.addWidget(self._stack, stretch=1)
 
@@ -142,6 +148,8 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         # AI 抽屉 (默认隐藏)
         self._agent_drawer = AgentDrawer(self._state.chat_repo, self)
         self._agent_drawer.hide()
+        # 取消信号在抽屉创建后即接线 (此前在首个任务启动时才接线, 提前点击停止无效)
+        self.connect_drawer_signals()
 
         # 遮罩层 (点击收起抽屉)
         self._overlay = QFrame(self)
@@ -181,12 +189,9 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         )
         self._import_page.diagnose_requested.connect(self._on_diagnose)
         self._import_page.debate_requested.connect(self._on_debate)
+        self._import_page.history_view_exit_requested.connect(self._on_reset)
 
-        # 历史页面: 查看历史记录
-        self._history_page.view_requested.connect(self._on_view_history)
-
-        # 设置页主题变更
-        self._settings_page.theme_changed.connect(self._on_settings_theme_changed)
+        # 注意: 历史页面和设置页的信号连接延迟到页面创建时 (见 _ensure_page)
 
     def _setup_shortcuts(self) -> None:
         ctrl_d = QShortcut(QKeySequence("Ctrl+D"), self)
@@ -194,17 +199,35 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
 
     # ── 导航 ──
 
+    def _ensure_page(self, nav_id: str) -> int:
+        """延迟创建页面 (首次导航时调用), 返回 stack 中的索引。"""
+        if nav_id == "navRules" and self._rule_page is None:
+            self._rule_page = RulePage(self._state)
+            idx = self._stack.count()
+            self._stack.addWidget(self._rule_page)
+            self._page_indices[nav_id] = idx
+        elif nav_id == "navHistory" and self._history_page is None:
+            self._history_page = HistoryPage(self._state)
+            # 信号连接在页面创建时建立
+            self._history_page.view_requested.connect(self._on_view_history)
+            idx = self._stack.count()
+            self._stack.addWidget(self._history_page)
+            self._page_indices[nav_id] = idx
+        elif nav_id == "navSettings" and self._settings_page is None:
+            self._settings_page = SettingsPage(self._state)
+            # 信号连接在页面创建时建立
+            self._settings_page.theme_changed.connect(self._on_settings_theme_changed)
+            idx = self._stack.count()
+            self._stack.addWidget(self._settings_page)
+            self._page_indices[nav_id] = idx
+        return self._page_indices.get(nav_id, 0)
+
     def _on_nav(self, nav_id: str) -> None:
-        page_map = {
-            "navImport": 0,
-            "navAudit": 1,
-            "navRules": 2,
-            "navHistory": 3,
-            "navSettings": 4,
-        }
-        idx = page_map.get(nav_id, 0)
+        idx = self._ensure_page(nav_id)
         self._stack.setCurrentIndex(idx)
         self._current_nav = nav_id
+        # 程序化导航 (如查看历史) 与侧边栏点击共用此入口, 统一高亮状态
+        self._sidebar.set_active_nav(nav_id, emit=False)
 
         title, subtitle = _PAGE_TITLES.get(nav_id, ("", ""))
         self._topbar.set_title(title, subtitle)
@@ -215,6 +238,10 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         if not workspace and self._agent_drawer.isVisible():
             self._close_drawer()
 
+        # 历史页面首次展示时触发数据加载
+        if nav_id == "navHistory" and self._history_page is not None:
+            self._history_page._show_hook()
+
     def _get_current_nav(self) -> str:
         """返回当前导航页 ID。"""
         return getattr(self, "_current_nav", "navImport")
@@ -224,25 +251,30 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
     def _toggle_theme(self) -> None:
         self._dark = not self._dark
         self._theme_mode = "dark" if self._dark else "light"
-
-        def _apply() -> None:
-            apply_theme(dark=self._dark)
-            from PySide6.QtWidgets import QApplication
-            app = QApplication.instance()
-            if isinstance(app, QApplication):
-                app.setStyleSheet(get_qss(self._dark))
-
-        run_theme_transition(self, _apply)
-        notify_theme_listeners()
-        self._topbar.set_theme_icon(self._dark)
+        self._apply_theme_change(self._dark)
         # 保存用户显式选择
         settings = QSettings("FSA", "FinancialAudit")
         settings.setValue("theme_mode", self._theme_mode)
 
-    def _on_settings_theme_changed(self, dark: bool) -> None:
-        """设置页切换主题时同步主窗口状态。"""
+    def _apply_theme_change(self, dark: bool) -> None:
+        """统一的主题应用入口 (Ctrl+D 与设置页共用, 单入口防重复执行)。"""
         self._dark = dark
+
+        def _apply() -> None:
+            apply_theme(dark=dark)
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if isinstance(app, QApplication):
+                app.setStyleSheet(get_qss(dark))
+
+        run_theme_transition(self, _apply)
+        notify_theme_listeners()
         self._topbar.set_theme_icon(dark)
+
+    def _on_settings_theme_changed(self, dark: bool) -> None:
+        """设置页切换主题: 由主窗口统一应用 (settings_page 不直接应用)。"""
+        self._theme_mode = "dark" if dark else "light"
+        self._apply_theme_change(dark)
 
     # ── 重置 ──
 
@@ -305,6 +337,17 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         from fsa.core.models.report import ReportType
         from fsa.core.models.result import ValidationSummary
 
+        try:
+            report_types = [ReportType(t) for t in record["report_types"]]
+        except (TypeError, ValueError) as e:
+            logger.error(f"历史记录 #{history_id} 报表类型无效: {e}")
+            InfoBar.error(
+                "加载失败", "历史记录中的报表类型无效，无法回看",
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=3000, parent=self,
+            )
+            return
+
         summary = ValidationSummary(
             period=record["period"] or "",
             total=record["total"],
@@ -313,17 +356,22 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
             errored=record["errored"],
             skipped=record["skipped"],
             results=results,
-            report_types=[ReportType(t) for t in record["report_types"]],
+            report_types=report_types,
         )
-        self._state.set_results(summary, persist=False)
+        # 先在隐藏状态下完成历史结果回填, 再一次切换页面, 避免先闪后显;
+        # 不使用 setUpdatesEnabled 包裹, 防止整屏延迟重绘产生黑/白空帧
+        self._state.set_history_view(summary, history_id)
         self._on_nav("navImport")
+        self._import_page.scroll_to_top()
         # 注意: 不再弹 InfoBar —— 页面跳转+结果回填已是充分反馈,
         # 额外提示条会在用户后续点击筛选按钮时造成"弹窗闪现"的干扰
-        if summary is not None:
-            has_issues = summary.failed + summary.errored > 0
-            self._agent_fab.set_badge(has_issues)
+        has_issues = summary.failed + summary.errored > 0
+        self._agent_fab.set_badge(has_issues)
 
-    def closeEvent(self, event) -> None:
-        """窗口关闭时释放数据库连接。"""
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """窗口关闭时取消后台任务并释放数据库连接。"""
+        worker = getattr(self, "_active_worker", None)
+        if worker is not None and hasattr(worker, "cancel"):
+            worker.cancel()
         self._state.close()
         super().closeEvent(event)

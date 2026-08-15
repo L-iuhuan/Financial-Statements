@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import pytest
 
-from fsa.core.exceptions import DuplicateItemError, MissingItemError
+from fsa.core.engine.runner import RuleRunner
+from fsa.core.exceptions import DuplicateItemError
 from fsa.core.models.report import Report, ReportItem, ReportType
 from fsa.core.models.result import ValidationContext
 from fsa.core.models.rule import ReconciliationRule, Severity, ToleranceType
-from fsa.core.engine.runner import RuleRunner
-from tests.conftest import make_balance_sheet, make_rule_bs_bal_001
+from tests.conftest import make_balance_sheet
 
 
 def make_rule(

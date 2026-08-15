@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+import math
+
 from loguru import logger
 
+from fsa.core.exceptions import InvalidToleranceError
 from fsa.storage.database import Database
 
 
@@ -26,7 +29,13 @@ class RuleOverrideRepo:
         Args:
             rule_id: 规则编号
             tolerance: 新的容差值
+
+        Raises:
+            InvalidToleranceError: 容差不是有限非负数 (NaN/Inf/负数)
         """
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise InvalidToleranceError(tolerance)
+
         conn = self._db.connection
         conn.execute(
             """INSERT INTO rule_overrides (rule_id, tolerance)

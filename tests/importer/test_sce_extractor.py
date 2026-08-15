@@ -99,6 +99,8 @@ class TestSceImportIntegration:
             Path(__file__).resolve().parent.parent
             / "fixtures" / "real_reports" / "贵州茅台_2023年报_三大报表.xlsx"
         )
+        if not three_only.exists():
+            pytest.skip("真实年报 fixture 缺失（合规红线：已移出 git，需手动放置）")
         reports = ImportService().import_file(str(three_only))
         types = {r.report_type for r in reports}
         assert ReportType.STATEMENT_OF_CHANGES_IN_EQUITY not in types

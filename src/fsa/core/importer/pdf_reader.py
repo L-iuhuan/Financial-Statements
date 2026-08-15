@@ -82,8 +82,17 @@ def read_pdf(file_path: str) -> dict[str, RawSheetData]:
                 logger.debug(f"  第 {page_num} 页: 表格未识别为财务报表，跳过")
                 continue
 
-            result[raw.name] = raw
-            logger.info(f"  第 {page_num} 页: 识别报表「{raw.name}」，{len(raw.rows)} 行数据")
+            # C6: 同标题跨页续表 — 合并数据行而非覆盖
+            if raw.name in result:
+                existing = result[raw.name]
+                existing.rows.extend(raw.rows)
+                logger.info(
+                    f"  第 {page_num} 页: 合并到报表「{raw.name}」，"
+                    f"新增 {len(raw.rows)} 行，现有 {len(existing.rows)} 行"
+                )
+            else:
+                result[raw.name] = raw
+                logger.info(f"  第 {page_num} 页: 识别报表「{raw.name}」，{len(raw.rows)} 行数据")
 
     logger.info(f"PDF 读取完成，共识别 {len(result)} 张报表")
     return result
@@ -213,10 +222,23 @@ def _parse_data_rows(
         数据行列表，每行为 dict
     """
     rows: list[dict[str, object]] = []
+    header_count = len(headers)
 
     for i in range(start_row, len(table)):
         table_row = table[i]
         if _is_empty_row(table_row):
+            continue
+
+        # 非空单元格计数: 用于行宽校验
+        non_empty_count = sum(1 for cell in table_row if _safe_str(cell) != "")
+
+        # C5: 行宽校验 — 数据行非空单元格数超过表头列数时跳过
+        # 短行则自然对齐，但长行会导致值错位 (P1 宁可漏报)
+        if non_empty_count > header_count:
+            logger.warning(
+                f"  第 {page_num} 页第 {i + 1} 行: "
+                f"非空单元格数({non_empty_count})超过表头列数({header_count})，跳过该行"
+            )
             continue
 
         row_data: dict[str, object] = {"_row": page_num * _PDF_ROW_BASE + i + 1}
@@ -224,7 +246,8 @@ def _parse_data_rows(
 
         for col_idx, header in enumerate(headers):
             if col_idx >= len(table_row):
-                break
+                row_data[header] = None
+                continue
             value = _parse_cell_value(table_row[col_idx])
             if value is not None:
                 is_empty = False

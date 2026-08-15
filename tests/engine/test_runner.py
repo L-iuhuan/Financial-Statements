@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from fsa.core.engine.runner import RuleRunner
+from fsa.core.models.report import Report, ReportItem, ReportType
+from fsa.core.models.result import ValidationContext
 from fsa.core.models.rule import ReconciliationRule, Severity, ToleranceType
 from tests.conftest import make_context, make_rule_bs_bal_001
 
@@ -181,3 +183,54 @@ class TestRuleRunner:
         assert missing[0].row == 0
         assert missing[0].column == "未在报表中找到（按 0 处理）"
         assert missing[0].amount == 0.0
+
+    def test_trace_with_sce_suffixed_key_uses_whole_key_first(self) -> None:
+        """SCE 变量如 sce_paid_in_capital_ending 本身以 _ending 结尾:
+        trace 应先尝试完整 key 查找，而非剥离 _ending 后查找 sce_paid_in_capital 导致 miss。"""
+
+        rule = ReconciliationRule(
+            rule_id="TEST-SCE-001",
+            name="权益变动表勾稽",
+            category="B-表间勾稽",
+            statements=["所有者权益变动表", "资产负债表"],
+            formula="sce_paid_in_capital_ending == paid_in_capital",
+            tolerance_type=ToleranceType.EXACT,
+            tolerance=0.01,
+            severity=Severity.ERROR,
+        )
+        sce = Report(
+            report_type=ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
+            period="2024-12",
+            items=[
+                ReportItem(
+                    key="sce_paid_in_capital_ending",
+                    name="实收资本",
+                    amount=100.0,
+                    row=5,
+                    column="实收资本",
+                )
+            ],
+        )
+        bs = Report(
+            report_type=ReportType.BALANCE_SHEET,
+            period="2024-12",
+            items=[
+                ReportItem(
+                    key="paid_in_capital",
+                    name="实收资本",
+                    amount=100.0,
+                    row=10,
+                    column="期末余额",
+                )
+            ],
+        )
+        ctx = ValidationContext(period="2024-12")
+        ctx.add_report(sce)
+        ctx.add_report(bs)
+        result = RuleRunner.run(rule, ctx)
+        sce_trace = [t for t in result.trace if t.key == "sce_paid_in_capital_ending"]
+        assert len(sce_trace) == 1
+        assert sce_trace[0].amount == 100.0
+        assert sce_trace[0].name == "实收资本"
+        # 不应出现"按 0 处理"的标注
+        assert "按 0 处理" not in sce_trace[0].column

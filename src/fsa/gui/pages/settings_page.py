@@ -8,16 +8,19 @@ history_retention_days, update_manifest_url。
 from __future__ import annotations
 
 from loguru import logger
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFrame,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import InfoBar, InfoBarPosition, SwitchButton
 
 from fsa.gui.app_state import AppState
 from fsa.gui.pages.settings_sections import (
@@ -28,13 +31,30 @@ from fsa.gui.pages.settings_sections import (
     build_update_section,
     build_validation_section,
 )
-from fsa.gui.theme import apply_theme, get_qss
 
 
 class SettingsPage(QWidget):
     """系统设置页面。"""
 
-    theme_changed = Signal(bool)  # type: ignore[name-defined]
+    theme_changed = Signal(bool)
+
+    # 由 settings_sections 的 build_* 分区构建器动态挂接的控件引用
+    _light_btn: QPushButton
+    _dark_btn: QPushButton
+    _auto_btn: QPushButton
+    _tolerance_input: QLineEdit
+    _threshold_input: QLineEdit
+    _days_input: QLineEdit
+    _update_url_input: QLineEdit
+    _update_check_btn: QPushButton
+    _update_download_btn: QPushButton
+    _update_status_label: QLabel
+    _update_download_url: str
+    _llm_provider_combo: QComboBox
+    _llm_base_url_input: QLineEdit
+    _llm_model_input: QLineEdit
+    _llm_api_key_input: QLineEdit
+    _llm_remote_switch: SwitchButton
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -60,7 +80,7 @@ class SettingsPage(QWidget):
         self._save_hint.setObjectName("SaveHintLabel")
         self._save_hint.setVisible(False)
         layout.addWidget(self._save_hint)
-        self._save_hint_timer = None
+        self._save_hint_timer: QTimer | None = None
 
         layout.addWidget(build_appearance_section(self, self._settings, self._state))
         layout.addWidget(build_validation_section(self, self._settings, self._state))
@@ -112,16 +132,8 @@ class SettingsPage(QWidget):
         self._update_theme_buttons(mode)
         dark = self._detect_system_dark() if mode == "auto" else mode == "dark"
 
-        def _apply() -> None:
-            apply_theme(dark=dark)
-            from PySide6.QtWidgets import QApplication
-            app = QApplication.instance()
-            if isinstance(app, QApplication):
-                app.setStyleSheet(get_qss(dark))
-
-        # 截屏遮罩淡出过渡, 避免瞬间反色闪烁
-        from fsa.gui.theme import run_theme_transition
-        run_theme_transition(self.window(), _apply)
+        # 主题应用统一由 MainWindow 负责 (监听 theme_changed),
+        # 本页不直接 apply_theme/setStyleSheet, 避免双入口重复执行
         self.theme_changed.emit(dark)
 
     def _update_theme_buttons(self, mode: str) -> None:
@@ -153,11 +165,17 @@ class SettingsPage(QWidget):
         text = self._tolerance_input.text().strip()
         try:
             value = float(text)
+            if value < 0:
+                raise ValueError("negative tolerance")
             self._settings.setValue("default_tolerance", text)
             self._state.set_default_tolerance(value)
             self._notify_saved()
         except ValueError:
-            pass
+            InfoBar.warning(
+                "输入无效", "容差请输入不小于 0 的数字（如 0.01）",
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=2500, parent=self,
+            )
 
     def _save_threshold(self) -> None:
         text = self._threshold_input.text().strip()
@@ -223,7 +241,7 @@ class SettingsPage(QWidget):
         self._set_theme("auto")  # 应用主题
         from qfluentwidgets import InfoBar, InfoBarPosition
         InfoBar.success(
-            "已恢复默认", "所有设置已重置为默认值",
+            "已恢复默认", "外观与校验参数已恢复默认（AI 助手与更新配置保留）",
             orient=Qt.Orientation.Horizontal, isClosable=True,
             position=InfoBarPosition.TOP, duration=2500, parent=self,
         )
@@ -314,7 +332,42 @@ class SettingsPage(QWidget):
             )
             updater.download(self._update_download_url, save_path)
             self._update_status_label.setText(f"下载完成: {save_path}")
+            self._offer_install(updater, save_path)
         except UpdateError as e:
             self._update_status_label.setText(f"下载失败: {e}")
         finally:
             self._update_download_btn.setEnabled(True)
+
+    def _offer_install(self, updater: object, installer_path: str) -> None:
+        """下载完成后询问是否立即静默安装并重启 (一键更新闭环)。"""
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        from fsa.updater.updater import UpdateError
+
+        install = getattr(updater, "install", None)
+        if install is None:
+            InfoBar.info(
+                "下载完成", f"请手动运行安装包完成安装:\n{installer_path}",
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=5000, parent=self,
+            )
+            return
+        reply = QMessageBox.question(
+            self, "安装更新",
+            "更新包已下载并通过完整性校验。\n是否立即安装？应用将自动关闭并完成静默安装，随后自动重启。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            install(installer_path)
+        except UpdateError as e:
+            InfoBar.error(
+                "安装失败", str(e),
+                orient=Qt.Orientation.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=5000, parent=self,
+            )
+            return
+        # 安装器已启动 (内置 3 秒延迟), 立即退出应用释放文件占用
+        QApplication.quit()

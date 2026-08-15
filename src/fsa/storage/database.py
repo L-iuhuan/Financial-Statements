@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from types import TracebackType
 
 from loguru import logger
 
@@ -42,7 +43,10 @@ CREATE TABLE IF NOT EXISTS validation_results (
     tolerance   REAL NOT NULL DEFAULT 0,
     formula     TEXT NOT NULL DEFAULT '',
     message     TEXT NOT NULL DEFAULT '',
-    errored     INTEGER NOT NULL DEFAULT 0
+    errored     INTEGER NOT NULL DEFAULT 0,
+    skipped     INTEGER NOT NULL DEFAULT 0,
+    category    TEXT NOT NULL DEFAULT '',
+    trace       TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_results_history
     ON validation_results(history_id);
@@ -73,6 +77,14 @@ CREATE TABLE IF NOT EXISTS rule_overrides (
     tolerance REAL NOT NULL
 );
 """
+
+# validation_results 表 v1.3.0 新增列迁移配置
+# 按列名 -> (列定义, 中文日志名)
+_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
+    "skipped": ("skipped INTEGER NOT NULL DEFAULT 0", "跳过"),
+    "category": ("category TEXT NOT NULL DEFAULT ''", "分类"),
+    "trace": ("trace TEXT NOT NULL DEFAULT '[]'", "追溯"),
+}
 
 
 class Database:
@@ -127,6 +139,10 @@ class Database:
     def init_schema(self) -> None:
         """初始化数据库 schema (幂等操作)。
 
+        对已存在的旧数据库，自动检测并迁移新增列 (v1.3.0+)。
+        迁移使用 PRAGMA table_info 检测列是否存在，再 ALTER TABLE ADD COLUMN，
+        确保旧数据不丢失。
+
         Raises:
             RuntimeError: 数据库未连接
         """
@@ -135,6 +151,25 @@ class Database:
         self._conn.executescript(_SCHEMA_DDL)
         self._conn.commit()
         logger.info("数据库 schema 初始化完成")
+
+        # 迁移: 为旧数据库补齐新增列
+        self._migrate_validation_results()
+
+    def _migrate_validation_results(self) -> None:
+        """检测并迁移 validation_results 表的新增列 (幂等)。"""
+        if self._conn is None:
+            return
+        existing = {
+            row[1] for row in
+            self._conn.execute("PRAGMA table_info(validation_results)").fetchall()
+        }
+        for col_name, (col_def, label) in _MIGRATION_COLUMNS.items():
+            if col_name not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE validation_results ADD COLUMN {col_def}"
+                )
+                self._conn.commit()
+                logger.info(f"数据库迁移: validation_results 表新增「{label}」列")
 
     def close(self) -> None:
         """关闭数据库连接。"""
@@ -148,5 +183,10 @@ class Database:
         self.init_schema()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()

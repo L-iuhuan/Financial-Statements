@@ -81,7 +81,7 @@ def merge_summaries(*summaries: ValidationSummary) -> ValidationSummary:
         for report_type in summary.report_types:
             if report_type not in report_types:
                 report_types.append(report_type)
-    passed = sum(1 for result in results if result.passed)
+    passed = sum(1 for result in results if result.passed and not result.skipped and not result.errored)
     failed = sum(1 for result in results if not result.passed and not result.errored)
     errored = sum(1 for result in results if result.errored)
     skipped = sum(1 for result in results if result.skipped)

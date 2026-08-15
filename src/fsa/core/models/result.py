@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from loguru import logger
+
 from fsa.core.models.report import Report, ReportItem, ReportType
 from fsa.core.models.rule import ReconciliationRule, Severity
 
@@ -233,9 +235,20 @@ class ValidationContext:
     reports: dict[ReportType, Report] = field(default_factory=dict)
     period: str = ""
 
+    def __post_init__(self) -> None:
+        """初始化 namespace 缓存 (按 statements 组合缓存)。"""
+        self._ns_cache: dict[frozenset[str], dict[str, float]] = {}
+
     def add_report(self, report: Report) -> None:
-        """添加一张报表。已存在同类型则覆盖。"""
+        """添加一张报表。已存在同类型则覆盖并记录警告，同时清空缓存。"""
+        existing = self.reports.get(report.report_type)
+        if existing is not None:
+            logger.warning(
+                f"报表类型「{report.report_type.value}」已存在，将被覆盖。"
+                f"旧来源: {existing.source_file}, 新来源: {report.source_file}"
+            )
         self.reports[report.report_type] = report
+        self._ns_cache.clear()
 
     def get_report(self, report_type: ReportType) -> Report | None:
         """获取指定类型的报表。不存在返回 None。"""
@@ -266,6 +279,8 @@ class ValidationContext:
         为每个 item 同时设置 {key}_ending 和 {key}_beginning 变量（如果 beginning_amount 不为 None）。
         如果同一个 key 在多张报表中出现，抛出 ValueError。
 
+        结果按 frozenset(statement_names) 缓存——调用方必须复制后再修改 (如 runner 注入阈值变量)。
+
         Args:
             statement_names: 规则涉及的报表中文名列表，如 ["资产负债表"]
 
@@ -276,9 +291,17 @@ class ValidationContext:
             KeyError: 指定的报表类型不存在
             ValueError: 变量名冲突（同一 key 出现在多张报表中）
         """
+        cache_key = frozenset(statement_names)
+        cached = self._ns_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         namespace: dict[str, float] = {key: 0.0 for key in KNOWN_LINE_ITEM_KEYS}
         seen_keys: set[str] = set()
         name_to_type = {rt.value: rt for rt in ReportType}
+
+        # 后缀模式的 key 集合，避免对已带后缀的 key 再生成 {key}_ending/{key}_beginning
+        _SUFFIXED_KEYS: frozenset[str] = frozenset({"_ending", "_beginning", "_comprehensive"})
 
         for stmt_name in statement_names:
             report_type = name_to_type.get(stmt_name)
@@ -294,9 +317,14 @@ class ValidationContext:
                     )
                 seen_keys.add(item.key)
                 namespace[item.key] = item.amount
-                # 设置 {key}_ending 变量
-                namespace[f"{item.key}_ending"] = item.amount
-                # 设置 {key}_beginning 变量（仅当 beginning_amount 不为 None）
-                if item.beginning_amount is not None:
+                # 设置 {key}_ending 变量 (仅当 key 本身不以 _ending/_beginning/_comprehensive 结尾)
+                if not any(item.key.endswith(suffix) for suffix in _SUFFIXED_KEYS):
+                    namespace[f"{item.key}_ending"] = item.amount
+                # 设置 {key}_beginning 变量（仅当 beginning_amount 不为 None 且 key 无后缀）
+                if item.beginning_amount is not None and not any(
+                    item.key.endswith(suffix) for suffix in _SUFFIXED_KEYS
+                ):
                     namespace[f"{item.key}_beginning"] = item.beginning_amount
+
+        self._ns_cache[cache_key] = namespace
         return namespace

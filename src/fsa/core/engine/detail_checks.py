@@ -100,19 +100,21 @@ def check_cash_flow_detail_vs_statement(
         amount = inflow[key] if inflow[key] > 0 else outflow[key]
         statement_amount = statement.get(alias)
         if statement_amount is None:
+            # P1: 明细项目在主表无对应行通常是科目映射缺口, 降级为跳过+提示,
+            # 不作为异常/不通过 (宁可漏报不可误报)
             results.append(
                 ValidationResult(
                     rule_id="CF-DTL-001",
                     rule_name="现金流量明细=现金流量表",
-                    passed=False,
+                    passed=True,
                     severity=Severity.WARNING,
                     left_value=amount,
                     right_value=0.0,
                     diff=amount,
                     tolerance=tolerance,
                     formula="明细项目合计 == 主表项目",
-                    message=f"现金流量明细项目「{key}」未在主表中找到对应项目",
-                    errored=True,
+                    message=f"现金流量明细项目「{key}」未在主表中找到对应项目, 已跳过核对该项",
+                    skipped=True,
                     category="L2-明细勾稽",
                 )
             )
@@ -124,7 +126,7 @@ def check_cash_flow_detail_vs_statement(
                 rule_id="CF-DTL-001",
                 rule_name="现金流量明细=现金流量表",
                 passed=passed,
-                severity=Severity.ERROR if not passed else Severity.ERROR,
+                severity=Severity.ERROR,
                 left_value=amount,
                 right_value=statement_amount,
                 diff=diff,
@@ -224,7 +226,7 @@ def check_trial_balance_vs_balance_sheet(
                 rule_id="TB-BS-001",
                 rule_name="余额表=资产负债表",
                 passed=passed,
-                severity=Severity.ERROR if not passed else Severity.ERROR,
+                severity=Severity.ERROR,
                 left_value=expected,
                 right_value=actual,
                 diff=diff,

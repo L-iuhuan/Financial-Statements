@@ -138,8 +138,16 @@ class HistoryPage(QWidget):
         self.setObjectName("HistoryPage")
         self._state = state
         self._cards: list[HistoryCard] = []
+        self._history_loaded = False
         self._setup_ui()
         self._connect_signals()
+        # 注意: _load_history() 延迟到首次展示时调用 (见 _show_hook)
+
+    def _show_hook(self) -> None:
+        """首次展示时加载历史数据 (仅一次)。"""
+        if not self._history_loaded:
+            self._history_loaded = True
+            self._load_history()
 
     def _connect_signals(self) -> None:
         self._state.history_changed.connect(self._load_history)
@@ -199,8 +207,6 @@ class HistoryPage(QWidget):
         main = QVBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
         main.addWidget(scroll)
-
-        self._load_history()
 
     def _load_history(self) -> None:
         """从 SQLite 加载校验历史, 刷新卡片列表。"""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PySide6.QtGui import QKeySequence
 from PySide6.QtTest import QTest
 
@@ -12,6 +13,11 @@ from fsa.gui.main_window import MainWindow
 _TEST_ROOT = Path(__file__).resolve().parent
 _PROJECT_ROOT = _TEST_ROOT.parent.parent
 _MOUTAI_FILE = _PROJECT_ROOT / "tests" / "fixtures" / "real_reports" / "贵州茅台_2023年报_三大报表.xlsx"
+pytestmark = pytest.mark.skipif(
+    not _MOUTAI_FILE.exists(),
+    reason="真实年报 fixture 缺失（合规红线：已移出 git，需手动放置）",
+)
+
 
 
 class TestTopbarThemeToggle:

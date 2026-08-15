@@ -9,12 +9,15 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from zipfile import BadZipFile
 
 import openpyxl
 from loguru import logger
+from openpyxl.worksheet.worksheet import Worksheet
 
 from fsa.core.exceptions import FSAError
 
@@ -131,7 +134,7 @@ def _read_native(path: str) -> dict[str, RawSheetData]:
     return result
 
 
-def _sheet_to_matrix(worksheet: openpyxl.worksheet.worksheet.Worksheet) -> list[list[object]]:
+def _sheet_to_matrix(worksheet: Worksheet) -> list[list[object]]:
     """将 openpyxl 工作表转换为二维矩阵（行优先）。"""
     return [
         [worksheet.cell(row=r, column=c).value for c in range(1, worksheet.max_column + 1)]
@@ -244,7 +247,7 @@ def _build_rows(
     return rows
 
 
-def _to_header_list(cells: list[object], fill_empty: bool) -> list[str]:
+def _to_header_list(cells: Sequence[object], fill_empty: bool) -> list[str]:
     """将一行单元格转换为列标题列表。
 
     Args:
@@ -302,17 +305,21 @@ def read_excel_com(file_path: str) -> dict[str, RawSheetData]:
     except ImportError as error:
         raise FSAError("未安装 pywin32，无法使用 Excel COM 读取加密文件") from error
 
-    pythoncom = None
+    pythoncom: ModuleType | None
     co_initialized = False
     try:
-        import pythoncom
+        import pythoncom as _pythoncom
+
+        pythoncom = _pythoncom
     except ImportError:
-        pass
-    else:
+        pythoncom = None
+    if pythoncom is not None:
+        # pywin32 存根不含 com_error 属性, 经 getattr 取回退 OSError
+        com_error = getattr(pythoncom, "com_error", OSError)
         try:
             pythoncom.CoInitialize()
             co_initialized = True
-        except (pythoncom.com_error, OSError):
+        except (com_error, OSError):
             co_initialized = False
 
     path = str(file_path)

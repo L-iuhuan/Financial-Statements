@@ -158,10 +158,9 @@ class MultiEntityService:
     def check_bilateral(self, outcomes: list[EntityOutcome]) -> list[ValidationResult]:
         """按主体名核对内部交易现金流双边金额（流入方 vs 流出方）。
 
-        科目对与容差优先取主体配置（entity_config.bilateral_pairs /
-        bilateral_tolerance），缺省使用 DEFAULT_BILATERAL_PAIRS / 0.01。
+        科目对与容差按"流出方主体"的配置解析（其自定义 -> 全局首个自定义 ->
+        默认值），避免第一个主体的配置被误用到所有主体对（口径隔离）。
         """
-        pairs, tolerance = self._bilateral_settings()
         datasets = {
             outcome.entity_id: outcome.dataset for outcome in outcomes
         }
@@ -171,6 +170,7 @@ class MultiEntityService:
             for right_idx in range(left_idx + 1, len(entities)):
                 left = entities[left_idx]
                 right = entities[right_idx]
+                pairs, tolerance = self._bilateral_settings_for(left)
                 for inflow_project, outflow_project in pairs.items():
                     results.extend(
                         self._pair_results(
@@ -185,8 +185,20 @@ class MultiEntityService:
                     )
         return results
 
+    def _bilateral_settings_for(self, entity_id: str) -> tuple[dict[str, str], float]:
+        """按主体解析双边核对配置：该主体自定义 -> 全局兜底。"""
+        own = self._configs.get(entity_id)
+        if own is not None and (own.bilateral_pairs or own.bilateral_tolerance is not None):
+            return (
+                own.bilateral_pairs or DEFAULT_BILATERAL_PAIRS,
+                own.bilateral_tolerance
+                if own.bilateral_tolerance is not None
+                else DEFAULT_BILATERAL_TOLERANCE,
+            )
+        return self._bilateral_settings()
+
     def _bilateral_settings(self) -> tuple[dict[str, str], float]:
-        """集团双边核对的科目对与容差：优先取主体配置，缺省用默认值。"""
+        """集团双边核对的全局兜底配置：首个自定义主体配置，否则默认值。"""
         for config in self._configs.values():
             pairs = config.bilateral_pairs or DEFAULT_BILATERAL_PAIRS
             tolerance = (

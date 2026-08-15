@@ -243,7 +243,7 @@ class TestEntityConfig:
 
         assert threshold_vars_for("construction")["ar_to_revenue_threshold"] == 0.60
         assert threshold_vars_for("construction")["sales_cash_ratio_threshold"] == 0.5
-        assert threshold_vars_for("retail")["quick_ratio_threshold"] == 0.7
+        assert threshold_vars_for("retail")["current_ratio_threshold"] == 0.7
         assert threshold_vars_for("cyclical")["gm_yoy_threshold"] == 0.50
         assert threshold_vars_for("high_growth")["yoy_fluctuation_threshold"] == 0.50
 

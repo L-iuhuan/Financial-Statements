@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from loguru import logger
 
 from fsa.storage.database import Database
@@ -42,7 +44,7 @@ class ChatRepo:
         logger.info(f"创建对话会话 #{session_id}: {title}")
         return session_id
 
-    def get_sessions(self, limit: int = 50) -> list[dict]:
+    def get_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
         """获取最近的对话会话列表。
 
         Args:
@@ -61,7 +63,7 @@ class ChatRepo:
             (limit,),
         ).fetchall()
 
-        result: list[dict] = []
+        result: list[dict[str, Any]] = []
         for row in rows:
             result.append({
                 "id": row["id"],
@@ -72,7 +74,7 @@ class ChatRepo:
             })
         return result
 
-    def get_messages(self, session_id: int) -> list[dict]:
+    def get_messages(self, session_id: int) -> list[dict[str, Any]]:
         """获取指定会话的全部消息。
 
         Args:
@@ -91,7 +93,7 @@ class ChatRepo:
             (session_id,),
         ).fetchall()
 
-        result: list[dict] = []
+        result: list[dict[str, Any]] = []
         for row in rows:
             result.append({
                 "id": row["id"],
@@ -115,7 +117,7 @@ class ChatRepo:
             新消息 ID
 
         Raises:
-            ValueError: role 不合法
+            ValueError: role 不合法或会话不存在
         """
         if role not in ("user", "assistant"):
             raise ValueError(
@@ -123,6 +125,14 @@ class ChatRepo:
             )
 
         conn = self._db.connection
+
+        # 预检查会话是否存在
+        exists = conn.execute(
+            "SELECT 1 FROM chat_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        if exists is None:
+            raise ValueError(f"对话会话不存在: 会话 #{session_id} 未找到")
+
         cursor = conn.execute(
             """INSERT INTO chat_messages (session_id, role, content)
                VALUES (?, ?, ?)""",

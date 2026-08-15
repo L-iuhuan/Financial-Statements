@@ -64,12 +64,15 @@ class Report:
         period: 报告期间，如 "2024-12"
         source_file: 源文件路径
         items: 报表项目列表
+        unmapped_names: 导入时未能映射为标准科目的项目名称（有金额但无法识别），
+            供 Agent 工具与人工排查使用；不参与校验
     """
 
     report_type: ReportType
     period: str = ""
     source_file: str = ""
     items: list[ReportItem] = field(default_factory=list)
+    unmapped_names: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._index: dict[str, ReportItem] = {}

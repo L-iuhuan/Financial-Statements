@@ -239,7 +239,8 @@ class TestDebateStageHint:
         monkeypatch.setattr("fsa.agent.debate.DebateEngine", FakeDebateEngine)
 
         window._on_debate("A-001")
-        qtbot.waitUntil(lambda: len(stub.messages) >= 1, timeout=5000)
+        # 等待后台 worker 真正执行 debate (而非仅同步的"正在启动"消息)
+        qtbot.waitUntil(lambda: "on_stage" in captured, timeout=5000)
         assert captured["on_stage"] is not None
         assert stub.stage_hints == [
             "分析师正在分析…",
@@ -280,3 +281,76 @@ class TestRemoteSwitchSettings:
         assert switch is not None
         assert isinstance(switch, SwitchButton)
         assert switch.isChecked() is False  # 默认关
+
+
+class TestLLMClientCache:
+    """FIX 3: _get_llm_client 缓存 — 相同参数返回同一对象, 参数变则重建。"""
+
+    def test_unchanged_settings_returns_same_client(
+        self, qapp, qtbot, app_state
+    ) -> None:
+        """两次调用设置不变, 返回同一对象。"""
+        window = _make_window(qapp, qtbot, app_state)
+        settings = QSettings("FSA", "FinancialAudit")
+        settings.setValue("llm_provider", "openai")
+        settings.setValue("llm_base_url", "http://127.0.0.1:8000/v1")
+        settings.setValue("llm_model", "m")
+        settings.setValue("llm_api_key", "")
+
+        c1 = window._get_llm_client()
+        c2 = window._get_llm_client()
+        assert c1 is not None
+        assert c1 is c2  # 同一对象
+
+    def test_model_changed_returns_new_client(
+        self, qapp, qtbot, app_state
+    ) -> None:
+        """模型名变更后返回新对象。"""
+        window = _make_window(qapp, qtbot, app_state)
+        settings = QSettings("FSA", "FinancialAudit")
+        settings.setValue("llm_provider", "openai")
+        settings.setValue("llm_base_url", "http://127.0.0.1:8000/v1")
+        settings.setValue("llm_model", "m")
+        settings.setValue("llm_api_key", "")
+
+        c1 = window._get_llm_client()
+        assert c1 is not None
+
+        settings.setValue("llm_model", "m2")
+        c2 = window._get_llm_client()
+        assert c2 is not None
+        assert c1 is not c2
+
+    def test_remote_ack_changes_key(self, qapp, qtbot, app_state) -> None:
+        """allow_remote_ack 变更导致缓存键变化。"""
+        window = _make_window(qapp, qtbot, app_state)
+        settings = QSettings("FSA", "FinancialAudit")
+        settings.setValue("llm_provider", "openai")
+        settings.setValue("llm_base_url", "https://api.example.com/v1")
+        settings.setValue("llm_model", "m")
+        assert not settings.contains("llm_allow_remote_ack")
+
+        c1 = window._get_llm_client()
+        assert c1 is None
+        assert window._llm_block_reason == "remote"
+
+        settings.setValue("llm_allow_remote_ack", True)
+        c2 = window._get_llm_client()
+        assert c2 is not None
+        assert c1 is not c2
+
+    def test_block_reason_unchanged_for_cached(self, qapp, qtbot, app_state) -> None:
+        """缓存命中时 _llm_block_reason 语义一致。"""
+        window = _make_window(qapp, qtbot, app_state)
+        settings = QSettings("FSA", "FinancialAudit")
+        settings.setValue("llm_provider", "openai")
+        settings.setValue("llm_base_url", "http://127.0.0.1:8000/v1")
+        settings.setValue("llm_model", "m")
+
+        c1 = window._get_llm_client()
+        assert c1 is not None
+        assert window._llm_block_reason == ""
+
+        c2 = window._get_llm_client()
+        assert c2 is not None
+        assert window._llm_block_reason == ""

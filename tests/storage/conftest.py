@@ -58,8 +58,14 @@ def make_result(
     formula: str = "asset_total == liability_total + equity_total",
     message: str = "校验通过",
     errored: bool = False,
+    skipped: bool = False,
+    category: str = "A-表内平衡",
+    trace: list | None = None,
 ) -> ValidationResult:
     """构造 ValidationResult 辅助函数。"""
+
+    if trace is None:
+        trace = []
     return ValidationResult(
         rule_id=rule_id,
         rule_name=rule_name,
@@ -72,6 +78,9 @@ def make_result(
         formula=formula,
         message=message,
         errored=errored,
+        skipped=skipped,
+        category=category,
+        trace=trace,
     )
 
 

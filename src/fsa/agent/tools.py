@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from fsa.core.models.report import Report, ReportItem
 from fsa.core.models.result import ValidationResult
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 
 # ── 工具 JSON schema 定义 (OpenAI/Ollama tool calling 格式) ──
 
-TOOL_SCHEMAS: list[dict] = [
+TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -119,7 +120,7 @@ TOOL_SCHEMAS: list[dict] = [
 # ── 工具执行 ──
 
 
-def execute_tool(name: str, arguments: dict, state: AppState) -> str:
+def execute_tool(name: str, arguments: dict[str, Any], state: AppState) -> str:
     """执行一个工具调用, 返回中文文本结果 (供 LLM 阅读)。
 
     Args:
@@ -140,7 +141,7 @@ def _fmt_money(v: float) -> str:
     return f"{v:,.2f}"
 
 
-def _get_validation_results(args: dict, state: AppState) -> str:
+def _get_validation_results(args: dict[str, Any], state: AppState) -> str:
     s = state.results
     if s is None:
         return "当前没有校验结果。请先导入报表并执行校验。"
@@ -170,7 +171,7 @@ def _find_result(state: AppState, rule_id: str) -> ValidationResult | None:
     return None
 
 
-def _get_rule_trace(args: dict, state: AppState) -> str:
+def _get_rule_trace(args: dict[str, Any], state: AppState) -> str:
     rule_id = args.get("rule_id", "")
     r = _find_result(state, rule_id)
     if r is None:
@@ -191,7 +192,7 @@ def _get_rule_trace(args: dict, state: AppState) -> str:
     return "\n".join(lines)
 
 
-def _get_rule_definition(args: dict, state: AppState) -> str:
+def _get_rule_definition(args: dict[str, Any], state: AppState) -> str:
     rule_id = args.get("rule_id", "")
     registry = state.registry
     if registry is None:
@@ -212,29 +213,47 @@ def _get_rule_definition(args: dict, state: AppState) -> str:
     return "\n".join(lines)
 
 
-def _get_report_item(args: dict, state: AppState) -> str:
+def _get_report_item(args: dict[str, Any], state: AppState) -> str:
     name = args.get("name", "")
     reports = state.reports
     if not reports:
         return "当前没有导入任何报表。"
+
+    def _fmt(report: Report, item: ReportItem) -> str:
+        loc = f"第{item.row}行 {item.column}列" if item.row > 0 else ""
+        return (
+            f"{item.name}: {_fmt_money(item.amount)} 元 "
+            f"(来自 {report.report_type.value} {loc})"
+        )
+
+    # 精确匹配优先 (科目名或 key 完全相等), 避免"资产"命中"资产总计"类歧义
+    for report in reports:
+        for item in report.items:
+            if name == item.name or name == item.key:
+                return _fmt(report, item)
+    # 子串兜底: 返回首个命中, 并提示其他相似科目
+    first_hit: str | None = None
+    similar: list[str] = []
     for report in reports:
         for item in report.items:
             if name in item.name or name in item.key:
-                loc = f"第{item.row}行 {item.column}列" if item.row > 0 else ""
-                return (
-                    f"{item.name}: {_fmt_money(item.amount)} 元 "
-                    f"(来自 {report.report_type.value} {loc})"
-                )
-    return f"未找到科目「{name}」(可能未导入或未被识别为标准科目)。"
+                if first_hit is None:
+                    first_hit = _fmt(report, item)
+                similar.append(item.name)
+    if first_hit is None:
+        return f"未找到科目「{name}」(可能未导入或未被识别为标准科目)。"
+    if len(similar) > 1:
+        first_hit += f"\n另匹配到 {len(similar) - 1} 个相似科目: " + "、".join(similar[1:4])
+    return first_hit
 
 
-def _search_knowledge(args: dict, state: AppState) -> str:
+def _search_knowledge(args: dict[str, Any], state: AppState) -> str:
     from fsa.agent.knowledge import search_knowledge
     query = args.get("query", "")
     return search_knowledge(query)
 
 
-def _compare_with_history(args: dict, state: AppState) -> str:
+def _compare_with_history(args: dict[str, Any], state: AppState) -> str:
     repo = state.history_repo
     current = state.results
     if current is None:
@@ -253,7 +272,7 @@ def _compare_with_history(args: dict, state: AppState) -> str:
     )
 
 
-def _get_imported_reports(args: dict, state: AppState) -> str:
+def _get_imported_reports(args: dict[str, Any], state: AppState) -> str:
     reports = state.reports
     if not reports:
         return "当前没有导入任何报表。"
@@ -266,21 +285,31 @@ def _get_imported_reports(args: dict, state: AppState) -> str:
     return "\n".join(lines)
 
 
-def _get_unmapped_items(args: dict, state: AppState) -> str:
-    # 未识别科目需要从导入日志/报表原始数据获取; 当前通过对比已知科目数估算
+def _get_unmapped_items(args: dict[str, Any], state: AppState) -> str:
     reports = state.reports
     if not reports:
         return "当前没有导入任何报表。"
-    return (
-        "各报表已识别科目数如下。未被识别的科目不会参与校验, "
-        "通常是报表中较特殊的项目 (如'其中:'明细或非标准科目)。\n"
-        + "\n".join(
-            f"  {r.report_type.value}: 识别 {len(r.items)} 个标准科目" for r in reports
-        )
+    lines: list[str] = []
+    total = 0
+    for r in reports:
+        names = list(getattr(r, "unmapped_names", []))
+        total += len(names)
+        if names:
+            shown = "、".join(names[:20])
+            suffix = f" 等 {len(names)} 个" if len(names) > 20 else ""
+            lines.append(f"  {r.report_type.value}: {shown}{suffix}")
+        else:
+            lines.append(f"  {r.report_type.value}: 无未识别科目 (识别 {len(r.items)} 个标准科目)")
+    if total == 0:
+        return "所有报表科目均已识别为标准科目。\n" + "\n".join(lines)
+    header = (
+        f"共 {total} 个项目未能识别为标准科目 (不参与校验, "
+        "通常是'其中:'明细或非标准科目, 如需参与校验请反馈管理员补充映射):"
     )
+    return header + "\n" + "\n".join(lines)
 
 
-def _get_skipped_rules(args: dict, state: AppState) -> str:
+def _get_skipped_rules(args: dict[str, Any], state: AppState) -> str:
     s = state.results
     if s is None:
         return "当前没有校验结果。"

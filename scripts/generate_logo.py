@@ -1,4 +1,4 @@
-"""生成应用 Logo: 极简粗体对勾 + 圆角方形底, 钢蓝灰品牌色。
+"""生成应用 Logo: 极简粗体对勾 + 圆角方形底, 精炼靛蓝品牌色。
 
 设计原则:
 - 1-2 个几何元素: 圆角方形底 + 单一路径粗对勾
@@ -21,18 +21,18 @@ from pathlib import Path
 import cairosvg
 from PIL import Image
 
-# 品牌钢蓝灰 (与 theme.py brand_600 一致)
-TEAL = "#3e5f8f"
-TEAL_DARK = "#2e4f77"
-TEAL_LIGHT = "#6b8fc5"
+# 精炼靛蓝 (与 theme.py brand_500/600/700 一致)
+INDIGO_LIGHT = "#818cf8"
+INDIGO = "#5b5ee6"
+INDIGO_DARK = "#4f46e5"
 
 # 极简标记: 粗体圆角对勾, 强剪影
 _SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="{TEAL_LIGHT}"/>
-      <stop offset="0.5" stop-color="{TEAL}"/>
-      <stop offset="1" stop-color="{TEAL_DARK}"/>
+      <stop offset="0" stop-color="{INDIGO_LIGHT}"/>
+      <stop offset="0.5" stop-color="{INDIGO}"/>
+      <stop offset="1" stop-color="{INDIGO_DARK}"/>
     </linearGradient>
   </defs>
   <!-- 圆角方形底: 强剪影 -->

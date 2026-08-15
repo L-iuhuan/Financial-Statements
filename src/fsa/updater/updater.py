@@ -16,8 +16,10 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from fsa.core.exceptions import FSAError
 
-class UpdateError(Exception):
+
+class UpdateError(FSAError):
     """更新过程异常，错误信息为中文，面向财务用户。"""
 
 
@@ -208,6 +210,39 @@ class Updater:
             self._verify_sha256(dest_path, expected_sha256)
 
         return dest_path
+
+    def install(self, installer_path: str) -> None:
+        """启动安装包静默安装 (Inno Setup /SILENT /NOCANCEL)。
+
+        调用方（GUI 层）职责: 调用前已下载并通过 SHA256 校验;
+        调用成功后必须立即退出本应用 (安装器会替换程序文件)。
+
+        Args:
+            installer_path: 已下载校验的安装包路径 (.exe)
+
+        Raises:
+            UpdateError: 安装包不存在、非 .exe 或启动失败
+        """
+        import subprocess
+
+        path = os.path.abspath(installer_path)
+        if not os.path.isfile(path):
+            raise UpdateError(f"安装包不存在: {installer_path}")
+        if not path.lower().endswith(".exe"):
+            raise UpdateError("安装包格式错误: 应为 .exe 安装程序")
+
+        logger.info(f"启动静默安装: {path}")
+        try:
+            # 经 cmd 延迟 3 秒启动安装器: 给本应用退出留出时间,
+            # 避免安装器复制文件时 exe 仍被占用导致静默失败
+            subprocess.Popen(  # noqa: S603 - 路径来自已校验的本地下载
+                f'cmd /c "timeout /t 3 /nobreak >nul && ""{path}"" /SILENT /NOCANCEL"',
+                close_fds=True,
+                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            )
+        except OSError as e:
+            raise UpdateError(f"无法启动安装程序 ({e})，请手动运行安装包") from e
 
     def _fetch_expected_sha256(self) -> str | None:
         """从更新清单读取期望的 sha256 哈希值。

@@ -10,6 +10,22 @@ from tests.conftest import make_balance_sheet
 from tests.services.conftest import make_registry, make_rule
 
 
+def _skipped_result(rule_id: str) -> ValidationResult:
+    return ValidationResult(
+        rule_id=rule_id,
+        rule_name=rule_id,
+        passed=True,
+        severity=Severity.WARNING,
+        left_value=0.0,
+        right_value=0.0,
+        diff=0.0,
+        tolerance=0.01,
+        formula="",
+        message=rule_id,
+        skipped=True,
+    )
+
+
 def _result(rule_id: str, passed: bool, errored: bool = False) -> ValidationResult:
     return ValidationResult(
         rule_id=rule_id,
@@ -56,7 +72,8 @@ def test_merge_summaries_recomputes_counts() -> None:
     )
     merged = merge_summaries(first, second)
     assert merged.total == 4
-    assert merged.passed == 3
+    # passed 排除 errored/skipped（与 validation_service._build_summary 口径一致）
+    assert merged.passed == 2
     assert merged.failed == 1
     assert merged.errored == 1
     assert [r.rule_id for r in merged.results] == ["A", "B", "C", "D"]
@@ -108,6 +125,27 @@ def test_merge_summaries_dedup_recomputes_all_counts() -> None:
     assert [r.rule_id for r in merged.results] == ["A", "X", "S"]
     assert merged.errored == 1
     assert merged.total == 3
+
+
+def test_merge_summaries_skipped_not_counted_as_passed() -> None:
+    """skipped 结果不计入 passed (passed 排除 skipped 和 errored)。"""
+    summary = ValidationSummary(
+        period="2026-06",
+        results=[
+            _result("A", True),            # passed
+            _result("B", False),           # failed
+            _result("C", True, errored=True),  # errored (passed=False)
+            _skipped_result("D"),          # skipped (passed=True, skipped=True)
+        ],
+    )
+    merged = merge_summaries(summary)
+    assert merged.total == 4
+    assert merged.passed == 1       # only A
+    assert merged.failed == 1       # B
+    assert merged.errored == 1      # C
+    assert merged.skipped == 1      # D
+    # 验证 passed + failed + errored + skipped == total
+    assert merged.passed + merged.failed + merged.errored + merged.skipped == merged.total
 
 
 class TestPackageThresholdInjection:

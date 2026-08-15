@@ -11,6 +11,7 @@ import openpyxl
 from loguru import logger
 
 from fsa.core.importer.detail_importer import DetailImporter
+from fsa.core.importer.excel_reader import read_excel
 from fsa.core.models.detail import CashFlowDetailRow, DetailDataset, JournalRow
 
 
@@ -259,3 +260,44 @@ class TestDetailDatasetMergeAndEmpty:
                        direction="借", amount=1.0)
         ])
         assert dataset.is_empty is False
+
+
+class TestImportData:
+    """测试 import_data 方法（从已读取数据导入，跳过文件读取）。"""
+
+    def test_import_data_returns_same_as_import_file(self, tmp_path: Path) -> None:
+        """import_data 与 import_file 对同一文件返回相同明细数据。"""
+        path = _make_workbook(tmp_path)
+        raw_data = read_excel(str(path))
+
+        importer = DetailImporter(period="2026-06")
+        from_file = importer.import_file(str(path))
+        from_data = importer.import_data(raw_data)
+
+        assert len(from_file.trial_balance) == len(from_data.trial_balance)
+        assert len(from_file.journal) == len(from_data.journal)
+        assert len(from_file.cash_flow_detail) == len(from_data.cash_flow_detail)
+        assert len(from_file.reclassifications) == len(from_data.reclassifications)
+        assert len(from_file.related_party_purchases) == len(from_data.related_party_purchases)
+        assert len(from_file.sales_details) == len(from_data.sales_details)
+        assert len(from_file.internal_cash_flows) == len(from_data.internal_cash_flows)
+
+        # 具体数据一致
+        assert from_data.trial_balance[0].account_code == "1002"
+        assert from_data.trial_balance[0].ending_debit == 600.0
+        assert from_data.journal[0].voucher_no == "记-0001"
+
+    def test_import_data_empty_returns_empty_dataset(self) -> None:
+        """import_data 对空数据返回空 DetailDataset。"""
+        importer = DetailImporter()
+        dataset = importer.import_data({})
+        assert dataset.is_empty
+
+    def test_import_data_with_period(self, tmp_path: Path) -> None:
+        """import_data 使用 DetailImporter 的 period。"""
+        path = _make_workbook(tmp_path)
+        raw_data = read_excel(str(path))
+
+        importer = DetailImporter(period="2026-06")
+        dataset = importer.import_data(raw_data)
+        assert dataset.period == "2026-06"

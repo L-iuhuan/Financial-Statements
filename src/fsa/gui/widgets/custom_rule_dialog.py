@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from fsa.core.engine.evaluator import ExpressionEvaluator
@@ -75,7 +76,7 @@ _VARIABLE_REFERENCE = [
 class CustomRuleDialog(QDialog):
     """新增自定义规则的模态对话框。"""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("新增自定义规则")
         self.setMinimumWidth(520)

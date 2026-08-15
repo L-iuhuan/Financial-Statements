@@ -55,9 +55,11 @@ class ReportCard(QFrame):
         icon_layout = QHBoxLayout(icon_frame)
         icon_layout.setContentsMargins(0, 0, 0, 0)
 
-        icon, _ = _REPORT_META.get(
+        # 注: 不用元组解包 (icon, _) — mypy 2.3.0 对 .get() 元组默认值
+        # 的解包路径有内部崩溃 (check_multi_assignment_from_tuple)
+        icon = _REPORT_META.get(
             self._report.report_type, (FluentIcon.DOCUMENT, "")
-        )
+        )[0]
         icon_label = QLabel()
         icon_label.setPixmap(icon.icon().pixmap(16, 16))
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

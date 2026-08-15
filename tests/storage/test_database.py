@@ -195,9 +195,8 @@ class TestDatabaseContextManager:
         db = Database(db_path)
 
         # Act
-        with pytest.raises(ValueError):
-            with db:
-                raise ValueError("test error")
+        with pytest.raises(ValueError), db:
+            raise ValueError("test error")
 
         # Assert
         with pytest.raises(RuntimeError):

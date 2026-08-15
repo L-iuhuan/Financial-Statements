@@ -21,9 +21,10 @@ from __future__ import annotations
 import html
 import re
 from datetime import datetime
+from typing import Protocol
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QTextOption
+from PySide6.QtGui import QContextMenuEvent, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -270,7 +271,7 @@ class _AssistantBubble(QTextBrowser):
         self.setOpenExternalLinks(False)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         # 模拟气泡内边距 (QSS padding 对 QTextBrowser 不生效)
@@ -302,7 +303,7 @@ class _AssistantBubble(QTextBrowser):
         height = self.document().documentLayout().documentSize().height()
         self.setFixedHeight(int(height) + 16)
 
-    def contextMenuEvent(self, event) -> None:
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         menu = self.createStandardContextMenu()
         menu.addSeparator()
         action = menu.addAction("复制全文")
@@ -312,19 +313,26 @@ class _AssistantBubble(QTextBrowser):
         menu.exec(event.globalPos())
 
 
+class _StickButtonHost(Protocol):
+    """_StickPositionFilter 的宿主契约: 提供回到底部按钮与定位方法。"""
+
+    _stick_button: QPushButton
+
+    def _position_stick_button(self) -> None: ...
+
+
 class _StickPositionFilter(QObject):
     """视口 resize 时重新定位"回到底部"按钮 (右下角悬浮)。"""
 
-    def __init__(self, owner: QWidget) -> None:
+    def __init__(self, owner: _StickButtonHost) -> None:
         super().__init__()
         self._owner = owner
 
-    def eventFilter(self, obj: QObject, event) -> bool:
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Resize:
-            owner = self._owner
-            btn = getattr(owner, "_stick_button", None)
+            btn = getattr(self._owner, "_stick_button", None)
             if btn is not None:
-                owner._position_stick_button()
+                self._owner._position_stick_button()
         return False
 
 
@@ -339,7 +347,7 @@ class _AgentDrawerContracts:
         """由 AgentSessionMixin 提供: 消息持久化。"""
         raise NotImplementedError
 
-    def _rebuild_messages(self, messages: list[dict]) -> None:
+    def _rebuild_messages(self, messages: list[dict[str, object]]) -> None:
         """由 AgentMessageMixin 提供: 重建消息区。"""
         raise NotImplementedError
 
@@ -354,7 +362,7 @@ class StreamMessageHandle:
     def __init__(
         self,
         layout: QVBoxLayout,
-        bubble: QTextBrowser,
+        bubble: _AssistantBubble,
         time_label: QLabel,
     ) -> None:
         self.layout = layout
@@ -377,8 +385,8 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
     _messages_layout: QVBoxLayout
     _suggestions_layout: QGridLayout
     _suggestions_frame: QFrame
-    _last_bubble: QLabel
-    _last_user_bubble: QLabel
+    _last_bubble: QLabel | _AssistantBubble
+    _last_user_bubble: QLabel | _AssistantBubble
 
     # 流式节流渲染
     _streaming_handle: StreamMessageHandle | None
@@ -395,6 +403,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._stick_bottom = True
         self._ai_bubbles: list[_AssistantBubble] = []
+        self._user_bubbles: list[QLabel] = []
         self._welcome_items: list[tuple[QLabel, str]] = []
         self._streaming_handle = None
         self._stream_dirty = False
@@ -409,7 +418,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         self._stick_button = self._build_stick_button()
         return self._scroll
 
-    def _rebuild_messages(self, messages: list[dict]) -> None:
+    def _rebuild_messages(self, messages: list[dict[str, object]]) -> None:
         """重建消息区域 (初始化/切换会话时调用)。"""
         old = self._scroll.widget()
         if old is not None:
@@ -423,6 +432,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         self._messages_layout.setSpacing(8)
 
         self._ai_bubbles = []
+        self._user_bubbles = []
         self._welcome_items = []
         self._streaming_handle = None
         self._stream_dirty = False
@@ -433,9 +443,9 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         else:
             for msg in messages:
                 self._add_message(
-                    msg["role"],
-                    msg["content"],
-                    msg.get("created_at", ""),
+                    str(msg["role"]),
+                    str(msg["content"]),
+                    str(msg.get("created_at", "")),
                 )
 
         self._messages_layout.addStretch()
@@ -570,12 +580,14 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         is_user = role == "user"
         sender = "您" if is_user else "AI 助手"
 
+        bubble: QLabel | _AssistantBubble
         if is_user:
-            bubble: QWidget = QLabel(text)
+            bubble = QLabel(text)
             bubble.setWordWrap(True)
             bubble.setObjectName("AgentBubbleUser")
             # 用户气泡宽度按消息区视口百分比 (72%), 上限 400px, 下限 220px
             bubble.setMaximumWidth(self._bubble_max_width(0.72, 400))
+            self._user_bubbles.append(bubble)
         else:
             bubble = _AssistantBubble()
             bubble.setObjectName("AgentBubbleAssistant")
@@ -627,16 +639,31 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         elif self._stick_bottom:
             self._scroll_to_bottom()
 
+    def relayout_bubbles(self) -> None:
+        """抽屉宽度变化后重算所有气泡的最大宽度 (内容跟随容器调整)。"""
+        for ai_bubble in self._ai_bubbles:
+            ai_bubble.setMinimumWidth(0)
+            ai_bubble.setMaximumWidth(self._bubble_max_width(0.88, 460))
+        for user_bubble in self._user_bubbles:
+            user_bubble.setMinimumWidth(0)
+            user_bubble.setMaximumWidth(self._bubble_max_width(0.72, 400))
+        handle = getattr(self, "_streaming_handle", None)
+        if handle is not None:
+            handle.bubble.setMinimumWidth(0)
+            handle.bubble.setMaximumWidth(self._bubble_max_width(0.88, 460))
+
     def _bubble_max_width(self, pct: float, cap: int) -> int:
         """按消息区视口宽度计算气泡最大宽度。
 
         百分比 + 绝对上限 (避免宽抽屉下长行过长, 用户 400px / AI 460px),
-        下限 220px。仅在每次新增消息时计算一次: 宿主 resize 无需额外处理,
-        新消息自动按最新视口宽度取宽, 旧消息维持原宽避免布局抖动。
+        并受“视口宽度 - 左右 16px 边距”约束, 保证窄抽屉下不溢出容器。
+        新消息按最新视口取宽; 抽屉拖宽/拖窄时由
+        relayout_bubbles 统一重算存量气泡。
         """
         vp = getattr(self, "_scroll", None)
         width = vp.viewport().width() if vp is not None else self.width()
-        return max(220, min(int(width * pct), cap))
+        available = max(120, width - 32)
+        return max(120, min(int(width * pct), cap, available))
 
     def _quick_ask(self, question: str) -> None:
         """点击建议气泡直接发送 (防抖: 避免快速双击产生重复消息)。"""

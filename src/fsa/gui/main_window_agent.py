@@ -69,6 +69,14 @@ class _MainWindowAgentContracts(QFrame):
         """由 MainWindowAgentMixin 提供 (统一失败处理, 含取消安静路径)。"""
         raise NotImplementedError
 
+    def _cancel_active_worker(self) -> None:
+        """由 MainWindowAgentMixin 提供 (启动新后台任务前取消旧任务)。"""
+        raise NotImplementedError
+
+    def _on_worker_finished(self) -> None:
+        """由 MainWindowAgentMixin 提供 (后台任务结束清理)。"""
+        raise NotImplementedError
+
 
 class MainWindowAgentMixin(_MainWindowAgentContracts):
     """AI 助手集成逻辑: 诊断/AgentLoop 的后台线程编排 (继承 QFrame 以便访问 QWidget 方法)。
@@ -82,8 +90,11 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
     _llm_availability: dict[str, tuple[bool, float]]
     # 最近一次 _get_llm_client 的拦截原因标记: "" 未拦截 / "remote" 远程未确认
     _llm_block_reason: str = ""
-    # 抽屉取消信号是否已接线 (幂等保护)
+    # 抽屉取消信号是否已接线 (幂等保护) + 已接线的抽屉实例 (实例替换时允许重接)
     _drawer_cancel_connected: bool = False
+    _drawer_connected_to: AgentDrawer | None = None
+    # LLM 客户端缓存: (provider, base_url, model, api_key, allow_remote_ack) -> client
+    _llm_client_cache: tuple[tuple[str, str, str, str, str], LLMClient | None] | None = None
 
     def _update_suggestions(self) -> None:
         """根据校验结果动态更新 AI 助手的建议气泡。"""
@@ -203,17 +214,30 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
                 f"AI 分析暂时不可用: {message}\n\n建议您检查大模型服务是否正常运行。"
             )
 
+        self._cancel_active_worker()
         worker = AgentWorker(
             run,
             on_success,
             on_error,
-            on_finished=lambda: self._set_agent_busy(False),
+            on_finished=self._on_worker_finished,
             on_chunk=on_chunk,
             on_reasoning_chunk=on_reasoning_chunk,
         )
         self._active_worker = worker
         self._set_agent_busy(True)
         worker.start()
+
+    def _cancel_active_worker(self) -> None:
+        """启动新后台任务前取消旧任务（幂等）。"""
+        worker = getattr(self, "_active_worker", None)
+        if worker is not None:
+            worker.cancel()
+            self._active_worker = None
+
+    def _on_worker_finished(self) -> None:
+        """后台任务结束：恢复 UI 状态并释放 worker 引用（允许 GC）。"""
+        self._active_worker = None
+        self._set_agent_busy(False)
 
     def _on_diagnose(self, rule_id: str) -> None:
         """从校验卡片触发 AI 诊断: 打开抽屉、设上下文、运行诊断。"""
@@ -235,6 +259,9 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
         从 QSettings 读取 llm_provider/llm_base_url/llm_model/llm_api_key。
         返回 LLMClient 或 None (未配置 / 远程地址未显式确认风险)。
 
+        客户端按 (provider, base_url, model, api_key, allow_remote_ack) 缓存,
+        设置不变时复用同一实例, 避免重复构建。
+
         拦截原因记录在 self._llm_block_reason (纯函数, 不弹窗):
         - "" : 未拦截 (正常返回 client 或仅未配置)
         - "remote": 远程 openai 兼容地址且 llm_allow_remote_ack 未开启 (返回 None)
@@ -247,12 +274,21 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
         base_url = str(settings.value("llm_base_url", ""))
         model = str(settings.value("llm_model", ""))
         api_key = str(settings.value("llm_api_key", ""))
+        allow_remote_ack = str(settings.value("llm_allow_remote_ack", ""))
+
+        # 缓存键: 所有决定 client 实例的参数
+        cache_key = (provider, base_url, model, api_key, allow_remote_ack)
+
+        if self._llm_client_cache is not None:
+            cached_key, cached_client = self._llm_client_cache
+            if cached_key == cache_key:
+                return cached_client
+
         if not base_url:
-            # 服务地址为空: 跳过 LLM 功能 (由调用方给出中文提示, 不崩溃)
+            self._llm_client_cache = (cache_key, None)
             return None
         if not model:
-            # 只配服务地址未配模型名: 无法发起请求, 跳过 LLM 功能
-            # (与 base_url 为空对齐: 宁可跳过, 不构造必然失败的空模型客户端)
+            self._llm_client_cache = (cache_key, None)
             logger.warning(
                 "未配置 LLM 模型名，已跳过 AI 功能。请在「系统设置」中填写模型名称。"
             )
@@ -267,23 +303,30 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
                 logger.warning(
                     f"已阻止远程大模型连接 (财务数据不允许离开本机): {base_url}"
                 )
+                self._llm_client_cache = (cache_key, None)
                 return None
             try:
-                return create_llm_client(
+                client = create_llm_client(
                     provider=provider, base_url=base_url,
                     model=model, api_key=api_key,
                     allow_remote=True,
                 )
+                self._llm_client_cache = (cache_key, client)
+                return client
             except ValueError as e:
                 logger.error(f"LLM 配置无效: {e}")
+                self._llm_client_cache = (cache_key, None)
                 return None
         try:
-            return create_llm_client(
+            client = create_llm_client(
                 provider=provider, base_url=base_url,
                 model=model, api_key=api_key,
             )
+            self._llm_client_cache = (cache_key, client)
+            return client
         except ValueError as e:
             logger.error(f"LLM 配置无效: {e}")
+            self._llm_client_cache = (cache_key, None)
             return None
 
     def connect_drawer_signals(self) -> None:
@@ -291,17 +334,19 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
 
         designer 并行重构 AgentDrawer, 用 getattr 拿到信号才连接,
         不依赖真实抽屉的具体实现; 幂等, 重复调用不会重复连接。
+        抽屉实例被替换 (如测试替身) 时允许重新接线到新实例。
         """
-        if self._drawer_cancel_connected:
-            return
         drawer = getattr(self, "_agent_drawer", None)
         if drawer is None:
+            return
+        if self._drawer_cancel_connected and self._drawer_connected_to is drawer:
             return
         sig = getattr(drawer, "cancelRequested", None)
         if sig is None:
             return
         sig.connect(self._on_agent_cancel)
         self._drawer_cancel_connected = True
+        self._drawer_connected_to = drawer
 
     def _on_agent_cancel(self) -> None:
         """用户点击"停止生成": 请求取消当前后台 LLM 任务 (幂等, 无任务时安全)。"""
@@ -417,8 +462,9 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
             logger.error(f"AI 诊断失败: {message}")
             self._finish_agent_error(message, "AI 诊断失败")
 
+        self._cancel_active_worker()
         worker = AgentWorker(
-            run_diagnose, on_success, on_error, on_finished=lambda: self._set_agent_busy(False)
+            run_diagnose, on_success, on_error, on_finished=self._on_worker_finished
         )
         self._active_worker = worker
         worker.start()

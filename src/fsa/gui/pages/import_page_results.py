@@ -54,6 +54,10 @@ class ImportPageResultsMixin(QWidget):
     _card_warn: SummaryCard
     _card_total: SummaryCard
 
+    def _sync_history_banner(self) -> None:
+        """由宿主 ImportPage 提供: 同步历史回看横幅。"""
+        raise NotImplementedError
+
     def _update_reports(self) -> None:
         reports = self._state.reports
         if not reports:
@@ -62,12 +66,15 @@ class ImportPageResultsMixin(QWidget):
             self._empty_state.setVisible(True)
             self.validate_enabled_changed.emit(False)
             self._clear_report_cards()
+            self._sync_history_banner()
             return
 
         self._reports_section.setVisible(True)
-        self._drop_zone.setVisible(False)
+        # 拖放区始终保留 (用户可随时追加导入, 无需先重置)
+        self._drop_zone.setVisible(True)
         self._empty_state.setVisible(False)
         self._clear_report_cards()
+        self._sync_history_banner()
         self.setUpdatesEnabled(False)
         try:
             for i, report in enumerate(reports):
@@ -97,16 +104,19 @@ class ImportPageResultsMixin(QWidget):
             self._summary_section.setVisible(False)
             self._filter_section.setVisible(False)
             self._detail_section.setVisible(False)
+            self._sync_history_banner()
             return
 
         # 有结果: 隐藏初始引导 (覆盖正常校验与查看历史两种场景)
         # 历史查看时 reports 为空, 报表区不显示, 但结果区必须显示
-        self._drop_zone.setVisible(False)
+        # 拖放区保持可见: 查看历史后用户可直接导入新文件, 无需先重置
+        self._drop_zone.setVisible(True)
         self._empty_state.setVisible(False)
 
         self._summary_section.setVisible(True)
         self._filter_section.setVisible(True)
         self._detail_section.setVisible(True)
+        self._sync_history_banner()
 
         # 统计: 错误 = failed&ERROR + errored; 警告 = failed&WARNING/INFO
         error_count = sum(
@@ -165,16 +175,39 @@ class ImportPageResultsMixin(QWidget):
             btn.style().polish(btn)
 
     def _rebuild_cards(self) -> None:
-        """结果变化时重建全部卡片并缓存 (仅在校验完成/查看历史时调用一次)。"""
+        """结果变化时刷新卡片 (仅在校验完成/查看历史时调用一次)。
+
+        复用策略: 结果数量相同且 rule_id 序列一致时, 原地更新现有卡片
+        (避免 42 张含阴影特效卡片的 deleteLater+全量重建); 否则全量重建。
+        """
         summary = self._state.results
         if summary is None:
+            return
+
+        new_results = summary.results
+        if (
+            len(self._result_cards) == len(new_results)
+            and [r.rule_id for r, _ in self._result_cards]
+            == [r.rule_id for r in new_results]
+        ):
+            # 复用路径: 仅刷新数据, 不销毁控件
+            self.setUpdatesEnabled(False)
+            try:
+                refreshed: list[tuple[ValidationResult, ResultCard]] = []
+                for (_, card), result in zip(self._result_cards, new_results, strict=True):
+                    card.update_result(result)
+                    refreshed.append((result, card))
+                self._result_cards = refreshed
+            finally:
+                self.setUpdatesEnabled(True)
+            self._apply_filter()
             return
 
         self._clear_cards()
         self._result_cards.clear()
         self.setUpdatesEnabled(False)
         try:
-            for result in summary.results:
+            for result in new_results:
                 card = ResultCard(result)
                 card.diagnose_clicked.connect(self.diagnose_requested.emit)
                 card.debate_clicked.connect(self.debate_requested.emit)
