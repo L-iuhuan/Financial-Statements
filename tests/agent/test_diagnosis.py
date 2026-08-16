@@ -23,10 +23,7 @@ def _make_trace(items: list[tuple[str, str, float, int, str, str]]) -> list[Trac
 
     tuple: (key, name, amount, row, column, side)
     """
-    return [
-        TraceItem(key=k, name=n, amount=a, row=r, column=c, side=s)
-        for k, n, a, r, c, s in items
-    ]
+    return [TraceItem(key=k, name=n, amount=a, row=r, column=c, side=s) for k, n, a, r, c, s in items]
 
 
 def _make_result(
@@ -41,11 +38,13 @@ def _make_result(
     message: str = "差额超出容差",
 ) -> ValidationResult:
     if trace is None:
-        trace = _make_trace([
-            ("asset_total", "资产总计", 1000000.0, 35, "期末余额", "left"),
-            ("liability_total", "负债合计", 600000.0, 20, "期末余额", "right"),
-            ("equity_total", "所有者权益合计", 390000.0, 30, "期末余额", "right"),
-        ])
+        trace = _make_trace(
+            [
+                ("asset_total", "资产总计", 1000000.0, 35, "期末余额", "left"),
+                ("liability_total", "负债合计", 600000.0, 20, "期末余额", "right"),
+                ("equity_total", "所有者权益合计", 390000.0, 30, "期末余额", "right"),
+            ]
+        )
     return ValidationResult(
         rule_id=rule_id,
         rule_name=rule_name,
@@ -197,6 +196,112 @@ class TestDetailRuleAdvice:
         assert d1 == d2
 
 
+class TestMainRuleAdvice:
+    """主表规则族的专属诊断建议 (无 LLM 时 42 条规则全覆盖)。"""
+
+    def test_bs_is_001_mentions_profit_distribution(self) -> None:
+        """BS-IS-001 未分配利润衔接: 提示利润分配与口径。"""
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="BS-IS-001",
+            rule_name="未分配利润期末-期初=净利润",
+            category="B-表间勾稽",
+        )
+        diagnosis = engine.diagnose(result)
+        assert "利润分配" in diagnosis
+        assert "未分配利润" in diagnosis
+
+    def test_is_cf_001_mentions_supplementary(self) -> None:
+        """IS-CF-001 附注净利润勾稽: 提示补充资料, 不误标为表内勾稽。"""
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="IS-CF-001",
+            rule_name="附注净利润=利润表净利润",
+            category="B-表间勾稽",
+        )
+        diagnosis = engine.diagnose(result)
+        assert "补充资料" in diagnosis
+        assert "表内勾稽规则不通过" not in diagnosis
+
+    def test_is_tax_001_mentions_deferred_tax(self) -> None:
+        """IS-TAX-001 所得税费用: 提示递延所得税。"""
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="IS-TAX-001",
+            rule_name="所得税费用=当期+递延",
+            category="B-表间勾稽",
+        )
+        diagnosis = engine.diagnose(result)
+        assert "递延所得税" in diagnosis
+
+    def test_is_lr_001_mentions_sign_direction(self) -> None:
+        """IS-LR-001 减值损失方向: 提示转回/符号, 不误标为表内勾稽。"""
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="IS-LR-001",
+            rule_name="信用/资产减值损失列示方向检查",
+            category="C-逻辑合理性",
+        )
+        diagnosis = engine.diagnose(result)
+        assert "转回" in diagnosis or "符号" in diagnosis
+        assert "表内勾稽规则不通过" not in diagnosis
+
+    def test_sce_bal_001_mentions_equity_statement_columns(self) -> None:
+        """SCE-BAL-001 权益变动表表内平衡: 提示期初/变动/期末衔接。"""
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="SCE-BAL-001",
+            rule_name="权益各组成期初±变动=期末",
+            category="A-表内平衡",
+        )
+        diagnosis = engine.diagnose(result)
+        assert "权益变动表" in diagnosis
+        assert "期初" in diagnosis and "期末" in diagnosis
+
+    def test_sce_bs_001_mentions_cross_statement(self) -> None:
+        """SCE-BS-001 权益变动表与资产负债表勾稽: 专属表间建议。"""
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="SCE-BS-001",
+            rule_name="权益变动表实收资本=资产负债表",
+            category="B-表间勾稽",
+        )
+        diagnosis = engine.diagnose(result)
+        assert "权益变动表" in diagnosis
+
+    def test_notes_001_mentions_notes_detail(self) -> None:
+        """NOTES-001 附注勾稽: 提示附注明细完整性。"""
+        engine = DiagnosisEngine()
+        result = _make_result(
+            rule_id="NOTES-001",
+            rule_name="附注明细合计=主表项目",
+            category="B-表间勾稽",
+        )
+        diagnosis = engine.diagnose(result)
+        assert "附注" in diagnosis and "明细" in diagnosis
+
+    def test_all_42_rules_produce_substantive_advice(self) -> None:
+        """规则库 42 条主表规则均有非空的分类诊断建议 (无 LLM 兜底)。"""
+        import json
+
+        from fsa.core.resources import resource_path
+
+        payload = json.loads(resource_path("cas_gouji_rule_library.json").read_text(encoding="utf-8"))
+        rules = payload["ruleLibrary"]["rules"]
+        assert len(rules) == 42
+
+        engine = DiagnosisEngine()
+        for rule in rules:
+            result = _make_result(
+                rule_id=rule["id"],
+                rule_name=rule["name"],
+                category=rule["category"],
+            )
+            diagnosis = engine.diagnose(result)
+            advice = diagnosis.split("【分类诊断建议】", 1)[1].split("【建议操作步骤】", 1)[0]
+            assert advice.strip(), f"{rule['id']} 缺少分类诊断建议"
+
+
 class TestDiagnosisChinese:
     """中文输出要求验证。"""
 
@@ -209,9 +314,7 @@ class TestDiagnosisChinese:
         # 允许的英文: 规则 ID (如 BS-BAL-001) 和数字
         forbidden = ["error", "failed", "exception", "traceback", "tolerance"]
         for word in forbidden:
-            assert word not in diagnosis.lower(), (
-                f"诊断输出不应包含英文技术术语: {word}"
-            )
+            assert word not in diagnosis.lower(), f"诊断输出不应包含英文技术术语: {word}"
 
     def test_output_contains_numbered_action_steps(self) -> None:
         """诊断输出包含编号的建议操作步骤。"""
@@ -274,12 +377,16 @@ class TestDiagnoseWithClientReasoning:
             def is_available(self) -> bool:
                 return True
 
-            def chat(self, messages, tools=None, timeout=None):
+            def chat(self, messages, tools=None, timeout=None, cancel_event=None):
                 return ChatMessage(role="assistant", content="", reasoning="推理内容A")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -298,14 +405,16 @@ class TestDiagnoseWithClientReasoning:
             def is_available(self) -> bool:
                 return True
 
-            def chat(self, messages, tools=None, timeout=None):
-                return ChatMessage(
-                    role="assistant", content="正式诊断", reasoning="思考"
-                )
+            def chat(self, messages, tools=None, timeout=None, cancel_event=None):
+                return ChatMessage(role="assistant", content="正式诊断", reasoning="思考")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -325,12 +434,16 @@ class TestDiagnoseWithClientReasoning:
             def is_available(self) -> bool:
                 return True
 
-            def chat(self, messages, tools=None, timeout=None):
+            def chat(self, messages, tools=None, timeout=None, cancel_event=None):
                 return ChatMessage(role="assistant", content="")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -368,12 +481,16 @@ class TestDebateOnStage:
             def is_available(self) -> bool:
                 return True
 
-            def chat(self, messages, tools=None, timeout=None):
+            def chat(self, messages, tools=None, timeout=None, cancel_event=None):
                 return ChatMessage(role="assistant", content="观点")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -393,12 +510,16 @@ class TestDebateOnStage:
             def is_available(self) -> bool:
                 return True
 
-            def chat(self, messages, tools=None, timeout=None):
+            def chat(self, messages, tools=None, timeout=None, cancel_event=None):
                 return ChatMessage(role="assistant", content="观点")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 

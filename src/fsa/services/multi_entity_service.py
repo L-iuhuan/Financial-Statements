@@ -19,7 +19,7 @@ from fsa.core.models.rule import Severity
 from fsa.services.entity_config import EntityConfig
 from fsa.services.package_service import PackageValidationService, merge_summaries
 
-_SUPPORTED_SUFFIXES = (".xlsx", ".xls", ".pdf")
+_SUPPORTED_SUFFIXES = (".xlsx", ".xls", ".xlsm", ".csv", ".pdf")
 
 # 内部现金流双边核对: 一方的流入项目 ↔ 对方相应的流出项目（缺省配置，可经
 # entity_config.bilateral_pairs 覆写）。命名与 detail_checks.CF_PROJECT_ALIASES

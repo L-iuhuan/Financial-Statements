@@ -45,4 +45,4 @@ openpyxl/xlrd 抛 `_NATIVE_READ_ERRORS`（BadZipFile/OSError/ValueError/KeyError
 - 禁止在本模块执行任何校验逻辑
 - 禁止运行期修改 `NAME_TO_KEY`/`KEY_TO_NAME`（`MappingProxyType` 即为此设）
 - 禁止抛英文或技术性错误给上层——读取失败统一包装为 `FSAError` 中文消息（`raise ... from error` 链接）
-- 禁止绕过 `amount_parser.py` 自写金额解析（历史教训：Excel/PDF 解析不一致导致静默丢数）
+- 禁止绕过 `amount_parser.py` 自写金额解析（历史教训：Excel/PDF 解析不一致导致静默丢数）；inf/nan 一律拒收（None，走 P1 skip 路径）

@@ -30,7 +30,8 @@ from fsa.core.models.result import ValidationSummary
 
 _DEFAULT_TB_BS_MAPPINGS: dict[str, dict[str, object]] = {
     "monetary_funds": {"codes": ("1001", "1002", "1012"), "side": "debit"},
-    "accounts_receivable": {"codes": ("1122",), "side": "debit"},
+    # 1231 坏账准备为贷方备抵科目，ending_debit - ending_credit 自然实现净额化
+    "accounts_receivable": {"codes": ("1122", "1231"), "side": "debit"},
     "accounts_payable": {"codes": ("2202",), "side": "credit"},
 }
 
@@ -114,6 +115,10 @@ class DetailValidationService:
         failed = sum(1 for result in results if not result.passed and not result.errored)
         errored = sum(1 for result in results if result.errored)
         skipped = sum(1 for result in results if result.skipped)
+        unit_notes = [
+            f"明细附表: 金额单位 {dataset.amount_unit}，已统一换算为元"
+        ]
+        unit_notes.extend(dataset.unit_warnings)
         return ValidationSummary(
             period=dataset.period,
             total=len(results),
@@ -123,4 +128,5 @@ class DetailValidationService:
             skipped=skipped,
             results=results,
             report_types=list(reports.keys()),
+            amount_unit_notes=unit_notes,
         )

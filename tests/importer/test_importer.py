@@ -272,3 +272,37 @@ class TestImportData:
         reports = service.import_data(raw_data, str(path), ".xlsx")
 
         assert reports[0].period == "2024-12"
+
+
+class TestMagnitudeUnitWarning:
+    """无单位表头 + 千亿级金额: 提示确认单位 (P1 宁可提示不可静默)。"""
+
+    def _make_bs(self, tmp_path, amount, unit_header=None):
+        from openpyxl import Workbook
+
+        path = tmp_path / "magnitude.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "资产负债表"
+        primary = unit_header or "期末余额"
+        ws.append(["项目", primary])
+        ws.append(["资产总计", amount])
+        wb.save(str(path))
+        wb.close()
+        return path
+
+    def test_huge_amount_without_unit_warns(self, tmp_path) -> None:
+        path = self._make_bs(tmp_path, 200_000_000_000.0)
+        report = ImportService(period="2024-12").import_file(str(path))[0]
+        assert report.amount_unit == "元"
+        assert "请确认原表单位" in report.unit_warning
+
+    def test_huge_amount_with_explicit_yuan_does_not_warn(self, tmp_path) -> None:
+        path = self._make_bs(tmp_path, 200_000_000_000.0, unit_header="期末余额（元）")
+        report = ImportService(period="2024-12").import_file(str(path))[0]
+        assert report.unit_warning == ""
+
+    def test_normal_amount_without_unit_does_not_warn(self, tmp_path) -> None:
+        path = self._make_bs(tmp_path, 9_000_000.0)
+        report = ImportService(period="2024-12").import_file(str(path))[0]
+        assert report.unit_warning == ""

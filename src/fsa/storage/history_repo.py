@@ -32,7 +32,9 @@ class HistoryRecord(TypedDict):
         report_types: 涉及的报表类型
         source_files: 源文件路径列表 (审计证据链)
         source_hashes: 源文件 SHA256 列表
+        source_file_sizes: 与 source_files 一一对应的字节数 (-1 表示无法获取)
         rule_version: 内置规则库版本
+        amount_unit_notes: 金额单位与换算留痕
     """
 
     id: int
@@ -46,7 +48,9 @@ class HistoryRecord(TypedDict):
     report_types: list[str]
     source_files: list[str]
     source_hashes: list[str]
+    source_file_sizes: list[int]
     rule_version: str
+    amount_unit_notes: list[str]
 
 
 class HistoryRepo:
@@ -76,23 +80,34 @@ class HistoryRepo:
             RuntimeError: 数据库未连接或事务失败
         """
         conn = self._db.connection
-        report_types_json = json.dumps(
-            [rt.value for rt in summary.report_types], ensure_ascii=False
-        )
+        report_types_json = json.dumps([rt.value for rt in summary.report_types], ensure_ascii=False)
         source_files_json = json.dumps(summary.source_files, ensure_ascii=False)
         source_hashes_json = json.dumps(summary.source_hashes, ensure_ascii=False)
+        unit_notes_json = json.dumps(summary.amount_unit_notes, ensure_ascii=False)
+        source_sizes_json = json.dumps(summary.source_file_sizes, ensure_ascii=False)
 
         conn.execute("BEGIN")
         try:
             cursor = conn.execute(
                 """INSERT INTO validation_history
                    (period, total, passed, failed, errored, skipped,
-                    report_types, source_files, source_hashes, rule_version)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (summary.period, summary.total, summary.passed,
-                 summary.failed, summary.errored, summary.skipped,
-                 report_types_json, source_files_json, source_hashes_json,
-                 summary.rule_version),
+                    report_types, source_files, source_hashes, rule_version,
+                    amount_unit_notes, source_file_sizes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    summary.period,
+                    summary.total,
+                    summary.passed,
+                    summary.failed,
+                    summary.errored,
+                    summary.skipped,
+                    report_types_json,
+                    source_files_json,
+                    source_hashes_json,
+                    summary.rule_version,
+                    unit_notes_json,
+                    source_sizes_json,
+                ),
             )
             history_id = cursor.lastrowid
             if history_id is None:
@@ -103,8 +118,7 @@ class HistoryRepo:
 
             conn.commit()
             logger.info(
-                f"保存校验历史 #{history_id}: "
-                f"通过 {summary.passed}, 不通过 {summary.failed}, 异常 {summary.errored}"
+                f"保存校验历史 #{history_id}: 通过 {summary.passed}, 不通过 {summary.failed}, 异常 {summary.errored}"
             )
             return history_id
         except Exception:
@@ -112,9 +126,7 @@ class HistoryRepo:
             logger.exception("保存校验历史失败, 事务已回滚")
             raise
 
-    def _insert_result(
-        self, conn: sqlite3.Connection, history_id: int, result: ValidationResult
-    ) -> None:
+    def _insert_result(self, conn: sqlite3.Connection, history_id: int, result: ValidationResult) -> None:
         """插入单条校验结果明细。"""
         trace_json = json.dumps(
             [
@@ -136,12 +148,23 @@ class HistoryRepo:
                 left_value, right_value, diff, tolerance, formula,
                 message, errored, skipped, category, trace)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (history_id, result.rule_id, result.rule_name,
-             int(result.passed), result.severity.value,
-             result.left_value, result.right_value, result.diff,
-             result.tolerance, result.formula, result.message,
-             int(result.errored), int(result.skipped),
-             result.category, trace_json),
+            (
+                history_id,
+                result.rule_id,
+                result.rule_name,
+                int(result.passed),
+                result.severity.value,
+                result.left_value,
+                result.right_value,
+                result.diff,
+                result.tolerance,
+                result.formula,
+                result.message,
+                int(result.errored),
+                int(result.skipped),
+                result.category,
+                trace_json,
+            ),
         )
 
     def get_recent(self, limit: int = 20) -> list[HistoryRecord]:
@@ -157,7 +180,8 @@ class HistoryRepo:
         rows = conn.execute(
             """SELECT id, created_at, period, total, passed,
                       failed, errored, skipped, report_types,
-                      source_files, source_hashes, rule_version
+                      source_files, source_hashes, rule_version,
+                      amount_unit_notes, source_file_sizes
                FROM validation_history
                ORDER BY id DESC
                LIMIT ?""",
@@ -182,7 +206,8 @@ class HistoryRepo:
         row = conn.execute(
             """SELECT id, created_at, period, total, passed,
                       failed, errored, skipped, report_types,
-                      source_files, source_hashes, rule_version
+                      source_files, source_hashes, rule_version,
+                      amount_unit_notes, source_file_sizes
                FROM validation_history
                WHERE id = ?""",
             (history_id,),
@@ -205,14 +230,28 @@ class HistoryRepo:
             "errored": row["errored"],
             "skipped": row["skipped"],
             "report_types": HistoryRepo._parse_json_list(row["report_types"]),
-            "source_files": HistoryRepo._parse_json_list(
-                row["source_files"] if "source_files" in keys else "[]"
-            ),
-            "source_hashes": HistoryRepo._parse_json_list(
-                row["source_hashes"] if "source_hashes" in keys else "[]"
-            ),
+            "source_files": HistoryRepo._parse_json_list(row["source_files"] if "source_files" in keys else "[]"),
+            "source_hashes": HistoryRepo._parse_json_list(row["source_hashes"] if "source_hashes" in keys else "[]"),
             "rule_version": row["rule_version"] if "rule_version" in keys else "",
+            "amount_unit_notes": HistoryRepo._parse_json_list(
+                row["amount_unit_notes"] if "amount_unit_notes" in keys else "[]"
+            ),
+            "source_file_sizes": HistoryRepo._parse_json_int_list(
+                row["source_file_sizes"] if "source_file_sizes" in keys else "[]"
+            ),
         }
+
+    @staticmethod
+    def _parse_json_int_list(raw: object) -> list[int]:
+        """安全解析 JSON 整数列表, 损坏/非法项返回 -1 或跳过。"""
+        parsed = HistoryRepo._parse_json_list(raw)
+        result: list[int] = []
+        for item in parsed:
+            try:
+                result.append(int(float(item)))
+            except (ValueError, TypeError):
+                result.append(-1)
+        return result
 
     @staticmethod
     def _parse_json_list(raw: object) -> list[str]:
@@ -253,22 +292,24 @@ class HistoryRepo:
             trace_raw = row["trace"] if row["trace"] is not None else "[]"
             trace_items = self._parse_trace_json(trace_raw)
 
-            results.append(ValidationResult(
-                rule_id=row["rule_id"],
-                rule_name=row["rule_name"],
-                passed=bool(row["passed"]),
-                severity=Severity(row["severity"]),
-                left_value=row["left_value"],
-                right_value=row["right_value"],
-                diff=row["diff"],
-                tolerance=row["tolerance"],
-                formula=row["formula"],
-                message=row["message"],
-                errored=bool(row["errored"]),
-                skipped=skipped,
-                category=category,
-                trace=trace_items,
-            ))
+            results.append(
+                ValidationResult(
+                    rule_id=row["rule_id"],
+                    rule_name=row["rule_name"],
+                    passed=bool(row["passed"]),
+                    severity=Severity(row["severity"]),
+                    left_value=row["left_value"],
+                    right_value=row["right_value"],
+                    diff=row["diff"],
+                    tolerance=row["tolerance"],
+                    formula=row["formula"],
+                    message=row["message"],
+                    errored=bool(row["errored"]),
+                    skipped=skipped,
+                    category=category,
+                    trace=trace_items,
+                )
+            )
         return results
 
     @staticmethod
@@ -284,14 +325,16 @@ class HistoryRepo:
         items: list[TraceItem] = []
         for item in raw_list:
             try:
-                items.append(TraceItem(
-                    key=item.get("key", ""),
-                    name=item.get("name", ""),
-                    amount=float(item.get("amount", 0)),
-                    row=int(item.get("row", 0)),
-                    column=str(item.get("column", "")),
-                    side=str(item.get("side", "")),
-                ))
+                items.append(
+                    TraceItem(
+                        key=item.get("key", ""),
+                        name=item.get("name", ""),
+                        amount=float(item.get("amount", 0)),
+                        row=int(item.get("row", 0)),
+                        column=str(item.get("column", "")),
+                        side=str(item.get("side", "")),
+                    )
+                )
             except (ValueError, TypeError):
                 continue
         return items
@@ -303,9 +346,7 @@ class HistoryRepo:
             history_id: 历史记录 ID
         """
         conn = self._db.connection
-        conn.execute(
-            "DELETE FROM validation_history WHERE id = ?", (history_id,)
-        )
+        conn.execute("DELETE FROM validation_history WHERE id = ?", (history_id,))
         conn.commit()
         logger.info(f"删除校验历史 #{history_id}")
 
@@ -330,10 +371,115 @@ class HistoryRepo:
             logger.info(f"清理过期校验历史: {deleted} 条 (保留 {days} 天)")
         return deleted
 
+    def record_rule_version_migration(
+        self,
+        from_version: str,
+        to_version: str,
+        note: str = "",
+    ) -> int:
+        """记录一次规则库版本迁移 (审计留痕, 幂等由调用方控制)。"""
+        conn = self._db.connection
+        cursor = conn.execute(
+            """INSERT INTO rule_version_migrations
+               (from_version, to_version, note)
+               VALUES (?, ?, ?)""",
+            (from_version, to_version, note),
+        )
+        conn.commit()
+        history_id = cursor.lastrowid or 0
+        logger.info(f"记录规则库版本迁移 #{history_id}: {from_version or '(首次)'} -> {to_version} ({note})")
+        return history_id
+
+    def get_latest_rule_version_migration(self) -> dict[str, object] | None:
+        """读取最近一次规则库版本迁移记录。"""
+        conn = self._db.connection
+        row = conn.execute(
+            """SELECT id, migrated_at, from_version, to_version, note
+               FROM rule_version_migrations
+               ORDER BY id DESC
+               LIMIT 1"""
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "migrated_at": row["migrated_at"],
+            "from_version": row["from_version"],
+            "to_version": row["to_version"],
+            "note": row["note"],
+        }
+
+    def search(self, query: str, limit: int = 50) -> list[HistoryRecord]:
+        """按关键词搜索历史 (期间/源文件/版本/规则 ID/结果状态/错误类型)。
+
+        纯 SQL 下推: 主表字段 LIKE + validation_results 明细 EXISTS。
+        状态关键词: 通过/不通过(失败)/异常/跳过。
+        """
+        q = query.strip()
+        if not q:
+            return self.get_recent(limit=limit)
+        like = f"%{q}%"
+        conditions: list[str] = []
+        params: list[str] = []
+        for column in (
+            "period",
+            "report_types",
+            "source_files",
+            "source_hashes",
+            "rule_version",
+            "amount_unit_notes",
+        ):
+            conditions.append(f"h.{column} LIKE ?")
+            params.append(like)
+
+        status_filters: list[str] = []
+        if "不通过" in q or "失败" in q:
+            status_filters.append("r.passed = 0 AND r.errored = 0 AND r.skipped = 0")
+        if "通过" in q:
+            status_filters.append("r.passed = 1 AND r.errored = 0 AND r.skipped = 0")
+        if "异常" in q or "错误" in q:
+            status_filters.append("r.errored = 1")
+        if "跳过" in q:
+            status_filters.append("r.skipped = 1")
+        if status_filters:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM validation_results r "
+                "WHERE r.history_id = h.id AND (" + " OR ".join(status_filters) + "))"
+            )
+
+        conditions.append(
+            "EXISTS (SELECT 1 FROM validation_results r "
+            "WHERE r.history_id = h.id AND ("
+            "r.rule_id LIKE ? OR r.rule_name LIKE ? "
+            "OR r.message LIKE ? OR r.category LIKE ?))"
+        )
+        params.extend([like, like, like, like])
+
+        conn = self._db.connection
+        rows = conn.execute(
+            """SELECT DISTINCT h.id, h.created_at, h.period, h.total, h.passed,
+                      h.failed, h.errored, h.skipped, h.report_types,
+                      h.source_files, h.source_hashes, h.rule_version,
+                      h.amount_unit_notes, h.source_file_sizes
+               FROM validation_history h
+               WHERE """
+            + " OR ".join(conditions)
+            + " ORDER BY h.id DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def delete_all(self) -> int:
+        """删除全部校验历史 (含明细, CASCADE)。"""
+        conn = self._db.connection
+        cursor = conn.execute("DELETE FROM validation_history")
+        conn.commit()
+        deleted = cursor.rowcount
+        logger.info(f"批量删除全部校验历史: {deleted} 条")
+        return deleted
+
     def count(self) -> int:
         """返回历史记录总数。"""
         conn = self._db.connection
-        row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM validation_history"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) as cnt FROM validation_history").fetchone()
         return row["cnt"] if row else 0

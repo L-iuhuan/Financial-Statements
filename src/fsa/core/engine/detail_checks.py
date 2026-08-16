@@ -245,10 +245,26 @@ def check_trial_balance_vs_balance_sheet(
 def _sum_trial_balance(
     dataset: DetailDataset, codes: tuple[str, ...], side: str
 ) -> float:
-    """汇总余额表指定顶层科目期末余额（精确编码匹配，避免层级重复加总）。"""
+    """汇总余额表指定科目期末余额（前缀匹配 + 父级排除）。
+
+    匹配规则：科目编码以任一映射编码开头即纳入，与序时账侧
+    check_cash_flow_detail_vs_journal 的 startswith 口径（:160-161）一致。
+    再排除「其编码是另一匹配行编码的真前缀」的父级行——余额表若一级
+    科目与末级科目混列，一级行金额已含末级明细，不排除会重复加总。
+    """
+    matched = [
+        row
+        for row in dataset.trial_balance
+        if any(row.account_code.startswith(c) for c in codes)
+    ]
+    matched_codes = [row.account_code for row in matched]
     total = 0.0
-    for row in dataset.trial_balance:
-        if row.account_code not in codes:
+    for row in matched:
+        # 父级排除：存在另一匹配行的编码以本行编码为真前缀时，本行为父级，跳过
+        if any(
+            other != row.account_code and other.startswith(row.account_code)
+            for other in matched_codes
+        ):
             continue
         if side == "credit":
             total += row.ending_credit - row.ending_debit

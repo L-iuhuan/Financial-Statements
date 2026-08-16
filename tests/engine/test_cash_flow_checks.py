@@ -6,6 +6,7 @@ from fsa.core.engine.cash_flow_checks import (
     check_cash_flow_classification,
     check_cash_flow_coverage,
 )
+from fsa.core.engine.cash_flow_rules import DEFAULT_CASH_FLOW_RULES
 from fsa.core.models.detail import CashFlowDetailRow, DetailDataset, JournalRow
 
 
@@ -79,3 +80,28 @@ class TestCashFlowCoverage:
         )
         result = check_cash_flow_coverage(dataset, ("1002",), 0.01)
         assert result.passed is True
+
+
+class TestCashFlowRuleCodeTable:
+    """对方科目编码表与标准科目表一致性。"""
+
+    def test_cls001_excludes_2204_and_includes_contract_liability(self) -> None:
+        """标准科目表无 2204 编码；2203 预收/2205 合同负债必须在列。"""
+        rule = next(r for r in DEFAULT_CASH_FLOW_RULES if r.rule_id == "CF-CLS-001")
+        assert "2204" not in rule.counterpart_prefixes
+        assert "2203" in rule.counterpart_prefixes
+        assert "2205" in rule.counterpart_prefixes
+
+    def test_investment_rules_include_1503_1504(self) -> None:
+        """投资类规则补充 1503 其他债权投资 / 1504 其他权益工具投资。"""
+        for rule_id in ("CF-CLS-005", "CF-CLS-006"):
+            rule = next(r for r in DEFAULT_CASH_FLOW_RULES if r.rule_id == rule_id)
+            assert "1503" in rule.counterpart_prefixes
+            assert "1504" in rule.counterpart_prefixes
+
+    def test_1521_is_investment_property(self) -> None:
+        """1521 为投资性房地产, 名称不得再写作其他权益工具投资。"""
+        for rule_id in ("CF-CLS-005", "CF-CLS-006"):
+            rule = next(r for r in DEFAULT_CASH_FLOW_RULES if r.rule_id == rule_id)
+            assert "1521" in rule.counterpart_prefixes
+            assert "投资性房地产" in rule.description

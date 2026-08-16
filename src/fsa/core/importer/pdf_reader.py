@@ -16,11 +16,15 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pdfplumber
 from loguru import logger
+from pdfminer.pdfexceptions import PDFException
+from pdfplumber.utils.exceptions import MalformedPDFException, PdfminerException
 
+from fsa.core.exceptions import FSAError
 from fsa.core.importer.amount_parser import parse_amount
 from fsa.core.importer.excel_reader import RawSheetData
 
@@ -36,10 +40,19 @@ _TITLE_KEYWORDS: list[str] = [
 
 # 金额列标题匹配（pdfplumber 提取的文本可能略有差异）
 _AMOUNT_HEADER_CANDIDATES: list[str] = [
-    "期末余额", "期末数", "期末",
-    "年初余额", "年初数", "期初余额", "期初数",
-    "本期金额", "本期数", "本期",
-    "上期金额", "上期数", "上期",
+    "期末余额",
+    "期末数",
+    "期末",
+    "年初余额",
+    "年初数",
+    "期初余额",
+    "期初数",
+    "本期金额",
+    "本期数",
+    "本期",
+    "上期金额",
+    "上期数",
+    "上期",
 ]
 
 # PDF 行号编码基数: 行号 = 页码 * _PDF_ROW_BASE + 表内行号（1-based）。
@@ -48,20 +61,68 @@ _AMOUNT_HEADER_CANDIDATES: list[str] = [
 _PDF_ROW_BASE = 10_000_000
 
 
-def read_pdf(file_path: str) -> dict[str, RawSheetData]:
+@dataclass
+class PdfReadDiagnostics:
+    """PDF 解析诊断信息 (页数/表数/跳过情况/置信度)。
+
+    与 RawSheetData 分离, 供导入层生成"建议优先使用 Excel"提示与审计留痕。
+    """
+
+    page_count: int = 0
+    table_count: int = 0
+    recognized_sheets: list[str] = field(default_factory=list)
+    continuation_count: int = 0
+    skipped_tables: int = 0
+    skipped_rows: int = 0
+    pages_without_tables: int = 0
+
+    @property
+    def confidence(self) -> str:
+        """解析置信度: 无跳过为高; 少量跳过为中; 大量跳过/无表格为低。"""
+        if self.table_count == 0:
+            return "低"
+        total_skipped = self.skipped_tables + self.skipped_rows
+        if total_skipped == 0 and self.pages_without_tables == 0:
+            return "高"
+        if total_skipped <= max(2, self.table_count):
+            return "中"
+        return "低"
+
+    def summary_text(self) -> str:
+        """生成面向用户的中文诊断摘要。"""
+        parts = [f"PDF 共 {self.page_count} 页、检测到 {self.table_count} 个表格"]
+        if self.recognized_sheets:
+            parts.append("识别报表: " + "、".join(dict.fromkeys(self.recognized_sheets)))
+        if self.continuation_count:
+            parts.append(f"跨页续表合并 {self.continuation_count} 次")
+        if self.skipped_tables:
+            parts.append(f"跳过 {self.skipped_tables} 个未识别表格")
+        if self.skipped_rows:
+            parts.append(f"跳过 {self.skipped_rows} 行异常数据")
+        if self.pages_without_tables:
+            parts.append(f"{self.pages_without_tables} 页未检测到表格")
+        parts.append(f"解析置信度: {self.confidence}")
+        return "；".join(parts)
+
+
+def read_pdf(
+    file_path: str,
+    diagnostics: PdfReadDiagnostics | None = None,
+) -> dict[str, RawSheetData]:
     """读取 PDF 文件，提取财务报表为 RawSheetData。
 
-    每页检测一个报表标题，标题行作为 sheet name，
-    标题下方表格的列标题行作为 headers，数据行为 rows。
+    每页检测报表标题/表头，同标题跨页续表与同页多表合并为同一张报表。
 
     Args:
         file_path: PDF 文件路径
+        diagnostics: 可选输出对象, 填充页数/表数/跳过统计与解析置信度
 
     Returns:
         字典，键为报表标题（如"资产负债表"），值为 RawSheetData
 
     Raises:
         FileNotFoundError: 文件不存在
+        FSAError: PDF 文件损坏或已加密，无法读取
     """
     path = Path(file_path)
     if not path.exists():
@@ -70,36 +131,44 @@ def read_pdf(file_path: str) -> dict[str, RawSheetData]:
     logger.info(f"正在读取 PDF 文件: {file_path}")
 
     result: dict[str, RawSheetData] = {}
+    diag = diagnostics or PdfReadDiagnostics()
 
-    with pdfplumber.open(str(path)) as pdf:
-        for page_num, page in enumerate(pdf.pages, 1):
-            tables = page.extract_tables()
-            if not tables:
-                logger.debug(f"  第 {page_num} 页: 未检测到表格，跳过")
-                continue
-
-            for table in tables:
-                raw = _extract_sheet_from_page(table, page_num)
-                if raw is None:
-                    # 跨页续表: 次页可能没有报表标题, 用表头匹配已有报表
-                    raw = _extract_continuation_sheet(table, page_num, result)
-                if raw is None:
+    try:
+        with pdfplumber.open(str(path)) as pdf:
+            diag.page_count = len(pdf.pages)
+            for page_num, page in enumerate(pdf.pages, 1):
+                tables = page.extract_tables()
+                if not tables:
+                    diag.pages_without_tables += 1
+                    logger.debug(f"  第 {page_num} 页: 未检测到表格，跳过")
                     continue
 
-                # C6: 同标题跨页续表/同页多表 — 合并数据行而非覆盖
-                if raw.name in result:
-                    existing = result[raw.name]
-                    existing.rows.extend(raw.rows)
-                    logger.info(
-                        f"  第 {page_num} 页: 合并到报表「{raw.name}」，"
-                        f"新增 {len(raw.rows)} 行，现有 {len(existing.rows)} 行"
-                    )
-                else:
-                    result[raw.name] = raw
-                    logger.info(
-                        f"  第 {page_num} 页: 识别报表「{raw.name}」，"
-                        f"{len(raw.rows)} 行数据"
-                    )
+                for table in tables:
+                    diag.table_count += 1
+                    raw = _extract_sheet_from_page(table, page_num, diag)
+                    if raw is None:
+                        # 跨页续表: 次页可能没有报表标题, 用表头匹配已有报表
+                        raw = _extract_continuation_sheet(table, page_num, result, diag)
+                    if raw is None:
+                        diag.skipped_tables += 1
+                        continue
+
+                    # C6: 同标题跨页续表/同页多表 — 合并数据行而非覆盖
+                    if raw.name in result:
+                        existing = result[raw.name]
+                        existing.rows.extend(raw.rows)
+                        diag.continuation_count += 1
+                        logger.info(
+                            f"  第 {page_num} 页: 合并到报表「{raw.name}」，"
+                            f"新增 {len(raw.rows)} 行，现有 {len(existing.rows)} 行"
+                        )
+                    else:
+                        result[raw.name] = raw
+                        diag.recognized_sheets.append(raw.name)
+                        logger.info(f"  第 {page_num} 页: 识别报表「{raw.name}」，{len(raw.rows)} 行数据")
+    except (PDFException, PdfminerException, MalformedPDFException) as error:
+        # pdfminer/pdfplumber 异常族 (语法错误/加密/结构损坏等) 统一转中文错误 (P4)
+        raise FSAError("PDF 文件损坏或已加密，无法读取，请改用 Excel 报表") from error
 
     logger.info(f"PDF 读取完成，共识别 {len(result)} 张报表")
     return result
@@ -108,6 +177,7 @@ def read_pdf(file_path: str) -> dict[str, RawSheetData]:
 def _extract_sheet_from_page(
     table: list[list[str | None]],
     page_num: int,
+    diag: PdfReadDiagnostics | None = None,
 ) -> RawSheetData | None:
     """从单页表格提取一个 RawSheetData。
 
@@ -144,7 +214,7 @@ def _extract_sheet_from_page(
         return None
 
     # 解析数据行
-    rows = _parse_data_rows(table, headers, header_row_idx + 1, page_num)
+    rows = _parse_data_rows(table, headers, header_row_idx + 1, page_num, diag)
     if not rows:
         logger.debug(f"  第 {page_num} 页: 无有效数据行")
         return None
@@ -156,6 +226,7 @@ def _extract_continuation_sheet(
     table: list[list[str | None]],
     page_num: int,
     existing: dict[str, RawSheetData],
+    diag: PdfReadDiagnostics | None = None,
 ) -> RawSheetData | None:
     """识别无标题行的跨页续表。
 
@@ -174,15 +245,12 @@ def _extract_continuation_sheet(
         return None
 
     header_key = _header_signature(headers)
-    matches = [
-        name for name, raw in existing.items()
-        if _header_signature(raw.headers) == header_key
-    ]
+    matches = [name for name, raw in existing.items() if _header_signature(raw.headers) == header_key]
     if len(matches) != 1:
         return None
 
     matched = existing[matches[0]]
-    rows = _parse_data_rows(table, matched.headers, header_row_idx + 1, page_num)
+    rows = _parse_data_rows(table, matched.headers, header_row_idx + 1, page_num, diag)
     if not rows:
         return None
     return RawSheetData(name=matched.name, headers=matched.headers, rows=rows)
@@ -260,6 +328,7 @@ def _parse_data_rows(
     headers: list[str],
     start_row: int,
     page_num: int,
+    diag: PdfReadDiagnostics | None = None,
 ) -> list[dict[str, object]]:
     """解析数据行。
 
@@ -290,6 +359,8 @@ def _parse_data_rows(
         # C5: 行宽校验 — 数据行非空单元格数超过表头列数时跳过
         # 短行则自然对齐，但长行会导致值错位 (P1 宁可漏报)
         if non_empty_count > header_count:
+            if diag is not None:
+                diag.skipped_rows += 1
             logger.warning(
                 f"  第 {page_num} 页第 {i + 1} 行: "
                 f"非空单元格数({non_empty_count})超过表头列数({header_count})，跳过该行"

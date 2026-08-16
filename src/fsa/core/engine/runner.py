@@ -23,6 +23,31 @@ from fsa.core.models.rule import ReconciliationRule, Severity
 # 公式中的函数名，在变量名提取时跳过
 _FUNCTION_NAMES = frozenset({"abs", "min", "max", "round", "sum"})
 
+# 派生变量 -> 取值来源科目（按优先级排序）。
+# net_profit_attributable (归母净利润): 权益变动表未分配利润/其他综合收益列为
+# 归母口径，合并报表下与利润表含少数股东的合计净利润存在口径差，必须改与
+# 「归属于母公司所有者的净利润」勾稽；单体报表无该行时回退取 net_profit
+# (单体净利润=归母净利润)。两个来源均无真实数据时不注入，规则因变量缺失
+# 而跳过 (P1: 宁可漏报不可误报；预填 0 会对缺归母行的报表误报，
+# 故 net_profit_parent 不得加入 KNOWN_LINE_ITEM_KEYS 预填集合)。
+_DERIVED_VARIABLE_SOURCES: dict[str, tuple[str, ...]] = {
+    "net_profit_attributable": ("net_profit_parent", "net_profit"),
+}
+
+
+def _inject_derived_variables(
+    namespace: dict[str, float], context: ValidationContext
+) -> None:
+    """向命名空间注入派生变量 (见 _DERIVED_VARIABLE_SOURCES 的口径说明)。"""
+    for derived_key, source_keys in _DERIVED_VARIABLE_SOURCES.items():
+        if derived_key in namespace:
+            continue
+        for source_key in source_keys:
+            source_item = context.get_item(source_key)
+            if source_item is not None:
+                namespace[derived_key] = source_item.amount
+                break
+
 
 class RuleRunner:
     """规则执行器。执行单条规则，返回校验结果。"""
@@ -61,6 +86,7 @@ class RuleRunner:
         namespace = dict(context.build_namespace(rule.statements))
         merged = RuleRunner._merged_thresholds(threshold_vars)
         namespace.update(merged)
+        _inject_derived_variables(namespace, context)
 
         if "==" in rule.formula:
             return RuleRunner._run_equality(rule, namespace, context, merged)
@@ -334,18 +360,38 @@ def _add_trace_item(
     item = context.get_item(lookup_key)
     if item is not None:
         amount = item.amount
+        column = item.column
         if use_beginning:
             amount = item.beginning_amount if item.beginning_amount is not None else 0.0
+            # _beginning 变量取期初列值, trace 列归属同步到期初列
+            # (导入器在双列提取时把次列表头写入 beginning_column; 为空时回退主列)
+            column = item.beginning_column or item.column
         trace.append(
             TraceItem(
                 key=key,
                 name=item.name,
                 amount=amount,
                 row=item.row,
-                column=item.column,
+                column=column,
                 side=side,
             )
         )
+    elif key in _DERIVED_VARIABLE_SOURCES:
+        # 派生变量无自身科目行: trace 指向实际取值来源科目, 保持可溯源 (P3)
+        for source_key in _DERIVED_VARIABLE_SOURCES[key]:
+            source_item = context.get_item(source_key)
+            if source_item is not None:
+                trace.append(
+                    TraceItem(
+                        key=key,
+                        name=source_item.name,
+                        amount=source_item.amount,
+                        row=source_item.row,
+                        column=source_item.column,
+                        side=side,
+                    )
+                )
+                break
     elif extra_values is not None and key in extra_values:
         # 阈值变量 (由 runner 注入): 展示实际注入值便于审计追溯 (P3)
         trace.append(

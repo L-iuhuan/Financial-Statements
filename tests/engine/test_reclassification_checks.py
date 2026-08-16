@@ -8,6 +8,7 @@ from fsa.core.engine.reclassification_checks import (
 )
 from fsa.core.models.detail import DetailDataset, ReclassificationRow
 from fsa.core.models.report import Report, ReportItem, ReportType
+from fsa.core.models.rule import Severity
 
 
 def _bs_report() -> dict[ReportType, Report]:
@@ -101,6 +102,7 @@ class TestReclassificationVsBalanceSheet:
         assert all(result.passed for result in results)
 
     def test_mismatch_reports_diff(self) -> None:
+        """重分类合计与报表不一致: 不通过, 降为 WARNING 并保留坏账口径提示 (P1)。"""
         dataset = DetailDataset(
             reclassifications=[
                 ReclassificationRow("应收账款", "客户B", 900.0, "应收账款", 900.0),
@@ -110,6 +112,8 @@ class TestReclassificationVsBalanceSheet:
         ar_result = next(r for r in results if "accounts_receivable" in r.message)
         assert ar_result.passed is False
         assert ar_result.diff == -80.0
+        assert ar_result.severity is Severity.WARNING
+        assert "坏账准备" in ar_result.message
 
     def test_balance_sheet_accounts_override_effective(self) -> None:
         """entity_config 覆写报表科目映射: 只核对 accounts_receivable。"""

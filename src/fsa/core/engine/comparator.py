@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import math
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from loguru import logger
 
@@ -24,10 +24,7 @@ _PRECISION_WARN_MAGNITUDE: float = 1e14
 
 def _to_decimal(value: float) -> Decimal:
     """将 float 金额转为 Decimal (经 str 转换, 避免二进制尾数污染)。"""
-    try:
-        return Decimal(str(value))
-    except InvalidOperation:
-        return Decimal(repr(value))
+    return Decimal(str(value))
 
 
 class RelativeBaseZeroError(EvaluationError):
@@ -69,13 +66,15 @@ class ToleranceComparator:
 
         Raises:
             InvalidToleranceError: 容差为负数
-            ValueError: 值为 NaN，或未知的容差类型
+            ValueError: 值为 NaN/无穷大，或未知的容差类型
             RelativeBaseZeroError: 相对容差基准值为 0 且左值非 0
         """
         if tolerance < 0:
             raise InvalidToleranceError(tolerance)
         if math.isnan(left) or math.isnan(right):
             raise ValueError(f"比较值包含 NaN: left={left}, right={right}")
+        if math.isinf(left) or math.isinf(right):
+            raise ValueError("比较值包含无穷大，请检查原始数据")
 
         if abs(left) > _PRECISION_WARN_MAGNITUDE or abs(right) > _PRECISION_WARN_MAGNITUDE:
             logger.warning(

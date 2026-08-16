@@ -29,7 +29,18 @@ CREATE TABLE IF NOT EXISTS validation_history (
     report_types TEXT NOT NULL DEFAULT '[]',
     source_files TEXT NOT NULL DEFAULT '[]',
     source_hashes TEXT NOT NULL DEFAULT '[]',
-    rule_version TEXT NOT NULL DEFAULT ''
+    rule_version TEXT NOT NULL DEFAULT '',
+    amount_unit_notes TEXT NOT NULL DEFAULT '[]',
+    source_file_sizes TEXT NOT NULL DEFAULT '[]'
+);
+
+-- 规则库版本迁移记录
+CREATE TABLE IF NOT EXISTS rule_version_migrations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    migrated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    from_version TEXT NOT NULL DEFAULT '',
+    to_version   TEXT NOT NULL DEFAULT '',
+    note         TEXT NOT NULL DEFAULT ''
 );
 
 -- 校验结果明细表
@@ -74,10 +85,11 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_messages_session
     ON chat_messages(session_id);
 
--- 规则容差覆写表
+-- 规则容差/启停覆写表
 CREATE TABLE IF NOT EXISTS rule_overrides (
     rule_id   TEXT PRIMARY KEY,
-    tolerance REAL NOT NULL
+    tolerance REAL NOT NULL,
+    enabled   INTEGER NOT NULL DEFAULT 1
 );
 """
 
@@ -94,6 +106,19 @@ _HISTORY_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
     "source_files": ("source_files TEXT NOT NULL DEFAULT '[]'", "源文件"),
     "source_hashes": ("source_hashes TEXT NOT NULL DEFAULT '[]'", "源文件哈希"),
     "rule_version": ("rule_version TEXT NOT NULL DEFAULT ''", "规则版本"),
+    "amount_unit_notes": (
+        "amount_unit_notes TEXT NOT NULL DEFAULT '[]'",
+        "金额单位留痕",
+    ),
+    "source_file_sizes": (
+        "source_file_sizes TEXT NOT NULL DEFAULT '[]'",
+        "源文件大小",
+    ),
+}
+
+# rule_overrides 表新增启停列迁移配置 (默认 1=启用, 旧数据视为启用)
+_OVERRIDE_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
+    "enabled": ("enabled INTEGER NOT NULL DEFAULT 1", "启停"),
 }
 
 
@@ -165,6 +190,7 @@ class Database:
         # 迁移: 为旧数据库补齐新增列
         self._migrate_columns("validation_results", _RESULT_MIGRATION_COLUMNS)
         self._migrate_columns("validation_history", _HISTORY_MIGRATION_COLUMNS)
+        self._migrate_columns("rule_overrides", _OVERRIDE_MIGRATION_COLUMNS)
 
     def _migrate_columns(
         self, table_name: str, columns: dict[str, tuple[str, str]]

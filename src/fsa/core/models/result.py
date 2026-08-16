@@ -38,7 +38,11 @@ KNOWN_LINE_ITEM_KEYS: frozenset[str] = frozenset({
     "paid_in_capital", "capital_reserve", "treasury_stock",
     "other_comprehensive_income", "surplus_reserve", "undistributed_profit",
     "equity_total", "liability_equity_total", "minority_interest",
-    "parent_equity", "general_risk_reserve", "special_reserve",
+    # NOTE: parent_equity is intentionally excluded from the zero-prefill set.
+    # It marks a consolidated balance sheet ("归属于母公司所有者权益合计").
+    # Pre-filling it with 0 would make SCE-BAL-002 falsely fail on standalone
+    # statements; when absent, that rule now skips (P1: 宁可漏报不可误报).
+    "general_risk_reserve", "special_reserve",
     "other_equity_instruments",
     # IS
     "revenue", "operating_cost",
@@ -73,6 +77,12 @@ KNOWN_LINE_ITEM_KEYS: frozenset[str] = frozenset({
     "cash_for_dividends", "financing_cash_outflow", "financing_net",
     "net_increase_cash", "fx_effect", "beginning_cash_equiv",
     "ending_cash_equiv",
+    # NOTE: cf_notes_credit_impairment 是 P1 取舍的少数例外——预填 0 在此处
+    # 不会误报。IS-CF-002 公式为 cf_notes_impairment + cf_notes_credit_impairment；
+    # 旧格式补充资料将信用减值并入'资产减值准备'合并列示时该行不存在，
+    # 预填 0 使公式退化为原语义（cf_notes_impairment 单独承担）。
+    # 企业无单独信用减值行时该项本就为 0，故预填与真实值一致。
+    "cf_notes_credit_impairment",
     # NOTE: dividends/surplus_withheld/prior_period_adjust/restricted_adjust
     # intentionally EXCLUDED — they have no data source in the three main
     # statements. If pre-filled with 0, BS-IS-001 would falsely fail for
@@ -193,7 +203,9 @@ class ValidationSummary:
         report_types: 本次校验涉及的报表类型
         source_files: 本次校验使用的源文件路径 (审计证据链)
         source_hashes: 与 source_files 一一对应的 SHA256 哈希
+        source_file_sizes: 与 source_files 一一对应的文件大小 (字节; 无法获取为 -1)
         rule_version: 执行校验时使用的内置规则库版本
+        amount_unit_notes: 各报表/明细附表识别到的金额单位与换算说明 (审计留痕)
     """
 
     period: str = ""
@@ -206,7 +218,9 @@ class ValidationSummary:
     report_types: list[ReportType] = field(default_factory=list)
     source_files: list[str] = field(default_factory=list)
     source_hashes: list[str] = field(default_factory=list)
+    source_file_sizes: list[int] = field(default_factory=list)
     rule_version: str = ""
+    amount_unit_notes: list[str] = field(default_factory=list)
 
     @property
     def all_passed(self) -> bool:

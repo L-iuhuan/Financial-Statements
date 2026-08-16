@@ -205,11 +205,13 @@ class TestUpdaterCheckForUpdate:
 
     def test_has_update_true_when_latest_is_newer(self) -> None:
         """最新版本更新时返回 has_update=True。"""
-        manifest = json.dumps({
-            "version": "0.2.0",
-            "download_url": "http://example.com/fsa_0.2.0.exe",
-            "release_notes": "修复了若干问题",
-        }).encode("utf-8")
+        manifest = json.dumps(
+            {
+                "version": "0.2.0",
+                "download_url": "http://example.com/fsa_0.2.0.exe",
+                "release_notes": "修复了若干问题",
+            }
+        ).encode("utf-8")
 
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
@@ -231,11 +233,13 @@ class TestUpdaterCheckForUpdate:
 
     def test_has_update_false_when_same_version(self) -> None:
         """相同版本时返回 has_update=False。"""
-        manifest = json.dumps({
-            "version": "0.1.0",
-            "download_url": "http://example.com/fsa_0.1.0.exe",
-            "release_notes": "",
-        }).encode("utf-8")
+        manifest = json.dumps(
+            {
+                "version": "0.1.0",
+                "download_url": "http://example.com/fsa_0.1.0.exe",
+                "release_notes": "",
+            }
+        ).encode("utf-8")
 
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
@@ -253,11 +257,13 @@ class TestUpdaterCheckForUpdate:
 
     def test_has_update_false_when_current_is_newer(self) -> None:
         """当前版本更新时返回 has_update=False。"""
-        manifest = json.dumps({
-            "version": "0.0.9",
-            "download_url": "",
-            "release_notes": "",
-        }).encode("utf-8")
+        manifest = json.dumps(
+            {
+                "version": "0.0.9",
+                "download_url": "",
+                "release_notes": "",
+            }
+        ).encode("utf-8")
 
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
@@ -320,10 +326,12 @@ class TestUpdaterCheckForUpdate:
 
     def test_missing_version_key_raises_update_error(self) -> None:
         """缺少 version 字段时抛出 UpdateError。"""
-        manifest = json.dumps({
-            "download_url": "http://example.com/fsa.exe",
-            "release_notes": "",
-        }).encode("utf-8")
+        manifest = json.dumps(
+            {
+                "download_url": "http://example.com/fsa.exe",
+                "release_notes": "",
+            }
+        ).encode("utf-8")
 
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
@@ -340,10 +348,12 @@ class TestUpdaterCheckForUpdate:
 
     def test_missing_download_url_key_raises_update_error(self) -> None:
         """缺少 download_url 字段时抛出 UpdateError。"""
-        manifest = json.dumps({
-            "version": "0.2.0",
-            "release_notes": "",
-        }).encode("utf-8")
+        manifest = json.dumps(
+            {
+                "version": "0.2.0",
+                "release_notes": "",
+            }
+        ).encode("utf-8")
 
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
@@ -360,11 +370,13 @@ class TestUpdaterCheckForUpdate:
 
     def test_manifest_url_called_with_timeout(self) -> None:
         """确认 urlopen 使用正确的 URL 和超时。"""
-        manifest = json.dumps({
-            "version": "0.2.0",
-            "download_url": "http://example.com/fsa.exe",
-            "release_notes": "",
-        }).encode("utf-8")
+        manifest = json.dumps(
+            {
+                "version": "0.2.0",
+                "download_url": "http://example.com/fsa.exe",
+                "release_notes": "",
+            }
+        ).encode("utf-8")
 
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
@@ -386,11 +398,13 @@ class TestUpdaterCheckForUpdate:
 
     def test_manifest_with_v_prefix_handled(self) -> None:
         """清单版本带 v 前缀时正确处理。"""
-        manifest = json.dumps({
-            "version": "v0.2.0",
-            "download_url": "http://example.com/fsa.exe",
-            "release_notes": "",
-        }).encode("utf-8")
+        manifest = json.dumps(
+            {
+                "version": "v0.2.0",
+                "download_url": "http://example.com/fsa.exe",
+                "release_notes": "",
+            }
+        ).encode("utf-8")
 
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
@@ -625,13 +639,16 @@ class TestUpdaterDownloadSha256:
         content = b"fake binary content"
         dest = tmp_path / "update.exe"
 
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=[
-                _make_manifest_response(),
-                _make_http_response([content, b""]),
-            ],
-        ), _capture_loguru() as sink:
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=[
+                    _make_manifest_response(),
+                    _make_http_response([content, b""]),
+                ],
+            ),
+            _capture_loguru() as sink,
+        ):
             updater = Updater(
                 manifest_url="http://localhost/version.json",
                 current_version="0.1.0",
@@ -696,3 +713,62 @@ class TestUpdaterDownloadProgress:
 
         assert progress_records[0][0] == 100
         assert progress_records[0][1] == -1
+
+
+class TestUpdaterLocalManifest:
+    """内部共享盘场景: 清单与安装包均为本地路径/UNC。"""
+
+    def test_check_local_manifest_file(self, tmp_path) -> None:
+        """本地 JSON 清单文件可直接检查, 无需 HTTP。"""
+        installer = tmp_path / "fsa_update.exe"
+        installer.write_bytes(b"x")
+        manifest = tmp_path / "version.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "version": "0.2.0",
+                    "download_url": str(installer),
+                    "release_notes": "内部共享盘更新",
+                    "sha256": hashlib.sha256(b"x").hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        updater = Updater(
+            manifest_url=str(manifest),
+            current_version="0.1.0",
+        )
+        info = updater.check_for_update()
+
+        assert info.has_update is True
+        assert info.latest_version == "0.2.0"
+        assert info.download_url == str(installer)
+
+    def test_download_local_installer_with_sha256(self, tmp_path) -> None:
+        """本地安装包下载 (file URI) + sha256 校验。"""
+        installer = tmp_path / "fsa_update.exe"
+        installer.write_bytes(b"payload")
+        manifest = tmp_path / "version.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "version": "0.2.0",
+                    "download_url": str(installer),
+                    "sha256": hashlib.sha256(b"payload").hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        dest = tmp_path / "downloaded.exe"
+
+        updater = Updater(manifest_url=str(manifest), current_version="0.1.0")
+        result = updater.download(str(installer), str(dest))
+
+        assert result == str(dest)
+        assert dest.read_bytes() == b"payload"
+
+    def test_unc_path_converted_to_file_url(self) -> None:
+        from fsa.updater.updater import _to_file_url
+
+        assert _to_file_url(r"\\server\share\fsa\version.json") == "file://server/share/fsa/version.json"

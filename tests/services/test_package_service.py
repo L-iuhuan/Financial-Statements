@@ -128,7 +128,7 @@ def test_merge_summaries_dedup_recomputes_all_counts() -> None:
 
 
 def test_merge_summaries_skipped_not_counted_as_passed() -> None:
-    """skipped 结果不计入 passed (passed 排除 skipped 和 errored)。"""
+    """skipped 结果不计入 passed, 且 total 剔除 skipped (与 _build_summary 口径一致)。"""
     summary = ValidationSummary(
         period="2026-06",
         results=[
@@ -139,13 +139,13 @@ def test_merge_summaries_skipped_not_counted_as_passed() -> None:
         ],
     )
     merged = merge_summaries(summary)
-    assert merged.total == 4
+    assert merged.total == 3        # 4 条结果剔除 1 条 skipped
     assert merged.passed == 1       # only A
     assert merged.failed == 1       # B
     assert merged.errored == 1      # C
     assert merged.skipped == 1      # D
-    # 验证 passed + failed + errored + skipped == total
-    assert merged.passed + merged.failed + merged.errored + merged.skipped == merged.total
+    # 验证口径: total = passed + failed + errored (skipped 不计入 total)
+    assert merged.passed + merged.failed + merged.errored == merged.total
 
 
 class TestPackageThresholdInjection:

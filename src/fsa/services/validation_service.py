@@ -162,6 +162,7 @@ class ValidationService:
             skipped=skipped + skipped_from_results,
             results=results,
             report_types=list(context.reports.keys()),
+            amount_unit_notes=_collect_unit_notes(context),
         )
 
 
@@ -173,3 +174,15 @@ def _get_required_types(rule: ReconciliationRule) -> set[ReportType]:
         if rt is not None:
             types.add(rt)
     return types
+
+
+def _collect_unit_notes(context: ValidationContext) -> list[str]:
+    """收集各报表识别到的金额单位与换算说明 (写入历史/底稿说明)。"""
+    notes: list[str] = []
+    for report_type, report in context.reports.items():
+        note = f"{report_type.value}: 金额单位 {report.amount_unit}，已统一换算为元"
+        if report.unit_warning:
+            note += f"；提示: {report.unit_warning}"
+        notes.append(note)
+    return notes
+

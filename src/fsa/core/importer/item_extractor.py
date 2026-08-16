@@ -13,7 +13,11 @@ import re
 
 from loguru import logger
 
-from fsa.core.importer.amount_parser import detect_amount_unit, parse_amount, to_yuan
+from fsa.core.importer.amount_parser import (
+    detect_amount_unit,
+    parse_amount,
+    parse_cell_amount,
+)
 from fsa.core.importer.excel_reader import RawSheetData
 from fsa.core.importer.name_mapper import clean_name, get_key, get_supplementary_key
 from fsa.core.models.report import ReportItem, ReportType
@@ -55,6 +59,7 @@ _SUPPLEMENTARY_MARKER = "补充资料"
 _YTD_PERIOD_RE = re.compile(r"^\d{4}年1-\d{1,2}月$")
 _MONTH_PERIOD_RE = re.compile(r"^\d{4}年\d{1,2}月$")
 _FULL_YEAR_RE = re.compile(r"^\d{4}年(1-12|12)月$")
+_YEAR_RE = re.compile(r"^\d{4}年$")
 _SERIAL_RE = re.compile(r"^\d{4,5}$")
 _NUMERIC_RATIO = 0.3
 
@@ -63,7 +68,7 @@ def extract_items(
     raw: RawSheetData,
     report_type: ReportType,
     unmapped: list[str] | None = None,
-    unit_info: dict[str, str] | None = None,
+    unit_info: dict[str, object] | None = None,
 ) -> list[ReportItem]:
     """从原始工作表数据中提取 ReportItem 列表。
 
@@ -90,12 +95,21 @@ def extract_items(
     if report_type == ReportType.NOTES:
         return _extract_notes_items(raw, name_column, primary, secondary)
 
-    unit = _detect_unit_for_columns(raw, primary, secondary)
+    primary_unit, secondary_unit, column_warning = _detect_units_for_columns(
+        raw, primary, secondary
+    )
     if unit_info is not None:
-        unit_info["unit"] = unit
-        if unit != "元":
+        unit_info["unit"] = primary_unit
+        unit_info["detected"] = (
+            detect_amount_unit(primary) is not None
+            or detect_amount_unit(secondary) is not None
+            or detect_amount_unit(raw.name) is not None
+        )
+        if column_warning:
+            unit_info["warning"] = column_warning
+        elif primary_unit != "元":
             unit_info["warning"] = (
-                f"识别到金额单位「{unit}」，系统已自动换算为元后校验"
+                f"识别到金额单位「{primary_unit}」，系统已自动换算为元后校验"
             )
 
     items: list[ReportItem] = []
@@ -106,7 +120,8 @@ def extract_items(
         name_column,
         primary,
         secondary,
-        unit,
+        primary_unit,
+        secondary_unit,
         items,
         seen_keys,
         allow_supplementary,
@@ -120,20 +135,28 @@ def extract_items(
                 report_type, raw.headers, raw.rows, _column_index(raw.headers, right_column) + 1
             )
             if right_primary is not None:
-                right_unit = _detect_unit_for_columns(
-                    raw, right_primary, right_secondary
-                )
-                if right_unit != unit and unit_info is not None:
-                    unit_info["warning"] = (
-                        f"左右两栏金额单位不一致（{unit} / {right_unit}），"
-                        "已分别换算为元，请人工复核原表单位"
+                right_primary_unit, right_secondary_unit, right_warning = (
+                    _detect_units_for_columns(
+                        raw, right_primary, right_secondary
                     )
+                )
+                if (
+                    right_primary_unit != primary_unit
+                    and unit_info is not None
+                ):
+                    unit_info["warning"] = (
+                        f"左右两栏金额单位不一致（{primary_unit} / "
+                        f"{right_primary_unit}），已分别换算为元，请人工复核原表单位"
+                    )
+                elif right_warning and unit_info is not None:
+                    unit_info["warning"] = right_warning
                 _extract_side(
                     raw,
                     right_column,
                     right_primary,
                     right_secondary,
-                    right_unit,
+                    right_primary_unit,
+                    right_secondary_unit,
                     items,
                     seen_keys,
                     allow_supplementary=False,
@@ -151,19 +174,18 @@ def _extract_notes_items(
     secondary: str | None,
 ) -> list[ReportItem]:
     """提取附注明细: 附注项暂时没有标准科目映射, 统一以 note_N 作为变量。"""
-    unit = _detect_unit_for_columns(raw, primary, secondary)
+    primary_unit, secondary_unit, _warning = _detect_units_for_columns(
+        raw, primary, secondary
+    )
     items: list[ReportItem] = []
     for index, row in enumerate(raw.rows):
         name = str(row.get(name_column, "")).strip()
         if not name or _is_skip_row(name):
             continue
-        amount = parse_amount(row.get(primary))
+        amount = parse_cell_amount(row.get(primary), primary_unit)
         if amount is None:
             continue
-        amount = to_yuan(amount, unit)
-        beginning = _read_optional_float(row, secondary)
-        if beginning is not None:
-            beginning = to_yuan(beginning, unit)
+        beginning = _read_optional_float(row, secondary, secondary_unit)
         items.append(
             ReportItem(
                 key=f"note_{index}",
@@ -172,20 +194,49 @@ def _extract_notes_items(
                 beginning_amount=beginning,
                 row=_to_int(row.get("_row")) or 0,
                 column=primary,
+                beginning_column=secondary or "",
             )
         )
     return items
 
 
-def _detect_unit_for_columns(
+def _detect_units_for_columns(
     raw: RawSheetData, primary: str, secondary: str | None
-) -> str:
-    """从工作表名/金额列表头识别金额单位, 未识别时按元处理。"""
+) -> tuple[str, str, str]:
+    """从工作表名/金额列表头识别每列金额单位, 未识别时按元处理。
+
+    传播规则:
+    - 某一列显式标注单位时, 传播到未标注的另一列 (常见做法: 单位只标一次)
+    - 两列都显式标注且单位不同时, 按列独立换算并返回告警
+    - 都没有显式标注时, 回落到工作表名中的单位 (再回落元)
+
+    Returns:
+        (主列单位, 次列单位, 告警信息; 无告警为空串)
+    """
     primary_unit = detect_amount_unit(primary)
     secondary_unit = detect_amount_unit(secondary) if secondary else None
     name_unit = detect_amount_unit(raw.name)
-    unit = primary_unit or secondary_unit or name_unit or "元"
-    return unit
+
+    if primary_unit and not secondary_unit and secondary is not None:
+        secondary_unit = primary_unit
+    elif secondary_unit and not primary_unit:
+        primary_unit = secondary_unit
+
+    primary_unit = primary_unit or name_unit or "元"
+    secondary_unit = secondary_unit or name_unit or "元"
+
+    warning = ""
+    if (
+        secondary is not None
+        and secondary_unit != primary_unit
+        and detect_amount_unit(primary) is not None
+        and detect_amount_unit(secondary) is not None
+    ):
+        warning = (
+            f"金额列单位不一致（「{primary}」={primary_unit}，"
+            f"「{secondary}」={secondary_unit}），已分别换算为元"
+        )
+    return primary_unit, secondary_unit, warning
 
 
 def _extract_side(
@@ -193,7 +244,8 @@ def _extract_side(
     name_column: str,
     primary: str,
     secondary: str | None,
-    unit: str,
+    primary_unit: str,
+    secondary_unit: str,
     items: list[ReportItem],
     seen_keys: set[str],
     allow_supplementary: bool,
@@ -220,7 +272,8 @@ def _extract_side(
 
         if in_supplementary:
             _extract_supplementary_row(
-                item_name_str, row, primary, secondary, unit, row_num, items, seen_keys
+                item_name_str, row, primary, secondary, primary_unit,
+                secondary_unit, row_num, items, seen_keys
             )
             continue
 
@@ -228,8 +281,8 @@ def _extract_side(
             continue
 
         _extract_item(
-            item_name_str, row, primary, secondary, unit, row_num,
-            items, seen_keys, unmapped,
+            item_name_str, row, primary, secondary, primary_unit,
+            secondary_unit, row_num, items, seen_keys, unmapped,
         )
 
 
@@ -238,7 +291,8 @@ def _extract_supplementary_row(
     row: dict[str, object],
     primary: str,
     secondary: str | None,
-    unit: str,
+    primary_unit: str,
+    secondary_unit: str,
     row_num: int,
     items: list[ReportItem],
     seen_keys: set[str],
@@ -252,7 +306,8 @@ def _extract_supplementary_row(
         logger.debug(f"  补充资料中未映射的项目: 「{item_name_str}」(行{row_num})，跳过")
         return
     _append_item(
-        cleaned, key, row, primary, secondary, unit, row_num, items, seen_keys
+        cleaned, key, row, primary, secondary, primary_unit,
+        secondary_unit, row_num, items, seen_keys
     )
 
 
@@ -261,7 +316,8 @@ def _extract_item(
     row: dict[str, object],
     primary: str,
     secondary: str | None,
-    unit: str,
+    primary_unit: str,
+    secondary_unit: str,
     row_num: int,
     items: list[ReportItem],
     seen_keys: set[str],
@@ -277,7 +333,8 @@ def _extract_item(
         logger.debug(f"  未映射的项目: 「{item_name_str}」(行{row_num})，跳过")
         return
     _append_item(
-        item_name_str, key, row, primary, secondary, unit, row_num, items, seen_keys
+        item_name_str, key, row, primary, secondary, primary_unit,
+        secondary_unit, row_num, items, seen_keys
     )
 
 
@@ -287,7 +344,8 @@ def _append_item(
     row: dict[str, object],
     primary: str,
     secondary: str | None,
-    unit: str,
+    primary_unit: str,
+    secondary_unit: str,
     row_num: int,
     items: list[ReportItem],
     seen_keys: set[str],
@@ -303,15 +361,12 @@ def _append_item(
     if amount is None:
         logger.debug(f"  项目「{item_name_str}」的金额为空，跳过")
         return
-    amount_float = parse_amount(amount)
+    amount_float = parse_cell_amount(amount, primary_unit)
     if amount_float is None:
         logger.warning(f"  项目「{item_name_str}」的金额无法转换为数字: {amount}，跳过")
         return
-    amount_float = to_yuan(amount_float, unit)
 
-    beginning_amount = _read_optional_float(row, secondary)
-    if beginning_amount is not None:
-        beginning_amount = to_yuan(beginning_amount, unit)
+    beginning_amount = _read_optional_float(row, secondary, secondary_unit)
     items.append(
         ReportItem(
             key=key,
@@ -320,6 +375,8 @@ def _append_item(
             beginning_amount=beginning_amount,
             row=row_num,
             column=primary,
+            # 双列提取时把次列(期初/年初)表头记入 beginning_column, 供 trace 列归属
+            beginning_column=secondary or "",
         )
     )
     seen_keys.add(key)
@@ -406,9 +463,19 @@ def _find_period_column(
     """按期间列模式（2026年1-6月 / 46174 序列号等）查找列名。"""
     patterns: tuple[tuple[re.Pattern[str], ...], ...]
     if primary:
-        patterns = ((_YTD_PERIOD_RE,), (_MONTH_PERIOD_RE,), (_SERIAL_RE,))
+        patterns = (
+            (_YTD_PERIOD_RE,),
+            (_MONTH_PERIOD_RE,),
+            (_YEAR_RE,),
+            (_SERIAL_RE,),
+        )
     else:
-        patterns = ((_FULL_YEAR_RE,), (_MONTH_PERIOD_RE,))
+        patterns = (
+            (_FULL_YEAR_RE,),
+            (_YEAR_RE,),
+            (_MONTH_PERIOD_RE,),
+            (_SERIAL_RE,),
+        )
     for group in patterns:
         for header in headers[start_col:]:
             normalized = _normalize(header)
@@ -449,14 +516,16 @@ def _column_index(headers: list[str], header: str) -> int:
     return 0
 
 
-def _read_optional_float(row: dict[str, object], column: str | None) -> float | None:
+def _read_optional_float(
+    row: dict[str, object], column: str | None, unit: str = "元"
+) -> float | None:
     """读取次金额列，不存在或不可解析时返回 None。"""
     if column is None:
         return None
     value = row.get(column)
     if value is None:
         return None
-    return parse_amount(value)
+    return parse_cell_amount(value, unit)
 
 
 def _is_skip_row(item_name_str: str) -> bool:

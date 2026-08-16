@@ -141,6 +141,17 @@ class TestCompareExact:
                 float("nan"), 100.0, ToleranceType.EXACT, 0.01
             )
 
+    def test_inf_value_raises(self) -> None:
+        """无穷大: 抛中文 ValueError。"""
+        with pytest.raises(ValueError, match="无穷大"):
+            ToleranceComparator.compare(
+                float("inf"), 100.0, ToleranceType.EXACT, 0.01
+            )
+        with pytest.raises(ValueError, match="无穷大"):
+            ToleranceComparator.compare(
+                100.0, float("-inf"), ToleranceType.EXACT, 0.01
+            )
+
     def test_negative_tolerance_raises(self) -> None:
         """负容差: 抛 InvalidToleranceError。"""
         with pytest.raises(InvalidToleranceError):

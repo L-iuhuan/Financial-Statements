@@ -178,7 +178,20 @@ class AuditExporter:
                 "源文件 SHA256",
                 "\n".join(summary.source_hashes) if summary.source_hashes else "未记录",
             ),
+            (
+                "源文件大小(字节)",
+                "\n".join(str(size) for size in summary.source_file_sizes)
+                if summary.source_file_sizes
+                else "未记录",
+            ),
+            (
+                "金额单位留痕",
+                "\n".join(summary.amount_unit_notes)
+                if summary.amount_unit_notes
+                else "未记录",
+            ),
             ("说明", "本底稿由勾稽规则引擎自动生成，公式列为规则公式文本，金额单位已统一为元。"),
+            ("行号口径", "PDF 来源的原始行号为『第X页表内第N行』，N 含表头行。"),
             ("编制人", ""),
             ("复核人", ""),
             ("复核意见", ""),

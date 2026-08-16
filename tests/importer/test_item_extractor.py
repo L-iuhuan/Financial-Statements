@@ -484,8 +484,14 @@ class TestDualColumnBalanceSheet:
         raw = RawSheetData(
             name="资产负债表",
             headers=[
-                "资   产", "行次", "期末余额", "年初余额",
-                "负债和所有者权益", "行次#2", "期末余额#2", "年初余额#2",
+                "资   产",
+                "行次",
+                "期末余额",
+                "年初余额",
+                "负债和所有者权益",
+                "行次#2",
+                "期末余额#2",
+                "年初余额#2",
             ],
             rows=[
                 {
@@ -530,8 +536,7 @@ class TestDualColumnBalanceSheet:
             name="资产负债表",
             headers=["项目", "期末余额", "负债和所有者权益", "期末余额#2"],
             rows=[
-                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0,
-                 "负债和所有者权益": None, "期末余额#2": 999.0},
+                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0, "负债和所有者权益": None, "期末余额#2": 999.0},
             ],
         )
         items = extract_items(raw, ReportType.BALANCE_SHEET)
@@ -805,8 +810,7 @@ class TestDualColumnExtraction:
             name="现金流量表",
             headers=["项目", "本期金额", "上期金额"],
             rows=[
-                {"_row": 2, "项目": "经营活动产生的现金流量净额",
-                 "本期金额": 500000.0, "上期金额": 450000.0},
+                {"_row": 2, "项目": "经营活动产生的现金流量净额", "本期金额": 500000.0, "上期金额": 450000.0},
             ],
         )
         items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
@@ -956,3 +960,70 @@ class TestNotesExtraction:
         assert items[0].key.startswith("note_")
         assert items[0].name == "应收账款账龄"
         assert items[0].amount == 100.0
+
+
+class TestCellLevelUnitSuffix:
+    """单元格级单位后缀在提取时优先于列级单位。"""
+
+    def test_cell_suffix_converts_to_yuan(self) -> None:
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额": "1,000万元", "上期金额": "200（千元）"},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        assert len(items) == 1
+        assert items[0].amount == 10_000_000.0
+        assert items[0].beginning_amount == 200_000.0
+
+    def test_cell_suffix_not_double_converted_with_column_unit(self) -> None:
+        raw = RawSheetData(
+            name="利润表（单位：万元）",
+            headers=["项目", "本期金额", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额": "1,000万元", "上期金额": 200.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        assert len(items) == 1
+        # 后缀万元按万元算; 无后缀的 200 也按表级万元算
+        assert items[0].amount == 10_000_000.0
+        assert items[0].beginning_amount == 2_000_000.0
+
+
+class TestMultiColumnAmountUnit:
+    """多金额列单位独立识别与换算。"""
+
+    def test_different_explicit_column_units_convert_independently(self) -> None:
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额（万元）", "上期金额（元）"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额（万元）": 100.0, "上期金额（元）": 2_000_000.0},
+            ],
+        )
+        unit_info: dict[str, str] = {}
+        items = extract_items(raw, ReportType.INCOME_STATEMENT, unit_info=unit_info)
+
+        assert len(items) == 1
+        assert items[0].amount == 1_000_000.0
+        assert items[0].beginning_amount == 2_000_000.0
+        assert unit_info["unit"] == "万元"
+        assert "单位不一致" in unit_info["warning"]
+
+    def test_single_explicit_unit_propagates_to_other_column(self) -> None:
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额（万元）", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额（万元）": 100.0, "上期金额": 90.0},
+            ],
+        )
+        unit_info: dict[str, str] = {}
+        items = extract_items(raw, ReportType.INCOME_STATEMENT, unit_info=unit_info)
+
+        assert items[0].amount == 1_000_000.0
+        assert items[0].beginning_amount == 900_000.0
+        assert unit_info["warning"] == "识别到金额单位「万元」，系统已自动换算为元后校验"

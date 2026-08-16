@@ -193,7 +193,8 @@ def check_reclassification_vs_balance_sheet(
                 rule_id="RC-002",
                 rule_name="重分类后科目=资产负债表",
                 passed=passed,
-                severity=Severity.ERROR,
+                # 坏账准备等备抵科目的口径差异常见且不构成确定差错 -> 降为 WARNING (P1)
+                severity=Severity.WARNING,
                 left_value=expected,
                 right_value=actual,
                 diff=diff,

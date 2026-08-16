@@ -14,11 +14,19 @@ def make_item(
     key: str = "asset_total",
     name: str = "资产总计",
     amount: float = 0.0,
+    beginning_amount: float | None = None,
     row: int = 1,
     column: str = "期末余额",
 ) -> ReportItem:
     """创建一个 ReportItem。"""
-    return ReportItem(key=key, name=name, amount=amount, row=row, column=column)
+    return ReportItem(
+        key=key,
+        name=name,
+        amount=amount,
+        beginning_amount=beginning_amount,
+        row=row,
+        column=column,
+    )
 
 
 def make_balance_sheet(

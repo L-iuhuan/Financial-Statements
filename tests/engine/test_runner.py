@@ -234,3 +234,73 @@ class TestRuleRunner:
         assert sce_trace[0].name == "实收资本"
         # 不应出现"按 0 处理"的标注
         assert "按 0 处理" not in sce_trace[0].column
+
+    def test_trace_beginning_var_uses_beginning_column(self) -> None:
+        """_beginning 变量 trace: 列归属期初列 (beginning_column), 而非期末列。"""
+        rule = ReconciliationRule(
+            rule_id="TEST-BEG-001",
+            name="期初勾稽",
+            category="A-表内平衡",
+            statements=["资产负债表"],
+            formula="monetary_funds == monetary_funds_beginning + 10",
+            tolerance_type=ToleranceType.EXACT,
+            tolerance=0.01,
+            severity=Severity.ERROR,
+        )
+        bs = Report(
+            report_type=ReportType.BALANCE_SHEET,
+            period="2024-12",
+            items=[
+                ReportItem(
+                    key="monetary_funds",
+                    name="货币资金",
+                    amount=100.0,
+                    beginning_amount=90.0,
+                    row=3,
+                    column="期末余额",
+                    beginning_column="年初余额",
+                )
+            ],
+        )
+        ctx = ValidationContext(period="2024-12")
+        ctx.add_report(bs)
+        result = RuleRunner.run(rule, ctx)
+        assert result.passed is True
+        beg_trace = [t for t in result.trace if t.key == "monetary_funds_beginning"]
+        assert len(beg_trace) == 1
+        assert beg_trace[0].amount == 90.0
+        assert beg_trace[0].column == "年初余额"
+
+    def test_trace_beginning_var_falls_back_to_column(self) -> None:
+        """_beginning 变量 trace: beginning_column 为空时回退到期末列名。"""
+        rule = ReconciliationRule(
+            rule_id="TEST-BEG-002",
+            name="期初勾稽",
+            category="A-表内平衡",
+            statements=["资产负债表"],
+            formula="monetary_funds == monetary_funds_beginning + 10",
+            tolerance_type=ToleranceType.EXACT,
+            tolerance=0.01,
+            severity=Severity.ERROR,
+        )
+        bs = Report(
+            report_type=ReportType.BALANCE_SHEET,
+            period="2024-12",
+            items=[
+                ReportItem(
+                    key="monetary_funds",
+                    name="货币资金",
+                    amount=100.0,
+                    beginning_amount=90.0,
+                    row=3,
+                    column="期末余额",
+                )
+            ],
+        )
+        ctx = ValidationContext(period="2024-12")
+        ctx.add_report(bs)
+        result = RuleRunner.run(rule, ctx)
+        beg_trace = [t for t in result.trace if t.key == "monetary_funds_beginning"]
+        assert len(beg_trace) == 1
+        assert beg_trace[0].amount == 90.0
+        assert beg_trace[0].column == "期末余额"

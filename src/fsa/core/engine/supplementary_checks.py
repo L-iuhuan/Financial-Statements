@@ -112,14 +112,17 @@ def check_sales_detail_consistency(
     message = (
         f"销售收入成本明细一致性: 校验通过（共 {len(dataset.sales_details)} 行）"
         if passed
-        else f"销售收入成本明细一致性: {len(mismatches)} 行异常。" + "；".join(mismatches[:5])
+        else f"销售收入成本明细一致性: {len(mismatches)} 行异常"
+        f"（成本构成可能仅部分填报，差异属口径问题，需人工确认）。"
+        + "；".join(mismatches[:5])
     )
     return [
         ValidationResult(
             rule_id="SAL-001",
             rule_name="销售收入成本明细一致性",
             passed=passed,
-            severity=Severity.ERROR,
+            # 成本构成允许部分填报, 不构成确定差错 -> 降为 WARNING (P1)
+            severity=Severity.WARNING,
             left_value=0.0,
             right_value=0.0,
             diff=float(len(mismatches)),
@@ -159,7 +162,9 @@ def check_sales_vs_income_statement(
                 rule_id="SAL-002",
                 rule_name="销售收入成本明细=利润表",
                 passed=passed,
-                severity=Severity.ERROR,
+                # 明细合计 vs 利润表是全量口径假设, 明细未覆盖全部收入/成本时
+                # 差异属口径问题而非差错 -> 降为 WARNING (P1)
+                severity=Severity.WARNING,
                 left_value=amount,
                 right_value=actual,
                 diff=diff,
@@ -167,7 +172,7 @@ def check_sales_vs_income_statement(
                 formula="明细合计 == 利润表项目",
                 message=(
                     f"销售明细{name}合计 {amount:,.2f} vs 利润表 {actual:,.2f}: "
-                    f"{'一致' if passed else f'差额 {diff:,.2f}'}"
+                    f"{'一致' if passed else f'差额 {diff:,.2f}（明细可能未覆盖全部{name}，按全量口径核对，需人工确认）'}"
                 ),
                 category="L2-明细勾稽",
             )

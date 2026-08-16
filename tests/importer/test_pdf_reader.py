@@ -153,9 +153,7 @@ class TestReadPdfBalanceSheet:
         bs_name = _find_sheet(data, "资产负债")
         raw = data[bs_name]
         amount_cols = [h for h in raw.headers if h != "项目"]
-        assert len(amount_cols) >= 2, (
-            f"资产负债表应有双列金额, 实际: {amount_cols}"
-        )
+        assert len(amount_cols) >= 2, f"资产负债表应有双列金额, 实际: {amount_cols}"
 
     def test_bs_contains_asset_total(self) -> None:
         """资产负债表应包含'资产总计'行。"""
@@ -255,9 +253,7 @@ class TestImportPdf:
         service = ImportService()
         reports = service.import_file(str(THREE_REPORTS_PDF))
         for report in reports:
-            assert len(report.items) > 0, (
-                f"{report.report_type.value} 无项目"
-            )
+            assert len(report.items) > 0, f"{report.report_type.value} 无项目"
 
 
 class TestDualColumnExtraction:
@@ -270,12 +266,8 @@ class TestDualColumnExtraction:
         service = ImportService()
         reports = service.import_file(str(THREE_REPORTS_PDF))
         bs = _find_report(reports, ReportType.BALANCE_SHEET)
-        items_with_beginning = [
-            item for item in bs.items if item.beginning_amount is not None
-        ]
-        assert len(items_with_beginning) > 0, (
-            "没有项目包含期初金额"
-        )
+        items_with_beginning = [item for item in bs.items if item.beginning_amount is not None]
+        assert len(items_with_beginning) > 0, "没有项目包含期初金额"
 
     def test_bs_monetary_funds_beginning(self) -> None:
         """货币资金的期初金额应为 80000。"""
@@ -307,6 +299,16 @@ class TestPdfErrors:
         with pytest.raises(FileNotFoundError):
             read_pdf("nonexistent_file.pdf")
 
+    def test_corrupted_pdf_raises_fsaerror_chinese(self, tmp_path: Path) -> None:
+        """损坏的 PDF (非 PDF 字节) 应抛中文 FSAError, 不抛技术性异常。"""
+        from fsa.core.exceptions import FSAError
+        from fsa.core.importer.pdf_reader import read_pdf
+
+        bad_file = tmp_path / "corrupted.pdf"
+        bad_file.write_bytes(b"this is not a pdf at all, just garbage bytes")
+        with pytest.raises(FSAError, match="损坏或已加密"):
+            read_pdf(str(bad_file))
+
 
 class TestPdfValidation:
     """测试导入 PDF 后进行完整校验。"""
@@ -326,9 +328,7 @@ class TestPdfValidation:
 
         bs_bal_001 = _find_result(summary.results, "BS-BAL-001")
         assert bs_bal_001 is not None, "未找到 BS-BAL-001 结果"
-        assert bs_bal_001.passed, (
-            f"BS-BAL-001 应通过, 实际: {bs_bal_001.message}"
-        )
+        assert bs_bal_001.passed, f"BS-BAL-001 应通过, 实际: {bs_bal_001.message}"
 
 
 class TestMergedReport:
@@ -416,9 +416,7 @@ class TestPdfRowSemantics:
         monkeypatch.setattr(
             pdf_reader,
             "pdfplumber",
-            _FakePdfModule(
-                [_FakePage(_BS_TABLE, tables=[_BS_TABLE, _IS_TABLE])]
-            ),
+            _FakePdfModule([_FakePage(_BS_TABLE, tables=[_BS_TABLE, _IS_TABLE])]),
         )
         data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
         assert "资产负债表" in data
@@ -445,18 +443,14 @@ class TestPdfRowSemantics:
         assert "固定资产" in items
         assert "非流动资产合计" in items
         # 次页行号按第 2 页编码
-        fixed_assets = next(
-            r for r in bs.rows if str(r.get("项目", "")) == "固定资产"
-        )
+        fixed_assets = next(r for r in bs.rows if str(r.get("项目", "")) == "固定资产")
         assert fixed_assets["_row"] == 2 * _PDF_ROW_BASE + 2
 
     def test_read_pdf_encodes_page_and_table_row(self, monkeypatch) -> None:
         """数据行 _row = 页码 * 基数 + 表内 1-based 行号。"""
         from fsa.core.importer import pdf_reader
 
-        monkeypatch.setattr(
-            pdf_reader, "pdfplumber", _FakePdfModule([_FakePage(_BS_TABLE), _FakePage(_IS_TABLE)])
-        )
+        monkeypatch.setattr(pdf_reader, "pdfplumber", _FakePdfModule([_FakePage(_BS_TABLE), _FakePage(_IS_TABLE)]))
         data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
         assert "资产负债表" in data
         assert "利润表" in data
@@ -535,6 +529,7 @@ class TestPdfRowSemantics:
 
 # ── 辅助函数 ──────────────────────────────────────────────
 
+
 def _find_sheet(data: dict[str, RawSheetData], keyword: str) -> str:
     """在 data 中查找名称包含 keyword 的 sheet。"""
     for name in data:
@@ -557,3 +552,89 @@ def _find_result(results: list, rule_id: str):
         if r.rule_id == rule_id:
             return r
     return None
+
+
+class TestPdfReadDiagnostics:
+    """解析诊断: 页数/表数/跳过统计/置信度。"""
+
+    def test_basic_counts_and_confidence(self, monkeypatch) -> None:
+        from fsa.core.importer import pdf_reader
+        from fsa.core.importer.pdf_reader import PdfReadDiagnostics
+
+        bad_table: list[list[str | None]] = [["其他文档", None], ["A", "B"]]
+        monkeypatch.setattr(
+            pdf_reader,
+            "pdfplumber",
+            _FakePdfModule(
+                [
+                    _FakePage(_BS_TABLE),
+                    _FakePage([], tables=[]),
+                    _FakePage(bad_table),
+                ]
+            ),
+        )
+        diag = PdfReadDiagnostics()
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF), diagnostics=diag)
+
+        assert list(data) == ["资产负债表"]
+        assert diag.page_count == 3
+        assert diag.table_count == 2
+        assert diag.pages_without_tables == 1
+        assert diag.skipped_tables == 1
+        assert diag.confidence == "中"
+        assert "3 页" in diag.summary_text()
+        assert "解析置信度" in diag.summary_text()
+
+    def test_continuation_and_skipped_rows_counted(self, monkeypatch) -> None:
+        from fsa.core.importer import pdf_reader
+        from fsa.core.importer.pdf_reader import PdfReadDiagnostics
+
+        malformed = _BS_TABLE + [
+            ["资产总计", "300", "230", "多余列"],
+        ]
+        continuation = [
+            ["项目", "期末余额", "年初余额"],
+            ["所有者权益合计", "120", "100"],
+        ]
+        monkeypatch.setattr(
+            pdf_reader,
+            "pdfplumber",
+            _FakePdfModule([_FakePage(malformed), _FakePage(continuation)]),
+        )
+        diag = PdfReadDiagnostics()
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF), diagnostics=diag)
+
+        assert "资产负债表" in data
+        assert diag.continuation_count == 1
+        assert diag.skipped_rows == 1
+        assert diag.confidence == "中"
+
+
+class TestPdfParseDiagnosticsOnImport:
+    """ImportService 导入 PDF 时把解析诊断写入 Report。"""
+
+    def test_import_file_populates_parse_diagnostics(self) -> None:
+        from fsa.core.importer.importer import ImportService
+
+        reports = ImportService(period="2024-12").import_file(str(THREE_REPORTS_PDF))
+        assert reports
+        for report in reports:
+            assert "PDF 共" in report.parse_diagnostics
+            assert "解析置信度" in report.parse_diagnostics
+
+    def test_excel_import_has_no_pdf_diagnostics(self, tmp_path: Path) -> None:
+        from openpyxl import Workbook
+
+        from fsa.core.importer.importer import ImportService
+
+        path = tmp_path / "bs.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "资产负债表"
+        ws.append(["项目", "期末余额"])
+        ws.append(["资产总计", 100.0])
+        wb.save(path)
+        wb.close()
+
+        reports = ImportService(period="2024-12").import_file(str(path))
+        assert reports[0].parse_diagnostics == ""

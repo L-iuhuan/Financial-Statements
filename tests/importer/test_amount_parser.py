@@ -7,7 +7,13 @@ from __future__ import annotations
 
 import pytest
 
-from fsa.core.importer.amount_parser import detect_amount_unit, parse_amount, to_yuan
+from fsa.core.importer.amount_parser import (
+    detect_amount_suffix_unit,
+    detect_amount_unit,
+    parse_amount,
+    parse_cell_amount,
+    to_yuan,
+)
 
 
 class TestParseAmountThousandSeparator:
@@ -75,6 +81,17 @@ class TestParseAmountEmpty:
     def test_parse_nan_returns_none(self) -> None:
         assert parse_amount(float("nan")) is None
 
+    def test_parse_inf_returns_none(self) -> None:
+        """无穷大 float: 返回 None (与 NaN 同路径, P1 skip)。"""
+        assert parse_amount(float("inf")) is None
+        assert parse_amount(float("-inf")) is None
+
+    def test_parse_inf_string_returns_none(self) -> None:
+        """字符串 "inf"/"1e999" 解析为无穷大: 返回 None。"""
+        assert parse_amount("inf") is None
+        assert parse_amount("1e999") is None
+        assert parse_amount("(1e999)") is None
+
 
 class TestParseAmountPlainNumber:
     """测试普通 float 与 int。"""
@@ -119,3 +136,62 @@ class TestAmountUnitDetection:
         assert to_yuan(1.0, "千元") == 1000.0
         assert to_yuan(1.0, "亿元") == 100000000.0
         assert to_yuan(1.0, None) == 1.0
+
+
+class TestParseAmountCellUnitSuffix:
+    """单元格级单位后缀解析与换算。"""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("1,000万元", 1000.0),
+            ("200（千元）", 200.0),
+            ("（1,000万元）", -1000.0),
+            ("1,000.50元", 1000.5),
+            ("1,000 万元", 1000.0),
+        ],
+    )
+    def test_parse_amount_strips_suffix(self, text: str, expected: float) -> None:
+        """parse_amount 返回去掉单位后缀后的原始数值。"""
+        assert parse_amount(text) == expected
+
+    def test_parse_amount_foreign_currency_not_misread(self) -> None:
+        """'美元' 不应被误拆成数值。"""
+        assert parse_amount("100万美元") is None
+
+    def test_detect_suffix_unit(self) -> None:
+        """后缀单位只在剩余部分可解析为数字时被识别。"""
+        assert detect_amount_suffix_unit("1,000万元") == "万元"
+        assert detect_amount_suffix_unit("200（千元）") == "千元"
+        assert detect_amount_suffix_unit("3元店") is None
+        assert detect_amount_suffix_unit("100万美元") is None
+
+    def test_cell_suffix_overrides_column_unit(self) -> None:
+        """单元格后缀单位优先, 不重复换算。"""
+        assert parse_cell_amount("1,000万元", "元") == 10_000_000.0
+        assert parse_cell_amount("1,000万元", "万元") == 10_000_000.0
+        assert parse_cell_amount("200（千元）", "万元") == 200_000.0
+        assert parse_cell_amount("（1,000万元）", "元") == -10_000_000.0
+
+    def test_column_unit_applies_without_suffix(self) -> None:
+        """无后缀时按列级单位换算。"""
+        assert parse_cell_amount(200.0, "千元") == 200_000.0
+        assert parse_cell_amount("1,000", "亿元") == 100_000_000_000.0
+        assert parse_cell_amount("abc", "万元") is None
+
+
+class TestAmountUnitDetectionVariants:
+    """表头单位变体识别。"""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("单位：人民币万元", "万元"),
+            ("单位(人民币千元)", "千元"),
+            ("单位：人民币亿元", "亿元"),
+            ("期末余额（百万元）", "百万元"),
+            ("单位: 人民币元", "元"),
+        ],
+    )
+    def test_detect_variants(self, text: str, expected: str) -> None:
+        assert detect_amount_unit(text) == expected

@@ -1,7 +1,7 @@
 """报表导入服务: 主入口，编排读取 -> 识别 -> 提取 -> 构建 Report 全流程。
 
 ImportService 是无状态的，每次调用 import_file 或 import_sheet 独立执行。
-支持 Excel (.xlsx/.xls) 和 PDF (.pdf) 格式。
+支持 Excel (.xlsx/.xls/.xlsm)、CSV (.csv) 和 PDF (.pdf) 格式。
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class ImportService:
         """导入文件中的所有报表。
 
         根据文件扩展名路由到对应的读取器:
-        - .xlsx/.xls → read_excel (Excel 读取器)
+        - .xlsx/.xls/.xlsm/.csv → read_excel (Excel/CSV 读取器)
         - .pdf → read_pdf (PDF 读取器)
 
         读取后委托 import_data 完成识别→提取→构建管线。
@@ -52,11 +52,19 @@ class ImportService:
 
         suffix = Path(file_path).suffix.lower()
         if suffix == ".pdf":
-            from fsa.core.importer.pdf_reader import read_pdf
+            from fsa.core.importer.pdf_reader import (
+                PdfReadDiagnostics,
+                read_pdf,
+            )
 
-            raw_data = read_pdf(file_path)
-        else:
-            raw_data = read_excel(file_path)
+            diagnostics = PdfReadDiagnostics()
+            raw_data = read_pdf(file_path, diagnostics=diagnostics)
+            reports = self.import_data(raw_data, str(file_path), suffix)
+            for report in reports:
+                report.parse_diagnostics = diagnostics.summary_text()
+            return reports
+
+        raw_data = read_excel(file_path)
 
         return self.import_data(raw_data, str(file_path), suffix)
 
@@ -73,7 +81,7 @@ class ImportService:
         Args:
             data: read_excel 或 read_pdf 返回的原始数据字典
             source_file: 源文件路径（用于 Report.source_file 和日志）
-            suffix: 文件扩展名（".xlsx" / ".xls" / ".pdf"），
+            suffix: 文件扩展名（".xlsx" / ".xls" / ".xlsm" / ".csv" / ".pdf"），
                     用于路由 SCE 提取器（PDF 的 SCE 矩阵暂不支持）
 
         Returns:
@@ -89,14 +97,33 @@ class ImportService:
         for sheet_name, report_type in identified:
             raw = data[sheet_name]
             unmapped: list[str] = []
-            unit_info: dict[str, str] = {}
+            unit_info: dict[str, object] = {}
             items = self._extract_for_type(
                 raw, report_type, suffix, unmapped, unit_info
             )
+            unit = str(unit_info.get("unit", "元"))
+            warning = str(unit_info.get("warning", ""))
+            if unit == "元" and unit_info.get("detected", True) is False:
+                max_amount = max(
+                    (
+                        abs(item.amount)
+                        for item in items
+                        if item.amount is not None
+                    ),
+                    default=0.0,
+                )
+                if max_amount >= 100_000_000_000.0:  # 千亿级
+                    warning = (
+                        f"{warning}；未在表头识别到金额单位，且最大科目金额达 "
+                        f"{max_amount:,.0f} 元（千亿级），请确认原表单位是否为万元/亿元"
+                        if warning
+                        else f"未在表头识别到金额单位，且最大科目金额达 {max_amount:,.0f} 元"
+                        "（千亿级），请确认原表单位是否为万元/亿元"
+                    )
             report = self._build_report(
                 report_type, items, source_file, unmapped,
-                unit_info.get("unit", "元"),
-                unit_info.get("warning", ""),
+                unit,
+                warning,
             )
             reports.append(report)
             logger.info(f"  导入报表: {report_type.value}，共 {len(items)} 个项目")
@@ -137,13 +164,14 @@ class ImportService:
         _, report_type = identified[0]
         raw = raw_data[sheet_name]
         unmapped: list[str] = []
-        unit_info: dict[str, str] = {}
+        unit_info: dict[str, object] = {}
         items = self._extract_for_type(
             raw, report_type, suffix, unmapped, unit_info
         )
         return self._build_report(
             report_type, items, file_path, unmapped,
-            unit_info.get("unit", "元"), unit_info.get("warning", ""),
+            str(unit_info.get("unit", "元")),
+            str(unit_info.get("warning", "")),
         )
 
     def _extract_for_type(
@@ -152,7 +180,7 @@ class ImportService:
         report_type: ReportType,
         suffix: str,
         unmapped: list[str] | None = None,
-        unit_info: dict[str, str] | None = None,
+        unit_info: dict[str, object] | None = None,
     ) -> list[ReportItem]:
         """按报表类型选择提取器。
 

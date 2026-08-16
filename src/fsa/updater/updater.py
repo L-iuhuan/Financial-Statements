@@ -1,4 +1,4 @@
-"""内网自动更新模块。
+"""自动更新模块 (内网 HTTP/共享盘与通用版 HTTPS 共用)。
 
 通过 HTTP 获取版本清单 JSON，比较版本号，下载更新包。
 使用 Python 标准库 urllib.request，不依赖 requests 库。
@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol, cast
 
 from loguru import logger
 
@@ -57,6 +59,7 @@ def compare_versions(current: str, latest: str) -> int:
          0: current == latest
          1: current > latest
     """
+
     def _parse(version: str) -> list[int]:
         cleaned = version.lstrip("vV")
         parts = cleaned.split(".")
@@ -75,6 +78,29 @@ def compare_versions(current: str, latest: str) -> int:
         if cv > lv:
             return 1
     return 0
+
+
+class _ReadableResponse(Protocol):
+    """urlopen 返回值的最小协议 (支持 with 与 read)。"""
+
+    def read(self, size: int = ...) -> bytes: ...
+
+    def __enter__(self) -> _ReadableResponse: ...
+
+    def __exit__(self, *exc_info: object) -> bool | None: ...
+
+
+def _to_file_url(url: str) -> str:
+    """把 Windows UNC 共享盘路径转换为 urllib 可用的 file URI。
+
+    - "\\\\server\\share\\version.json" -> "file://server/share/version.json"
+    - 其余 URL/路径原样返回
+    """
+    if url.startswith("\\\\"):
+        return "file:" + url.replace("\\", "/")
+    if os.path.isabs(url) and "://" not in url:
+        return Path(url).as_uri()
+    return url
 
 
 class Updater:
@@ -110,19 +136,9 @@ class Updater:
             UpdateError: 网络错误、清单解析失败、缺少必需字段时抛出。
         """
         try:
-            response = urllib.request.urlopen(
-                self._manifest_url, timeout=self._timeout
-            )
-        except urllib.error.URLError as e:
-            raise UpdateError(f"更新清单下载失败: 网络连接错误 ({e.reason})") from e
-        except TimeoutError as e:
-            raise UpdateError("更新清单下载失败: 连接超时，请检查网络") from e
-        except OSError as e:
-            raise UpdateError(f"更新清单下载失败: 网络错误 ({e})") from e
-
-        try:
-            with response:
-                raw = response.read()
+            raw = self._fetch_manifest_bytes()
+        except UpdateError:
+            raise
         except OSError as e:
             raise UpdateError(f"更新清单读取失败: ({e})") from e
 
@@ -182,7 +198,7 @@ class Updater:
         """
         expected_sha256 = self._fetch_expected_sha256()
         try:
-            response = urllib.request.urlopen(url, timeout=self._timeout)
+            response = self._open_url(url)
         except urllib.error.URLError as e:
             raise UpdateError(f"下载失败: 网络连接错误 ({e.reason})") from e
         except TimeoutError as e:
@@ -254,14 +270,13 @@ class Updater:
             期望的 sha256 十六进制小写值；无法获取时返回 None
         """
         try:
-            response = urllib.request.urlopen(self._manifest_url, timeout=self._timeout)
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raw = self._fetch_manifest_bytes()
+        except (UpdateError, OSError) as e:
             logger.warning(f"获取更新清单失败，跳过安装包完整性校验: {e}")
             return None
         try:
-            with response:
-                data = json.loads(response.read())
-        except (OSError, ValueError) as e:
+            data = json.loads(raw)
+        except ValueError as e:
             logger.warning(f"更新清单解析失败，跳过安装包完整性校验: {e}")
             return None
         if not isinstance(data, dict):
@@ -272,6 +287,25 @@ class Updater:
             logger.warning("更新清单未提供 sha256 字段，跳过安装包完整性校验")
             return None
         return str(expected).strip().lower()
+
+    def _fetch_manifest_bytes(self) -> bytes:
+        """读取更新清单原始字节 (HTTP/HTTPS/file URI/UNC 共享盘/本地路径)。
+
+        UNC 路径 (\\\\server\\share\\version.json) 转换为 file URI,
+        复用 urllib 的文件处理器; 已存在的本地路径直接按文件读取。
+        """
+        if os.path.isfile(self._manifest_url):
+            with open(self._manifest_url, "rb") as f:
+                return f.read()
+        with self._open_url(self._manifest_url) as response:
+            return response.read()
+
+    def _open_url(self, url: str) -> _ReadableResponse:
+        """打开 URL (HTTP/HTTPS/file URI); UNC 路径自动转为 file URI。"""
+        return cast(
+            _ReadableResponse,
+            urllib.request.urlopen(_to_file_url(url), timeout=self._timeout),
+        )
 
     def _read_content_length(self, response: object) -> int:
         """从响应头读取 Content-Length，无该头或值非法时返回 -1。

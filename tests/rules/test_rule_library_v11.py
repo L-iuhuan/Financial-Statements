@@ -108,6 +108,9 @@ _SCE_WHITELIST: frozenset[str] = frozenset({
     "beginning",
     "total_changes",
     "parent_equity",
+    # 派生变量 (runner 执行期注入: 归母净利润 = 归母行 or 净利润),
+    # 静态合同命名空间中不存在, 允许 NameNotDefined
+    "net_profit_attributable",
 })
 
 # NOTES/附注变量 (不在 MVP 范围内)

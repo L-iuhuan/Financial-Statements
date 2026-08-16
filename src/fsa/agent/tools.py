@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any
 
 from fsa.core.models.report import Report, ReportItem
@@ -279,8 +278,9 @@ def _get_imported_reports(args: dict[str, Any], state: AppState) -> str:
     lines = [f"已导入 {len(reports)} 张报表:"]
     for r in reports:
         src = r.source_file or "未知来源"
-        # 路径泄露防护 (P1): 只保留文件名, 不暴露本地完整路径
-        src = os.path.basename(src)
+        # 路径泄露防护 (P1): 只保留文件名, 不暴露本地完整路径。
+        # 统一反斜杠后取最后一段, 兼容 Windows 路径在非 Windows 测试环境运行。
+        src = src.replace("\\", "/").rsplit("/", 1)[-1]
         lines.append(f"  {r.report_type.value}: {len(r.items)} 个科目 (来源: {src})")
     return "\n".join(lines)
 

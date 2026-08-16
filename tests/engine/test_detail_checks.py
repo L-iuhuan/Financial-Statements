@@ -51,6 +51,23 @@ def _bs_report(amount: float) -> dict[ReportType, Report]:
     }
 
 
+def _ar_report(amount: float) -> dict[ReportType, Report]:
+    return {
+        ReportType.BALANCE_SHEET: Report(
+            report_type=ReportType.BALANCE_SHEET,
+            items=[
+                ReportItem(
+                    key="accounts_receivable",
+                    name="应收账款",
+                    amount=amount,
+                    row=5,
+                    column="期末余额",
+                )
+            ],
+        )
+    }
+
+
 class TestJournalVoucherBalance:
     """序时账逐凭证借贷平衡检查。"""
 
@@ -203,3 +220,47 @@ class TestTrialBalanceVsBalanceSheet:
         results = check_trial_balance_vs_balance_sheet(dataset, _bs_report(650.0), mappings, 0.01)
         assert results[0].passed is False
         assert results[0].diff == -50.0
+
+    def test_bad_debt_provision_netted_passes(self) -> None:
+        """坏账净额化: 1231 坏账准备为贷方备抵科目，借-贷自然净额化后与报表一致。"""
+        dataset = DetailDataset(
+            trial_balance=[
+                TrialBalanceRow(account_code="1122", account_name="应收账款", ending_debit=800.0),
+                TrialBalanceRow(account_code="1231", account_name="坏账准备", ending_credit=50.0),
+            ]
+        )
+        mappings = {"accounts_receivable": {"codes": ("1122", "1231"), "side": "debit"}}
+        results = check_trial_balance_vs_balance_sheet(
+            dataset, _ar_report(750.0), mappings, 0.01
+        )
+        assert results[0].passed is True
+
+    def test_leaf_only_trial_balance_passes(self) -> None:
+        """仅末级科目的余额表: 前缀匹配聚合末级行，正确勾稽。"""
+        dataset = DetailDataset(
+            trial_balance=[
+                TrialBalanceRow(account_code="112201", account_name="应收账款-甲", ending_debit=400.0),
+                TrialBalanceRow(account_code="112202", account_name="应收账款-乙", ending_debit=350.0),
+            ]
+        )
+        mappings = {"accounts_receivable": {"codes": ("1122",), "side": "debit"}}
+        results = check_trial_balance_vs_balance_sheet(
+            dataset, _ar_report(750.0), mappings, 0.01
+        )
+        assert results[0].passed is True
+
+    def test_mixed_parent_and_leaf_not_double_counted(self) -> None:
+        """一级+末级混列: 父级行金额已含末级，排除父级后不重复加总。"""
+        dataset = DetailDataset(
+            trial_balance=[
+                TrialBalanceRow(account_code="1122", account_name="应收账款", ending_debit=750.0),
+                TrialBalanceRow(account_code="112201", account_name="应收账款-甲", ending_debit=400.0),
+                TrialBalanceRow(account_code="112202", account_name="应收账款-乙", ending_debit=350.0),
+            ]
+        )
+        mappings = {"accounts_receivable": {"codes": ("1122",), "side": "debit"}}
+        results = check_trial_balance_vs_balance_sheet(
+            dataset, _ar_report(750.0), mappings, 0.01
+        )
+        assert results[0].passed is True
+        assert results[0].left_value == 750.0

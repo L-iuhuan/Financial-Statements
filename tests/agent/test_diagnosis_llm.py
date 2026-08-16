@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from fsa.agent.diagnosis import DiagnosisEngine
 from fsa.agent.ollama_client import OllamaClient, OllamaError
 from fsa.core.models.result import TraceItem, ValidationResult
@@ -41,16 +43,28 @@ def _make_result(
         category=category,
         trace=[
             TraceItem(
-                key="asset_total", name="资产总计", amount=1000000.0,
-                row=35, column="期末余额", side="left",
+                key="asset_total",
+                name="资产总计",
+                amount=1000000.0,
+                row=35,
+                column="期末余额",
+                side="left",
             ),
             TraceItem(
-                key="liability_total", name="负债合计", amount=600000.0,
-                row=20, column="期末余额", side="right",
+                key="liability_total",
+                name="负债合计",
+                amount=600000.0,
+                row=20,
+                column="期末余额",
+                side="right",
             ),
             TraceItem(
-                key="equity_total", name="所有者权益合计", amount=390000.0,
-                row=30, column="期末余额", side="right",
+                key="equity_total",
+                name="所有者权益合计",
+                amount=390000.0,
+                row=30,
+                column="期末余额",
+                side="right",
             ),
         ],
     )
@@ -213,5 +227,54 @@ class TestDiagnoseWithLlmIntegration:
         """diagnosis 模块不直接导入 ollama_client（通过类型注解延迟导入）。"""
         # 这确保无 ollama 时 diagnosis 模块仍可独立使用
         import fsa.agent.diagnosis as mod
+
         # 模块应能正常导入而不依赖 ollama_client
         assert hasattr(mod, "DiagnosisEngine")
+
+
+class TestDiagnoseWithClientCancel:
+    """diagnose_with_client 的取消事件传递。"""
+
+    def _make_fake_client(self, monkeypatch, seen: list, raise_when_set: bool = False):
+
+        from fsa.agent.llm_client import ChatMessage, LLMError
+
+        class FakeClient:
+            base_url = "http://localhost:11434"
+            model = "fake"
+
+            def is_available(self) -> bool:
+                return True
+
+            def chat(self, messages, tools=None, timeout=None, cancel_event=None):
+                seen.append(cancel_event)
+                if raise_when_set and cancel_event is not None and cancel_event.is_set():
+                    raise LLMError("已取消")
+                return ChatMessage(role="assistant", content="增强诊断结果")
+
+        return FakeClient()
+
+    def test_cancel_event_passed_to_client(self, monkeypatch) -> None:
+        import threading
+
+        seen: list[threading.Event | None] = []
+        client = self._make_fake_client(monkeypatch, seen)
+        event = threading.Event()
+
+        text = DiagnosisEngine().diagnose_with_client(_make_result(), client, cancel_event=event)
+
+        assert "增强诊断结果" in text
+        assert seen == [event]
+
+    def test_preset_cancel_event_propagates(self, monkeypatch) -> None:
+        import threading
+
+        from fsa.agent.llm_client import LLMError
+
+        seen: list[threading.Event | None] = []
+        client = self._make_fake_client(monkeypatch, seen, raise_when_set=True)
+        event = threading.Event()
+        event.set()
+
+        with pytest.raises(LLMError, match="已取消"):
+            DiagnosisEngine().diagnose_with_client(_make_result(), client, cancel_event=event)

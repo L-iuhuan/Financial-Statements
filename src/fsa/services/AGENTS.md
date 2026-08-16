@@ -12,6 +12,7 @@ GUI ↔ core 之间的编排层。不读文件、不碰 GUI、不写 SQL。依�
 | `detail_validation_service.py` | `DetailValidationService`：编排 12 组 `core.engine` 明细检查；`DetailCheckConfig`（tolerance / cash_equivalent_codes / tb_to_bs_mappings） |
 | `entity_config.py` | `EntityConfig`（按主体覆盖容差/现金等价物/映射/**industry 行业**——驱动 `engine/thresholds.py` 的 LR-* 阈值覆写）+ `load_entity_configs` |
 | `multi_entity_service.py` | 文件夹级批量校验 + ICF-002 双边核对；**当前无 GUI 消费方**（库式服务，测试使用） |
+| `problem_package.py` | 问题包导出：收集日志/data.db/环境信息打包 zip 供支持排查——**受控例外**：直读日志目录与 SQLite 文件（不经仓储），不含 API 密钥 |
 
 ## 异常映射阶梯（`_run_rule_safe`，照抄此模式）
 
@@ -34,6 +35,6 @@ FSAError             → error
 
 ## ANTI-PATTERNS
 
-- 禁止在 services 读取文件（文件路径在 GUI/importer 层处理）
+- 禁止在 services 读取文件（文件路径在 GUI/importer 层处理）；唯一受控例外是 `problem_package.py`（支持排查用途，见 FILES 表）
 - 禁止 import `fsa.gui.*`（依赖反向）
-- `validation_service.py:42` 有一行遗留 `print()`——新增代码不得效仿，应使用 loguru
+- 禁止 `print()`，一律 loguru（历史上的遗留 print 已全部清除）

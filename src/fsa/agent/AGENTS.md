@@ -14,7 +14,7 @@
 | `diagnosis.py` | `DiagnosisEngine` 确定性五段式诊断；LLM 增强失败 → 回退 `diagnose()` |
 | `fallback.py` | 无 LLM 应答：规则编号正则（`BS-BAL-001` 型）→ 规则定义；关键词意图 → 知识检索 |
 | `debate.py` | 分析师 → 反方审计师 → 裁判三轮辩论（带阶段提示） |
-| `knowledge.py` | CAS 知识条目库，关键词打分检索（无向量库） |
+| `knowledge.py` | 内置 CAS 条目 + 外部文档（`resources/knowledge/*.md`：CAS 准则原文 + 陈奕蔚答疑，1400 字符切块、120 重叠）关键词打分检索（无向量库）；**fsa.spec 未打包 knowledge 目录——冻结版静默无外部文档** |
 | `ollama_client.py` | 旧版 `/api/generate` 客户端（遗留路径） |
 
 ## 调用链

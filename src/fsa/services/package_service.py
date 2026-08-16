@@ -81,6 +81,11 @@ def merge_summaries(*summaries: ValidationSummary) -> ValidationSummary:
         for report_type in summary.report_types:
             if report_type not in report_types:
                 report_types.append(report_type)
+    amount_unit_notes: list[str] = []
+    for summary in summaries:
+        for note in summary.amount_unit_notes:
+            if note not in amount_unit_notes:
+                amount_unit_notes.append(note)
     passed = sum(1 for result in results if result.passed and not result.skipped and not result.errored)
     failed = sum(1 for result in results if not result.passed and not result.errored)
     errored = sum(1 for result in results if result.errored)
@@ -88,11 +93,14 @@ def merge_summaries(*summaries: ValidationSummary) -> ValidationSummary:
     period = next((summary.period for summary in summaries if summary.period), "")
     return ValidationSummary(
         period=period,
-        total=len(results),
+        # total 口径与 ValidationService._build_summary 统一: 剔除 skipped,
+        # 即 total = passed + failed + errored (跳过项不计入校验总数)
+        total=len(results) - skipped,
         passed=passed,
         failed=failed,
         errored=errored,
         skipped=skipped,
         results=results,
         report_types=report_types,
+        amount_unit_notes=amount_unit_notes,
     )

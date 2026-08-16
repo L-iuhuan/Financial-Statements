@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from fsa.core.importer.amount_parser import parse_amount, to_yuan
+from fsa.core.importer.amount_parser import parse_amount, parse_cell_amount
 from fsa.core.models.detail import (
     CashFlowDetailRow,
     InternalCashFlowRow,
@@ -227,9 +227,13 @@ def _find_amount_col(headers: list[str]) -> str | None:
 def _number_yuan(
     row: dict[str, object], column: str | None, unit: str
 ) -> float | None:
-    """读取金额并按明细表单位换算为元。"""
-    value = _number(row, column)
-    return to_yuan(value, unit) if value is not None else None
+    """读取金额并按明细表单位换算为元 (单元格后缀单位优先于列级单位)。"""
+    if column is None:
+        return None
+    value = row.get(column)
+    if value is None:
+        return None
+    return parse_cell_amount(value, unit)
 
 
 def _text(row: dict[str, object], column: str | None) -> str:

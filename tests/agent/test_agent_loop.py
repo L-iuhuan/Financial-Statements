@@ -30,9 +30,7 @@ class FakeLLM:
         self.calls += 1
         return resp
 
-    def chat_stream(
-        self, messages, tools=None, timeout=None, on_chunk=None, on_reasoning_chunk=None
-    ):
+    def chat_stream(self, messages, tools=None, timeout=None, on_chunk=None, on_reasoning_chunk=None):
         resp = self.chat(messages, tools=tools, timeout=timeout)
         if on_chunk is not None and resp.content:
             on_chunk(resp.content)
@@ -41,15 +39,25 @@ class FakeLLM:
 
 def _make_summary_with_fail() -> ValidationSummary:
     fail = ValidationResult(
-        rule_id="BS-BAL-001", rule_name="资产=负债+所有者权益",
-        passed=False, severity=Severity.ERROR,
-        left_value=100.0, right_value=98.0, diff=2.0,
-        tolerance=0.01, formula="asset_total == liability_total + equity_total",
+        rule_id="BS-BAL-001",
+        rule_name="资产=负债+所有者权益",
+        passed=False,
+        severity=Severity.ERROR,
+        left_value=100.0,
+        right_value=98.0,
+        diff=2.0,
+        tolerance=0.01,
+        formula="asset_total == liability_total + equity_total",
         message="不通过",
     )
     return ValidationSummary(
-        period="2024-12", total=1, passed=0, failed=1, errored=0,
-        skipped=0, results=[fail],
+        period="2024-12",
+        total=1,
+        passed=0,
+        failed=1,
+        errored=0,
+        skipped=0,
+        results=[fail],
     )
 
 
@@ -65,7 +73,8 @@ class TestAgentLoop:
     def test_tool_call_then_answer(self, app_state) -> None:
         """LLM 先调工具, 拿到结果后再回答。"""
         tool_resp = ChatMessage(
-            role="assistant", content="",
+            role="assistant",
+            content="",
             tool_calls=[ToolCall(name="get_validation_results", arguments={})],
         )
         final = ChatMessage(role="assistant", content="基于工具结果的回答")
@@ -77,7 +86,8 @@ class TestAgentLoop:
     def test_max_iterations_stops(self, app_state) -> None:
         """无限工具调用时在最大迭代处停止。"""
         tool_resp = ChatMessage(
-            role="assistant", content="",
+            role="assistant",
+            content="",
             tool_calls=[ToolCall(name="get_validation_results", arguments={})],
         )
         # max_iterations=3: 循环调用 chat 3 次(索引0-2)都返回工具调用,
@@ -129,9 +139,7 @@ class TestAgentLoopReasoningFallback:
     """P1: content=null + reasoning 非空时以推理摘要兜底。"""
 
     def test_content_null_uses_reasoning_fallback(self, app_state) -> None:
-        llm = FakeLLM(
-            [ChatMessage(role="assistant", content="", reasoning="推理过程A")]
-        )
+        llm = FakeLLM([ChatMessage(role="assistant", content="", reasoning="推理过程A")])
         loop = AgentLoop(llm, app_state)
         result = loop.ask("你好")
         assert "推理过程A" in result
@@ -152,9 +160,7 @@ class TestAgentLoopReasoningFallback:
 
     def test_content_priority_over_reasoning(self, app_state) -> None:
         """content 非空时优先使用正式内容。"""
-        llm = FakeLLM(
-            [ChatMessage(role="assistant", content="正式回答", reasoning="推理")]
-        )
+        llm = FakeLLM([ChatMessage(role="assistant", content="正式回答", reasoning="推理")])
         loop = AgentLoop(llm, app_state)
         assert loop.ask("你好").startswith("正式回答")
 
@@ -165,8 +171,12 @@ class TestAgentLoopStream:
     def test_ask_stream_collects_chunks(self, app_state) -> None:
         class StreamingLLM(FakeLLM):
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 if on_chunk is not None:
                     on_chunk("你")
@@ -179,9 +189,7 @@ class TestAgentLoopStream:
         loop = AgentLoop(llm, app_state)
         chunks: list[str] = []
         reasoning: list[str] = []
-        result = loop.ask_stream(
-            "你好", on_chunk=chunks.append, on_reasoning_chunk=reasoning.append
-        )
+        result = loop.ask_stream("你好", on_chunk=chunks.append, on_reasoning_chunk=reasoning.append)
         # 正常结束前最后一个分块为免责标注
         assert result.startswith("你好")
         assert result.endswith(DISCLAIMER_TEXT)
@@ -228,11 +236,15 @@ class TestAgentLoopCancel:
                 return ChatMessage(role="assistant", content="ok")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None, cancel_event=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
+                cancel_event=None,
             ):
-                return self.chat(messages, tools=tools, timeout=timeout,
-                                 cancel_event=cancel_event)
+                return self.chat(messages, tools=tools, timeout=timeout, cancel_event=cancel_event)
 
         import threading
 
@@ -247,9 +259,7 @@ class TestAgentLoopSanitizeHistory:
     """P1 输入消毒: 历史用户消息经 sanitize_llm_input 清洗。"""
 
     def test_user_content_sanitized(self) -> None:
-        hist = _normalize_history(
-            [{"role": "user", "content": "  a\x00b   c\n\n d  "}]
-        )
+        hist = _normalize_history([{"role": "user", "content": "  a\x00b   c\n\n d  "}])
         assert hist[0].content == sanitize_llm_input("  a\x00b   c\n\n d  ", max_len=4000)
 
     def test_user_chatmessage_sanitized(self) -> None:
@@ -285,8 +295,12 @@ class TestAgentLoopTimeout:
                 return ChatMessage(role="assistant", content="ok")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -309,8 +323,12 @@ class TestAgentLoopTimeout:
                 raise LLMError("无法连接 LLM 服务")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -335,14 +353,19 @@ class TestAgentLoopTimeout:
                 self.calls += 1
                 if self.calls <= 3:
                     return ChatMessage(
-                        role="assistant", content="",
+                        role="assistant",
+                        content="",
                         tool_calls=[ToolCall(name="get_validation_results", arguments={})],
                     )
                 raise LLMError("服务超时")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -385,6 +408,25 @@ class TestTools:
         result = execute_tool("get_skipped_rules", {}, app_state)
         assert "没有规则被跳过" in result
 
+    def test_repeated_question_still_injects_context_into_user_message(self, app_state) -> None:
+        """重复问句不应被历史污染: 每次提问都注入当前软件上下文。"""
+        loop = AgentLoop(FakeLLM([ChatMessage(role="assistant", content="ok")]), app_state)
+        history = [
+            ChatMessage(role="user", content="我现在在哪里？"),
+            ChatMessage(role="assistant", content="数据导入页面"),
+        ]
+        messages = loop._build_messages(
+            "我现在在哪里？",
+            history=history,
+            context_notes="用户当前页面: 校验结果 (查看校验结果并导出底稿)",
+        )
+        system = messages[0].content
+        last_user = messages[-1].content
+        assert "用户当前页面" in system
+        assert "校验结果" in system
+        assert "用户当前页面" in last_user
+        assert last_user.count("用户当前页面") == 1
+
 
 class TestKnowledge:
     def test_search_gouji(self) -> None:
@@ -408,9 +450,7 @@ class TestContextAwarePrompt:
     def test_build_messages_includes_page_context(self, app_state) -> None:
         """页面上下文注记注入系统提示, 供模型按当前页面作答。"""
         loop = AgentLoop(FakeLLM([ChatMessage(role="assistant", content="ok")]), app_state)
-        messages = loop._build_messages(
-            "我现在在哪里？", None, "用户当前页面: 规则管理 (查看与维护勾稽规则)"
-        )
+        messages = loop._build_messages("我现在在哪里？", None, "用户当前页面: 规则管理 (查看与维护勾稽规则)")
         assert messages[0].role == "system"
         assert "规则管理" in messages[0].content
         assert "用户当前页面" in messages[0].content

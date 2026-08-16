@@ -9,7 +9,7 @@
 |---|---|
 | `runner.py` | `RuleRunner.run(rule, context)` 单规则执行入口；构建 namespace/trace/中文消息；注入行业阈值变量 |
 | `evaluator.py` | simpleeval 求值；`split_formula`（恰好一个 `==`）；`evaluate_boolean`（阈值式） |
-| `comparator.py` | 4 种容差比较 → `(passed, diff)`；`RelativeBaseZeroError`（见下） |
+| `comparator.py` | 4 种容差比较 → `(passed, diff)`；**内部在 Decimal 域计算**（float 经 `str()` 转换，避免二进制尾数污染；接口仍是 float）；`RelativeBaseZeroError`（见下） |
 | `thresholds.py` | 行业阈值参数化：LR-* 规则的阈值变量（`dar_threshold`/`current_ratio_threshold` 等）按行业取值，`EntityConfig.industry` 覆写，默认 `general`；未知行业告警并回落 |
 | `registry.py` | `RuleRegistry` 启停/按类过滤/容差覆写/自定义规则 CRUD |
 | `rule_loader.py` | `cas_gouji_rule_library.json` → `list[ReconciliationRule]` |
@@ -41,9 +41,11 @@
 
 ## INVARIANTS（本模块特有）
 
-- trace 查询先整 key 命中再剥 `_ending`/`_beginning` 后缀（SCE 键如 `sce_x_ending` 可正确溯源）；namespace 不再生成 `_ending_ending` 类垃圾键
-- **P1 偏通过**：`KNOWN_LINE_ITEM_KEYS` 预填 0.0；`EvaluationError` → skip 而非 fail。`models/result.py` 注释记录了刻意排除的 key（`total_revenue`/`dividends` 等——预填 0 会误报，故移出让规则 skip）
-- 永不 `==` 比浮点，一律 `abs(a-b) <= tolerance`；负容差双层拒绝（`ReconciliationRule.__post_init__` + comparator）；|金额|>1e14 时 warning 提示精度边界（不改变判定，P2）
+- trace 查询先整 key 命中再剥 `_ending`/`_beginning` 后缀（SCE 键如 `sce_x_ending` 可正确溯源）；namespace 不再生成 `_ending_ending` 类垃圾键；`_beginning` 变量 trace 列归属 `ReportItem.beginning_column`（空则回退 `column`）
+- 派生变量注入（runner `_DERIVED_VARIABLE_SOURCES`）：`net_profit_attributable` = `net_profit_parent`（合并归母行）→ 回退 `net_profit`（单体）；两来源均无真实数据时不注入（规则 skip，P1）；trace 溯源到实际取值来源科目
+- **P1 偏通过**：`KNOWN_LINE_ITEM_KEYS` 预填 0.0；`EvaluationError` → skip 而非 fail。`models/result.py` 注释记录了刻意排除的 key（`total_revenue`/`dividends` 等——预填 0 会误报，故移出让规则 skip）。例外：`cf_notes_credit_impairment` 在集合内（IS-CF-002 需要——旧格式无此行时预填 0 使公式退化成立）
+- 明细勾稽口径：`_sum_trial_balance` 用**前缀匹配 + 父级排除**（科目编码 startswith 命中后，剔除"是另一匹配行真前缀"的父级行防重复加总）；默认 TB→BS 映射应收账款含 `1231`（坏账准备贷方备抵，借贷差自然净额化）
+- 永不 `==` 比浮点，一律 `abs(a-b) <= tolerance` 且**比较在 Decimal 域执行**（输入输出保持 float，§3.5）；负容差双层拒绝（`ReconciliationRule.__post_init__` + comparator）；|金额|>1e14 时 warning 提示精度边界（不改变判定，P2）
 - 引擎不读报表数据文件；`rule_loader`/`custom_rules` 读写的是规则配置 JSON（注册期加载，非数据），这是对"禁止读取文件"的受控解释
 - 缺主表/缺数据时明细检查一律 skip（skipped 结果或空列表，P1）；CF-DTL-001 明细项目未匹配主表时降级为 skipped+WARNING 提示（不再计为异常）
 - 受控共享依赖：`detail/reclassification/supplementary_checks` import `importer.name_mapper.clean_name`

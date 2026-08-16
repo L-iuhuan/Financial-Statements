@@ -107,10 +107,10 @@ class TestLoadFromRealFile:
         assert sevs == {Severity.ERROR, Severity.WARNING}
 
     def test_float_tolerance_conversion(self) -> None:
-        """LR-ART-001 的 default_tolerance=0.2 应转为 float。"""
+        """LR-ART-001 的 default_tolerance=0.3 应转为 float。"""
         rules = load_rules_from_json(RULE_LIBRARY)
         by_id = {r.rule_id: r for r in rules}
-        assert by_id["LR-ART-001"].tolerance == 0.2
+        assert by_id["LR-ART-001"].tolerance == 0.3
         assert isinstance(by_id["LR-ART-001"].tolerance, float)
 
 
