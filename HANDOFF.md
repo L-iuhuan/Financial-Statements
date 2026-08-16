@@ -1,6 +1,7 @@
 # 财务报表勾稽校验系统 — 开发交接文档
 
 > 更新日期: 2026-08-15
+> 最后校准: 2026-08-16
 > 用途: 跨机器开发的交接与续作指南
 > 当前版本: v0.4.1 (MVP+), 规则库 CAS v1.3.0 (42 条)
 
@@ -45,7 +46,7 @@ python -m ruff check src/    # 静态检查
 - [x] 所有者权益变动表 SCE (矩阵解析)
 
 ### 导出
-- [x] Excel 审计底稿 (汇总+明细+科目追溯三表)
+- [x] Excel 审计底稿 (汇总+明细+科目追溯+底稿说明四表)
 
 ### AI 助手
 - [x] 规则化诊断引擎 (确定性兜底)
@@ -100,14 +101,16 @@ python -m ruff check src/    # 静态检查
 - [ ] **自定义规则的公式变量联想**: 新增规则时输入变量名自动补全
 - [ ] **AgentLoop 深度集成**: 把 DebateEngine 的"深度辩论"按钮接入规则卡片(已部分接入),
   优化辩论结果在抽屉中的展示 (目前是三长段文本, 可分 tab/折叠)
-- [ ] **知识库扩充**: knowledge.py 目前是手工摘要, 可接入真实 CAS 准则文档做检索
+- [x] **知识库扩充** (已完成): knowledge.py 已接入真实 CAS 准则文档检索
+  (内置条目 + `resources/knowledge/` 外部文档: CAS 准则原文 + 陈奕蔚答疑)
 
 ### P2 — V1.5 (大功能, 需排期)
 - [ ] **报表自动生成**: 从余额表+序时账自动生成三大报表 + 审计底稿
 - [ ] **附注/NOTES 规则**: 需重新设计公式 (当前是占位符)
 
 ### P3 — 工程化
-- [ ] **CI/CD**: GitHub Actions 跑测试 (注意国内网络, 可能需镜像)
+- [x] **CI/CD** (已完成): GitHub Actions 已配置 (`.github/workflows/ci.yml`,
+  ubuntu+windows × py3.11/3.12 矩阵跑 ruff+mypy+pytest + 覆盖率门禁 + Windows 打包 artifact)
 - [ ] **真实 Ollama/公司模型联调**: 当前用 DeepSeek 在线 API 测过, 本地 Ollama 未实测
 
 ---
@@ -126,7 +129,7 @@ python -m ruff check src/    # 静态检查
 │   ├── storage/        # SQLite (database/history_repo/chat_repo/override_repo)
 │   ├── updater/        # 自动更新
 │   └── gui/            # PySide6 界面
-├── tests/              # 1029 测试
+├── tests/              # 1419 测试 (2026-08-16 收集口径)
 ├── scripts/            # 验证/构建脚本
 ├── resources/          # logo/图标
 ├── demo/               # demo.html 设计稿

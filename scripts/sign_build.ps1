@@ -1,4 +1,4 @@
-# 签名构建脚本: 对 dist exe 与 Inno Setup 安装包进行 Authenticode 签名
+﻿# 签名构建脚本: 对 dist exe 与 Inno Setup 安装包进行 Authenticode 签名
 # 用法:
 #   检查现状: powershell -ExecutionPolicy Bypass -File scripts\sign_build.ps1 -CheckOnly
 #   证书指纹: powershell -ExecutionPolicy Bypass -File scripts\sign_build.ps1 -CertThumbprint "<SHA1指纹>"

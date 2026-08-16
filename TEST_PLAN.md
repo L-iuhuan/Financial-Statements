@@ -21,7 +21,7 @@
 - **平台**: Windows 10+, Python 3.11+, PySide6 6.11
 - **无头模式**: `QT_QPA_PLATFORM=offscreen` (CI 可跑)
 - **框架**: pytest + pytest-qt (qtbot)
-- **真实数据**: 真实企业 2023 年报 fixtures（`tests/fixtures/real_reports/`）
+- **真实数据**: 真实企业 2023 年报 fixtures（`tests/fixtures/real_reports/`；真实年报已移出 git，需手动放置后相关用例才启用，缺失时以 skipif 跳过）
 
 ## 3. 功能测试矩阵
 

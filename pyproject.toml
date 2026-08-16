@@ -78,5 +78,6 @@ source = ["src/fsa"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-fail_under = 90
+# 整体基线 84 与 CI 一致；core/services/storage ≥90% 由 CI 单独门禁
+fail_under = 84
 show_missing = true

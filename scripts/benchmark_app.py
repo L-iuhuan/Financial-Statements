@@ -58,6 +58,15 @@ def bench_theme_switch(app: QApplication, rounds: int = 20) -> float:
     window = MainWindow(state, initial_dark=False, theme_mode="light")
     window.show()
     app.processEvents()
+
+    # 预加载真实数据态: 导入 + 校验 + 回填结果, 使主题切换覆盖结果卡/汇总卡/表格
+    path = _generate_listed_corpus()
+    registry = RuleRegistry.from_json("cas_gouji_rule_library.json")
+    reports = ImportService(period="2024-12").import_file(str(path))
+    summary = ValidationService(registry).validate(reports, "2024-12")
+    state.set_results(summary, persist=False)
+    app.processEvents()
+
     start = time.perf_counter()
     for _ in range(rounds):
         window._toggle_theme()

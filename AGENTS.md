@@ -47,8 +47,9 @@ GUI层 (PySide6/qfluentwidgets)            src/fsa/gui/
 | 导入 | `core/importer/` | 读取 Excel/PDF -> 输出 Report；含明细数据导入 | 禁止执行校验逻辑 |
 | 导出 | `core/exporter/` | 接收 ValidationResult -> 输出 Excel 审计底稿 | 禁止修改校验结果 |
 | 模型 | `core/models/` | Report/ReportItem/ReconciliationRule/ValidationResult/DetailDataset | - |
-| 编排 | `services/` | ValidationService / DetailValidationService / PackageValidationService / MultiEntityService | 编排，不含业务规则 |
-| AI助手 | `agent/` | 接收 ValidationResult -> 输出诊断建议（AgentLoop/Debate/LLM） | 禁止修改校验结果 |
+| 核心公共 | `core/`（顶层） | exceptions(FSAError 根)/version(APP_VERSION)/resources(resource_path)/edition(internal·general 双版本通道+域检查)/logging(日志文件轮转) | 纯工具，无业务规则 |
+| 编排 | `services/` | ValidationService / DetailValidationService / PackageValidationService / MultiEntityService / EntityConfig / ProblemPackage(问题包导出) | 编排，不含业务规则 |
+| AI助手 | `agent/` | 接收 ValidationResult -> 输出诊断建议（AgentLoop/Debate/LLM + 知识库检索） | 禁止修改校验结果 |
 | 存储 | `storage/` | SQLite WAL（history/chat/override 仓库） | - |
 | 更新 | `updater/` | 检查版本 + 下载安装（**仅用 stdlib urllib，不依赖 requests**） | 禁止访问业务数据 |
 | GUI | `gui/` | PySide6 界面 | 禁止直接操作 SQLite |
@@ -103,9 +104,15 @@ python scripts/verify_ollama.py        # 本地 Ollama 连通
 # 其他: verify_{sce,update,diagnosis,theme,w3}.py / ux_shots.py (页面截图)
 #       build_real_corpus.py + validate_corpus.py (真实语料构建/校验)
 #       update_manifest_whitelist.py (更新清单白名单) / generate_logo.py (图标再生)
+#       benchmark_app.py + benchmark_import.py (性能基准，发布前人工跑)
+#       collect_cas_sources.py + ingest_knowledge_ocrflow.py (CAS 知识库维护)
+# 打包运维: build_installer.ps1 -> sign_build.ps1 (签名) -> smoke_package.ps1 (冒烟)
+# （脚本分类与运行约定详见 scripts/AGENTS.md）
 ```
 
 提交前顺序：`ruff check` -> `mypy` -> `pytest`。
+
+CI（`.github/workflows/ci.yml`，push main/fix/** 与所有 PR 触发）：ubuntu+windows × py3.11/3.12 矩阵跑 ruff+mypy+pytest；**mypy 在 CI 固定 `--python-version 3.12`**（numpy>=2.4 stubs 需 3.12 语法，本地 pyproject 仍为 3.11）；CI lint 范围为 `src tests`；**覆盖率双门槛**--core/services/storage >=90%，整体基线 >=84%（逐步提升至 90%）；package-windows job 以 `build_installer.ps1 -Edition general` 出包上传 artifact。
 
 ---
 
@@ -116,16 +123,16 @@ python scripts/verify_ollama.py        # 本地 Ollama 连通
 - Python 3.11+（`requires-python = ">=3.11"`）
 - **全类型注解**：所有函数参数、返回值必须有类型注解
 - **禁止** `Any`、`Optional`（用 `X | None` 替代）
-- `# type: ignore` 原则上禁止；**唯一例外**：`gui/` 目录内 Qt 交互需要（如 override/method-assign），且必须带具体错误码（如 `# type: ignore[override]`），不得裸写
+- `# type: ignore` 原则上禁止；**唯一例外**：`gui/` 目录内 Qt 交互需要（如 override/method-assign），且必须带具体错误码（如 `# type: ignore[override]`），不得裸写（gui/ 外实例已于 2026-08-16 清零——excel_reader.py COM 回退处已改 `cast`）
 - mypy `strict = true`、`warn_return_any = true`--类型不通过即报错
 
 ### 3.2 工具链配置（pyproject.toml 实际值）
 
 - **ruff**: `target-version = "py311"`, `line-length = 120`, select `E/F/W/I/UP/B/SIM`, ignore `E501`
   - 注意：`E501`（行过长）被忽略，但仍以 **120 字符**为软上限
-- **mypy**: `strict = true`, `python_version = "3.11"`
-- **pytest**: `qt_api = "pyside6"`, `pythonpath = ["src"]`（无需手动设 PYTHONPATH）
-- **coverage**: `source = ["src/fsa"]`, `fail_under = 90`, `omit = ["*/tests/*"]`
+- **mypy**: `strict = true`, `python_version = "3.11"`, `warn_return_any = true`, `warn_unused_configs = true`
+- **pytest**: `qt_api = "pyside6"`, `pythonpath = ["src"]`（无需手动设 PYTHONPATH）, `addopts = "-v --tb=short -m \"not slow\""`（slow 标记已注册）
+- **coverage**: `source = ["src/fsa"]`, `fail_under = 90`, `omit = ["*/tests/*"]`, `show_missing = true`
 
 ### 3.3 函数与文件大小（灵活限制）
 
@@ -140,11 +147,12 @@ python scripts/verify_ollama.py        # 本地 Ollama 连通
 - **禁止宽 catch**：catch 具体异常，不 catch `Exception`
 - 自定义异常继承自 `FSAError`（`core/exceptions.py` 根异常）：
   `MissingItemError` / `DuplicateItemError` / `FormulaParseError` / `EvaluationError` / `InvalidToleranceError`
+- 已知偏差：`OllamaError`/`LLMError`/`UpdateError` 直接继承 `Exception`（历史遗留，见 agent/AGENTS.md）--新代码必须按 FSAError 编写
 - 错误信息用中文，面向财务用户
 
 ### 3.5 数据精度
 
-- 金额使用 `float`（MVP 阶段，simpleeval 兼容）
+- 金额接口使用 `float`（simpleeval 兼容）；**容差比较内部在 Decimal 域执行**（comparator 经 `str()` 转换，避免二进制尾数污染），输入输出保持 float
 - 容差比较：`abs(a - b) <= tolerance`，**不用 `==`**（`core/engine/comparator.py`）
 - `.xls` 空白单元格经 pandas 读为 NaN--导入器与提取器统一 NaN->0/None，避免污染校验结果
 
@@ -187,7 +195,7 @@ python scripts/verify_ollama.py        # 本地 Ollama 连通
 
 ### 4.4 覆盖率
 
-- 行覆盖率 >= 90%（`tool.coverage.report.fail_under = 90`）
+- 行覆盖率 >= 90%（core/engine 等核心模块目标）；整体基线 84（pyproject `tool.coverage.report.fail_under = 84` 与 CI 一致），core/services/storage ≥90% 由 CI 单独门禁
 - 关键模块（`core/engine/`）覆盖率 100%
 
 ---
@@ -272,9 +280,11 @@ python scripts/verify_ollama.py        # 本地 Ollama 连通
 powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 ```
 
-- 流程：清理 -> PyInstaller（`fsa.spec`，onedir，约 137MB）-> Inno Setup 编译安装器
+- 流程：构建期写入版本通道 `src/fsa/core/_edition_override.py` -> 清理 -> PyInstaller（`fsa.spec`，onedir，约 225MB——已剔除环境泄漏包与未用 Qt DLL/非中文翻译；**所有 .ps1 必须 UTF-8 带 BOM**，否则 PS 5.1 解析失败）-> Inno Setup 编译安装器 -> （可选）签名；finally 删除 `_edition_override.py` 防误提交
+- 参数：`-Edition general|internal`（内部版要求计算机入域+域名白名单，安装包名加"_内部版"后缀）、`-DomainWhitelist`、`-UpdateUrl`、`-SignThumbprint`
 - **Inno Setup 6 需单独安装**才能编译安装器；未安装时脚本只出 exe，跳过安装器
 - 配置：根目录 `fsa.spec` + `installer.iss`；中文语言文件在 `Languages/`
+- 配套脚本：`sign_build.ps1`（Authenticode 签名，用法见 docs/RELEASE_AND_SIGNING.md）、`smoke_package.ps1`（打包冒烟：启动 exe 确认存活 + SQLite 已建；内部版须在入域机器上跑）
 
 ### 7.4 LLM / Agent
 
@@ -283,6 +293,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 - 公司本地 GLM 端点已联调通过；**本地 Ollama 未实测**
 - 无 LLM 可用时回退规则化诊断（不影响核心校验）
 - AgentLoop 在后台线程运行（LLM 长响应不冻结 UI）
+- CAS 知识库：内置条目 + `resources/knowledge/` 外部文档（CAS 准则原文 + 陈奕蔚答疑，由 `scripts/collect_cas_sources.py` / `ingest_knowledge_ocrflow.py` 维护）；**打包版不含外部知识文档**（fsa.spec 未收录该目录）
 
 ### 7.5 GUI 测试环境
 
@@ -300,18 +311,21 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 
 ## 9. 当前范围与边界
 
-**已实现（v0.1.0 MVP+）**：
+**已实现（v0.4.1）**：
 
 - Excel (.xlsx/.xls) 三大主表导入（含表头自动定位/BS双栏/期间列模式/.xls 走 pandas+xlrd）
 - PDF 导入（pdfplumber）
 - 所有者权益变动表 SCE（矩阵解析）
 - 明细数据六表模型 + 勾稽检查（L2 凭证平衡/余额表/现金流明细；L4 现金流分类复核；附表3 重分类；附表4/5/6 关联方/销售/内部现金流）
 - 42 条 CAS 勾稽规则（v1.3.0），真实年报压测 0 失败 0 异常
-- Excel 审计底稿导出（汇总+明细+科目追溯三表）
+- Excel 审计底稿导出（汇总+明细+科目追溯+底稿说明四表，含源文件 SHA256 留痕）
 - Agent 诊断（AgentLoop + DebateEngine + 规则化兜底，Ollama/OpenAI 兼容）
 - SQLite WAL 持久化（历史/会话/容差覆写）+ QSettings
 - 自动更新（内网 version.json + SHA256 + 静默安装）
-- PyInstaller 打包 + Inno Setup 安装器
+- 双版本通道（internal 内部版：入域检查+域名白名单 / general 通用版；构建期固化 `_edition_override.py`）
+- PyInstaller 打包 + Inno Setup 安装器 + Authenticode 签名 + 打包冒烟测试
+- GitHub Actions CI（双 OS × 双 Python 矩阵 + 覆盖率双门槛 + Windows 打包 artifact）
+- CAS 知识库检索（内置条目 + resources/knowledge 外部文档）+ 问题包导出（日志/DB/环境信息打包 zip）
 
 **未实现（规划中）**：
 

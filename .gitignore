@@ -89,3 +89,9 @@ temp/
 
 # 架构审计产物
 .architecture-audit/
+
+# 构建期版本通道覆写 (build_installer.ps1 生成, 不提交)
+src/fsa/core/_edition_override.py
+
+# 用户自定义规则 (运行期生成, 不提交)
+/custom_rules.json

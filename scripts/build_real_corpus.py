@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from datetime import date
 from numbers import Real
 from pathlib import Path
@@ -24,6 +25,8 @@ from types import ModuleType
 import openpyxl
 import pandas as pd
 from openpyxl.worksheet.worksheet import Worksheet
+
+sys.stdout.reconfigure(encoding="utf-8")  # 中文/✓✗ 输出 (GBK 控制台防乱码, 同 verify_sce.py 约定)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _OUTPUT_DIR = _PROJECT_ROOT / "tests" / "fixtures" / "real_reports"
