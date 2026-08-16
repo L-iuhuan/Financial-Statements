@@ -17,6 +17,8 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import InfoBar, InfoBarPosition
 
+from fsa.core.edition import check_domain_access, get_edition_config
+from fsa.core.logging import configure_file_logging
 from fsa.core.version import APP_VERSION
 from fsa.gui.app_state import AppState
 from fsa.gui.main_window import MainWindow
@@ -61,6 +63,8 @@ def _schedule_startup_update_check(window: MainWindow, settings: QSettings) -> N
     """
     url = str(settings.value("update_manifest_url", "")).strip()
     if not url:
+        url = get_edition_config().default_update_url
+    if not url:
         return
 
     bridge = _UpdateCheckBridge(window)
@@ -75,6 +79,10 @@ def _schedule_startup_update_check(window: MainWindow, settings: QSettings) -> N
         except UpdateError as e:
             logger.warning(f"启动更新检查失败: {e}")
             bridge.finished.emit("error", str(e))
+            return
+        except Exception:
+            logger.exception("启动更新检查出现未预期异常")
+            bridge.finished.emit("error", "更新检查未完成")
             return
         if info.has_update:
             bridge.finished.emit(
@@ -108,6 +116,7 @@ def _schedule_startup_update_check(window: MainWindow, settings: QSettings) -> N
 
 def main() -> None:
     """启动财务报表勾稽校验系统。"""
+    configure_file_logging()
 
     def exception_hook(
         exctype: type[BaseException], value: BaseException, tb: TracebackType | None
@@ -126,6 +135,10 @@ def main() -> None:
     )
 
     app = QApplication(sys.argv)
+    # Windows 默认 windows11 样式不尊重 QComboBox::drop-down/::down-arrow 等
+    # 子控件 QSS (箭头/分隔线不渲染); 本项目全量 QSS 定制, 强制 Fusion 作为
+    # 跨平台一致的渲染基线 (与 CI offscreen/Fusion 环境一致, 符合确定性原则)
+    app.setStyle("Fusion")
     app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
     # 全局 UI 字体与 theme.py 保持一致: Microsoft YaHei UI 为主族,
     # 像素尺寸统一, 垂直 hinting + 抗锯齿优先, 减轻横竖笔画粗细不均问题。
@@ -142,17 +155,30 @@ def main() -> None:
     apply_theme(dark=dark)
     app.setStyleSheet(get_qss(dark))
 
+    # 内部版域控制: 未加入授权域时阻止启动 (通用版无此检查)
+    edition = get_edition_config()
+    if edition.require_domain:
+        domain_result = check_domain_access()
+        if not domain_result.ok:
+            from PySide6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(
+                None,
+                "内部版域控制",
+                f"无法启动「财务报表勾稽校验系统 · {edition.display_name}」。\n\n"
+                f"{domain_result.reason}\n\n"
+                "请将计算机加入企业域后重试，或联系系统管理员。",
+            )
+            logger.warning(f"内部版域检查未通过, 拒绝启动: {domain_result.reason}")
+            sys.exit(1)
+            return
+
     state = AppState()
     ok, msg = state.load_registry()
     if not ok:
         logger.warning(f"规则库加载失败: {msg}")
 
-    # 加载存储的默认容差
-    import contextlib
     settings = QSettings("FSA", "FinancialAudit")
-    tol_str = str(settings.value("default_tolerance", "0.01"))
-    with contextlib.suppress(ValueError):
-        state.set_default_tolerance(float(tol_str))
 
     window = MainWindow(state, initial_dark=dark, theme_mode=mode)
     window.show()

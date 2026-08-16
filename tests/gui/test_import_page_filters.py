@@ -58,9 +58,10 @@ class TestMatchFilter:
         page._current_filter = "pass"
         assert page._match_filter(result) is False
 
-    def test_error_severity_matches_error_filter(self, page) -> None:
+    def test_error_severity_matches_fail_filter(self, page) -> None:
+        """失败且 severity=ERROR 且非异常 -> 匹配「不通过」。"""
         result = make_result(passed=False, severity=Severity.ERROR)
-        page._current_filter = "error"
+        page._current_filter = "fail"
         assert page._match_filter(result) is True
 
     def test_warning_severity_matches_warning_filter(self, page) -> None:
@@ -73,15 +74,24 @@ class TestMatchFilter:
         page._current_filter = "warning"
         assert page._match_filter(result) is True
 
-    def test_passed_does_not_match_error_filter(self, page) -> None:
+    def test_passed_does_not_match_fail_filter(self, page) -> None:
         result = make_result(passed=True, severity=Severity.ERROR)
-        page._current_filter = "error"
+        page._current_filter = "fail"
         assert page._match_filter(result) is False
 
-    def test_errored_matches_error_filter(self, page) -> None:
+    def test_errored_matches_exception_filter(self, page) -> None:
+        """errored 专属「异常」筛选, 不匹配「不通过」。"""
         result = make_result(passed=False, errored=True, severity=Severity.ERROR)
-        page._current_filter = "error"
+        page._current_filter = "exception"
         assert page._match_filter(result) is True
+        page._current_filter = "fail"
+        assert page._match_filter(result) is False
+
+    def test_failed_error_does_not_match_exception_filter(self, page) -> None:
+        """普通不通过 (非 errored) 不匹配「异常」筛选。"""
+        result = make_result(passed=False, severity=Severity.ERROR)
+        page._current_filter = "exception"
+        assert page._match_filter(result) is False
 
     def test_all_filter_matches_everything(self, page) -> None:
         for passed, severity, errored in [
@@ -98,8 +108,18 @@ class TestMatchFilter:
         page._current_filter = "warning"
         assert page._match_filter(result) is False
 
+    def test_skipped_matches_skip_filter(self, page) -> None:
+        """skipped 结果匹配「跳过」筛选, 不匹配「通过」/「不通过」。"""
+        skipped = _make_skipped_result("S-001")
+        page._current_filter = "skip"
+        assert page._match_filter(skipped) is True
+        page._current_filter = "pass"
+        assert page._match_filter(skipped) is False
+        page._current_filter = "fail"
+        assert page._match_filter(skipped) is False
+
     def test_summary_counts(self, app_state) -> None:
-        """测试 _update_results 后的汇总计数。"""
+        """测试 _update_results 后的汇总计数 (「不通过」卡不含异常)。"""
         page = ImportPage(app_state)
         results = [
             make_result("A-001", passed=True, severity=Severity.ERROR),
@@ -110,9 +130,53 @@ class TestMatchFilter:
         app_state.set_results(make_summary(results))
 
         assert page._card_pass._value.text() == "1"
-        assert page._card_error._value.text() == "2"
+        assert page._card_error._value.text() == "1"
         assert page._card_warn._value.text() == "1"
         assert page._card_total._value.text() == "4"
+        assert page._card_error._label.text() == "不通过"
+
+    def test_filter_buttons_six_states(self, app_state) -> None:
+        """筛选标签栏同步为六态 (全部/不通过/异常/警告/跳过/通过), 旧「错误」态移除。"""
+        page = ImportPage(app_state)
+        results = [
+            make_result("A-001", passed=True, severity=Severity.ERROR),
+            make_result("B-001", passed=False, severity=Severity.ERROR, diff=1.0),
+            make_result("C-001", passed=False, severity=Severity.WARNING, diff=2.0),
+            make_result("D-001", passed=False, errored=True, severity=Severity.ERROR),
+            _make_skipped_result("S-001"),
+        ]
+        app_state.set_results(_make_summary_with_skipped(results))
+
+        assert set(page._filter_buttons) == {
+            "all", "fail", "exception", "warning", "skip", "pass",
+        }
+        # 布局顺序 = 六态定义顺序 (按钮位于 stretch 之前)
+        layout = page._filter_section.layout()
+        assert layout is not None
+        order = []
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            assert item is not None
+            w = item.widget()
+            if w is None:
+                continue
+            for key, btn in page._filter_buttons.items():
+                if btn is w:
+                    order.append(key)
+        assert order == ["all", "fail", "exception", "warning", "skip", "pass"]
+        assert page._filter_buttons["all"].text() == "全部 (5)"
+        assert page._filter_buttons["fail"].text() == "不通过 (1)"
+        assert page._filter_buttons["exception"].text() == "异常 (1)"
+        assert page._filter_buttons["warning"].text() == "警告 (1)"
+        assert page._filter_buttons["skip"].text() == "跳过 (1)"
+        assert page._filter_buttons["pass"].text() == "通过 (1)"
+
+    def test_stale_error_filter_resets_to_all(self, app_state) -> None:
+        """遗留的「error」筛选键在结果刷新时回退为「全部」。"""
+        page = ImportPage(app_state)
+        page._current_filter = "error"
+        app_state.set_results(make_summary([make_result("A-001")]))
+        assert page._current_filter == "all"
 
     def test_skipped_excluded_from_pass_filter(self, page) -> None:
         """B-14: skipped=True 的结果不匹配"通过"筛选, 但匹配"全部"。"""
@@ -134,8 +198,9 @@ class TestMatchFilter:
 
         assert page._filter_buttons["all"].text() == "全部 (3)"
         assert page._filter_buttons["pass"].text() == "通过 (1)"
-        assert page._filter_buttons["error"].text() == "错误 (1)"
+        assert page._filter_buttons["fail"].text() == "不通过 (1)"
         assert page._filter_buttons["warning"].text() == "警告 (0)"
+        assert page._filter_buttons["skip"].text() == "跳过 (1)"
         # 规则总数卡片语义不变: 显示排除跳过的执行规则数
         assert page._card_total._value.text() == "2"
         assert page._card_pass._value.text() == "1"

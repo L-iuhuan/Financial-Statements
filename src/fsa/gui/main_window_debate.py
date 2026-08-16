@@ -13,7 +13,7 @@ from __future__ import annotations
 from loguru import logger
 
 from fsa.agent.debate import DebateResult
-from fsa.agent.llm_client import LLMClient
+from fsa.agent.llm_client import LLMClient, LLMError
 from fsa.agent.sanitize import sanitize_llm_input
 from fsa.core.models.result import ValidationResult
 from fsa.gui.agent_worker import AgentWorker
@@ -80,7 +80,9 @@ class MainWindowDebateMixin(_MainWindowAgentContracts):
             return
 
         client = self._get_llm_client()
-        if client is None or not self._llm_available(client):
+        # B5-2: 主线程只查缓存不探测 (is_available 是 3s 级 urlopen);
+        # 缓存未知时放行, 由后台 worker 首步探测, 不可用则走 on_error 中文提示
+        if client is None or self._llm_available_cached(client) is False:
             if self._llm_block_reason == "remote":
                 self._show_remote_blocked_infobar()
             self._agent_drawer.add_assistant_message(
@@ -102,6 +104,9 @@ class MainWindowDebateMixin(_MainWindowAgentContracts):
         self._set_agent_busy(True)
 
         def run_debate() -> str:
+            # B5-2: 可用性探测挪到后台线程首步, 不可用时抛中文错误走 on_error
+            if not self._llm_available(client):
+                raise LLMError("大模型服务不可用，无法进行深度辩论")
             # 可选高级配置 (QSettings, 无 UI): llm_debate_critic_model /
             # llm_debate_judge_model —— 为反方/裁判指定不同模型, 增强对抗性;
             # 未配置时三个角色共用主模型 (原行为)

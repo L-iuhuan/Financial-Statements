@@ -11,10 +11,13 @@ _drop_zone / _empty_state / _current_filter 及各 Signal。
 
 from __future__ import annotations
 
+from typing import cast
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -28,6 +31,18 @@ from fsa.gui.widgets.drop_zone import DropZone
 from fsa.gui.widgets.report_card import ReportCard
 from fsa.gui.widgets.result_card import ResultCard
 from fsa.gui.widgets.summary_card import SummaryCard
+
+# 筛选六态: key -> 标签 (顺序即标签栏展示顺序)
+# 语义: 不通过=失败且 severity ERROR 且非异常; 异常=errored; 警告=失败且非 ERROR;
+#       跳过=skipped (缺数据跳过, 非通过); 通过=passed 且非 skipped
+_FILTER_STATES: tuple[tuple[str, str], ...] = (
+    ("all", "全部"),
+    ("fail", "不通过"),
+    ("exception", "异常"),
+    ("warning", "警告"),
+    ("skip", "跳过"),
+    ("pass", "通过"),
+)
 
 
 class ImportPageResultsMixin(QWidget):
@@ -129,14 +144,11 @@ class ImportPageResultsMixin(QWidget):
         self._detail_section.setVisible(True)
         self._sync_history_banner()
 
-        # 统计: 错误 = failed&ERROR + errored; 警告 = failed&WARNING/INFO
-        error_count = sum(
+        # 统计: 不通过 = failed&ERROR 且非异常; 警告 = failed&WARNING/INFO
+        fail_count = sum(
             1
             for r in summary.results
-            if (
-                (not r.passed and not r.errored and r.severity is Severity.ERROR)
-                or r.errored
-            )
+            if not r.passed and not r.errored and r.severity is Severity.ERROR
         )
         warn_count = sum(
             1
@@ -145,22 +157,23 @@ class ImportPageResultsMixin(QWidget):
         )
 
         self._card_pass.set_data("通过", summary.passed, "校验通过的规则")
-        self._card_error.set_data("错误", error_count, "必须修正的差额")
-        self._card_warn.set_data("警告", warn_count, "建议关注的异常")
+        self._card_error.set_data("不通过", fail_count, "必须修正的差额")
+        self._card_warn.set_data("警告", warn_count, "建议关注的偏差")
         self._card_total.set_data("规则总数", summary.total, "规则库总数")
 
         # 更新筛选标签计数 (B-14: 与 _match_filter 语义保持一致)
         # - "all" 显示全部结果卡片 (含 skipped), 故用 len(summary.results)
         # - "pass" 仅统计实际通过且未跳过的结果
+        self._ensure_filter_buttons()
         counts = {
             "all": len(summary.results),
-            "error": error_count,
+            "fail": fail_count,
+            "exception": sum(1 for r in summary.results if r.errored),
             "warning": warn_count,
-            "pass": sum(
-                1 for r in summary.results if r.passed and not r.errored and not r.skipped
-            ),
+            "skip": sum(1 for r in summary.results if r.skipped),
+            "pass": sum(1 for r in summary.results if r.passed and not r.skipped),
         }
-        labels = {"all": "全部", "error": "错误", "warning": "警告", "pass": "通过"}
+        labels = dict(_FILTER_STATES)
         for key, btn in self._filter_buttons.items():
             btn.setText(f"{labels[key]} ({counts[key]})")
 
@@ -169,6 +182,35 @@ class ImportPageResultsMixin(QWidget):
             self._current_filter = "all"
         self._update_filter_styles()
         self._rebuild_cards()
+
+    def _ensure_filter_buttons(self) -> None:
+        """将筛选标签栏幂等同步为六态 (全部/不通过/异常/警告/跳过/通过)。
+
+        宿主 import_page 初始只建四态按钮; 这里补齐缺失态、移除旧「错误」态
+        并按 _FILTER_STATES 顺序重排, 避免改动宿主文件。
+        """
+        labels = dict(_FILTER_STATES)
+        layout = cast(QHBoxLayout, self._filter_section.layout())
+        for key in list(self._filter_buttons):
+            if key not in labels:
+                btn = self._filter_buttons.pop(key)
+                layout.removeWidget(btn)
+                btn.hide()
+                btn.deleteLater()
+        for index, (key, label) in enumerate(_FILTER_STATES):
+            existing = self._filter_buttons.get(key)
+            if existing is not None:
+                btn = existing
+            else:
+                btn = QPushButton(f"{label} (0)")
+                btn.setCheckable(True)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.setFixedHeight(30)
+                btn.setObjectName("FilterTab")
+                btn.clicked.connect(lambda checked, k=key: self._on_filter(k))
+                self._filter_buttons[key] = btn
+            layout.removeWidget(btn)
+            layout.insertWidget(index, btn)
 
     def _on_filter(self, key: str) -> None:
         """切换筛选标签 (仅切可见性, 不重建卡片, 避免闪动)。"""
@@ -234,22 +276,28 @@ class ImportPageResultsMixin(QWidget):
             card.setVisible(self._match_filter(result))
 
     def _match_filter(self, result: ValidationResult) -> bool:
-        """判断单个结果是否匹配当前筛选条件。"""
+        """判断单个结果是否匹配当前筛选条件 (六态, 语义见 _FILTER_STATES)。"""
         if self._current_filter == "all":
             return True
         if self._current_filter == "pass":
             # skipped=True 的结果 (规则因缺数据跳过) 不算"通过" (B-14)
-            return result.passed and not result.errored and not result.skipped
-        if self._current_filter == "error":
-            if result.errored:
-                return True
-            return not result.passed and result.severity is Severity.ERROR
+            return result.passed and not result.skipped
+        if self._current_filter == "fail":
+            return (
+                not result.passed
+                and not result.errored
+                and result.severity is Severity.ERROR
+            )
+        if self._current_filter == "exception":
+            return result.errored
         if self._current_filter == "warning":
             return (
                 not result.passed
                 and not result.errored
                 and result.severity in (Severity.WARNING, Severity.INFO)
             )
+        if self._current_filter == "skip":
+            return result.skipped
         return True
 
     def _clear_cards(self) -> None:

@@ -136,3 +136,63 @@ class TestSessionButton:
         drawer = _make_drawer(qapp, qtbot)
         drawer._update_session_btn("超长会话标题" * 20)
         assert "…" in drawer._session_btn.text()
+
+
+class TestInputScrollbar:
+    """聊天输入框滚动条: 空态/单行不出现, 自动增高到上限后才出现。
+
+    回归守卫: QSS padding 会压缩 QPlainTextEdit 视口, 空文本也出现滚动条;
+    修复改用文档边距实现内边距, 空态/单行输入框无滚动条。
+    """
+
+    def test_empty_input_has_no_vertical_scrollbar(self, qapp, qtbot) -> None:
+        drawer = _make_drawer(qapp, qtbot)
+        drawer.show()
+        qapp.processEvents()
+        assert drawer._input.height() == 36
+        assert not drawer._input.verticalScrollBar().isVisible()
+
+    def test_single_line_input_has_no_vertical_scrollbar(self, qapp, qtbot) -> None:
+        drawer = _make_drawer(qapp, qtbot)
+        drawer.show()
+        drawer._input.setPlainText("请分析差异")
+        qapp.processEvents()
+        assert drawer._input.height() == 36
+        assert not drawer._input.verticalScrollBar().isVisible()
+
+    def test_multiline_grows_without_scrollbar_until_cap(self, qapp, qtbot) -> None:
+        """多行输入自动增高, 未到 120px 上限前不出现滚动条; 超限后可滚动。"""
+        drawer = _make_drawer(qapp, qtbot)
+        drawer.show()
+        drawer._input.setPlainText("\n".join("测试" for _ in range(5)))
+        qapp.processEvents()
+        assert drawer._input.height() > 36
+        assert not drawer._input.verticalScrollBar().isVisible()
+        drawer._input.setPlainText("\n".join("测试" for _ in range(14)))
+        qapp.processEvents()
+        assert drawer._input.height() == 120
+        assert drawer._input.verticalScrollBar().isVisible()
+
+
+class TestMessagesContainerBackground:
+    """消息区容器背景: 关闭 QScrollArea 强制的自绘, 透出抽屉主题背景。
+
+    回归守卫: QScrollArea.setWidget 会强制容器 autoFillBackground=True,
+    未设 QSS 背景的裸容器会用浅色调色板自绘, 导致深色主题下问答区白底。
+    """
+
+    def test_container_autofill_disabled_after_rebuild(self, qapp, qtbot) -> None:
+        drawer = _make_drawer(qapp, qtbot)
+        container = drawer._scroll.widget()
+        assert container is not None
+        assert container.autoFillBackground() is False
+
+    def test_container_autofill_stays_disabled_after_session_switch(self, qapp, qtbot) -> None:
+        """切换会话重建消息区后, 容器仍需透出主题背景 (修复不因重建失效)。"""
+        drawer = _make_drawer(qapp, qtbot)
+        drawer._rebuild_messages(
+            [{"role": "user", "content": "请分析差异", "created_at": "2026-08-16 10:00:00"}]
+        )
+        container = drawer._scroll.widget()
+        assert container is not None
+        assert container.autoFillBackground() is False

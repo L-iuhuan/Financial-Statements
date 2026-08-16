@@ -113,4 +113,4 @@ class TestAuditEmptyState:
 
         window._sidebar._nav_buttons["navAudit"].clicked_nav.emit("navAudit")
         qtbot.wait(50)
-        assert window._audit_page._empty.isHidden()
+        assert not window._audit_page._empty.isVisible()

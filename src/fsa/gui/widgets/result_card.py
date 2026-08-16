@@ -7,10 +7,11 @@ from __future__ import annotations
 
 from typing import cast
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QMouseEvent, QShowEvent
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QColor, QEnterEvent, QMouseEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -27,11 +28,17 @@ from fsa.gui.theme import (
     bind_theme_listener,
     current_palette,
     get_mono_font,
+    get_shadow_color,
 )
 
-_STATUS_TEXT: dict[str, str] = {"pass": "通过", "fail": "不通过", "error": "异常"}
-# 状态到 palette 键的映射
-_STATUS_PALETTE: dict[str, str] = {"pass": "success", "fail": "error", "error": "warning"}
+_STATUS_TEXT: dict[str, str] = {"pass": "通过", "fail": "不通过", "error": "异常", "skip": "跳过"}
+# 状态到 palette 键的映射 (skip 用中性灰, 与稽核表格「跳过」列一致)
+_STATUS_PALETTE: dict[str, str] = {
+    "pass": "success",
+    "fail": "error",
+    "error": "warning",
+    "skip": "text_secondary",
+}
 
 
 class ResultCard(QFrame):
@@ -53,6 +60,7 @@ class ResultCard(QFrame):
         self._theme_dirty = False
         self._status = self._get_status_key()
         self.setObjectName("ResultCard")
+        self.setProperty("status", self._status)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._setup_ui()
         # 注册主题监听并在控件销毁时注销, 防止死监听器累积泄漏
@@ -78,13 +86,11 @@ class ResultCard(QFrame):
 
         # 更新头部状态标签
         self._status_label.setText(_STATUS_TEXT[self._status])
-        self._status_label.setProperty("status", self._status)
 
         # 更新差额行 (通过/不通过之间切换显隐)
         diff_visible = not result.passed
         self._diff_row_widget.setVisible(diff_visible)
         self._diff_label.setText(f"差额: {result.diff:,.2f}")
-        self._diff_label.setProperty("status", self._status)
         self._tol_label.setText(f"  ·  容差: {result.tolerance}")
 
         # 更新诊断/辩论按钮行显隐
@@ -100,17 +106,13 @@ class ResultCard(QFrame):
         self._detail.setVisible(self._expanded)
 
     def _apply_status_style(self) -> None:
-        """刷新状态标签和差额标签的内联样式 (主题切换时复用)。"""
-        p = current_palette()
-        accent = p[_STATUS_PALETTE[self._status]]
-        if hasattr(self, "_status_label"):
-            self._status_label.setStyleSheet(
-                f"color: {accent}; font-weight: 500; font-size: 13px;"
-            )
-        if hasattr(self, "_diff_label"):
-            self._diff_label.setStyleSheet(
-                f"color: {accent}; font-size: 12px; font-weight: 600;"
-            )
+        """刷新状态标签与差额标签的属性; 实际颜色由全局 QSS 负责, 仅负差额需单独标记。"""
+        self._status_label.setProperty("status", self._status)
+        self._diff_label.setProperty("status", self._status)
+        self._diff_label.setProperty("negative", "true" if self._result.diff < 0 else "false")
+        for widget in (self._status_label, self._diff_label):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def _clear_detail_contents(self) -> None:
         """清空详情区域的所有子控件 (隐藏详情时不保留 trace 表格等重控件)。"""
@@ -176,8 +178,8 @@ class ResultCard(QFrame):
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(empty)
 
-        # 消息
-        if self._result.message and not self._result.passed:
+        # 消息 (不通过时显示差异说明; 跳过时显示跳过原因)
+        if self._result.message and (not self._result.passed or self._result.skipped):
             msg = QLabel(self._result.message)
             msg.setWordWrap(True)
             msg.setObjectName("ResultMessage")
@@ -198,29 +200,21 @@ class ResultCard(QFrame):
                 w.deleteLater()
 
     def _get_status_key(self) -> str:
+        # skipped 最优先: from_skip 产出 passed=True, 不可落入「通过」
+        if self._result.skipped:
+            return "skip"
         if self._result.errored:
             return "error"
         return "pass" if self._result.passed else "fail"
 
     def _apply_card_style(self) -> None:
-        p = current_palette()
-        status = self._status
-        pal_key = _STATUS_PALETTE[status]
-        bg = p[f"{pal_key}_bg"]
-        border_color = p[f"{pal_key}_border"]
-        accent = p[pal_key]
-        self.setStyleSheet(
-            f"""
-            QFrame#ResultCard {{
-                background-color: {bg};
-                border: 1px solid {border_color};
-                border-radius: 8px;
-            }}
-            QFrame#ResultCard:hover {{
-                border: 1px solid {accent};
-            }}
-            """
-        )
+        """让卡片背景/边框完全由 theme.py QSS 中的 [status] 选择器驱动。
+
+        不再为每张卡片生成内联样式表, 避免主题切换时 42 次 setStyleSheet 重排。
+        """
+        self.setProperty("status", self._status)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def _setup_ui(self) -> None:
         self._apply_card_style()
@@ -247,6 +241,9 @@ class ResultCard(QFrame):
         self._diagnose_row_widget.setVisible(not self._result.passed)
         layout.addWidget(self._diagnose_row_widget)
 
+        # 首渲染补齐状态字重/颜色 (此前仅主题切换或 update_result 时才应用)
+        self._apply_status_style()
+
     def _build_header(self) -> QHBoxLayout:
         header = QHBoxLayout()
         header.setSpacing(8)
@@ -256,6 +253,8 @@ class ResultCard(QFrame):
         name_label = QLabel(self._result.rule_name)
         name_label.setObjectName("RuleName")
         name_label.setWordWrap(False)
+        # 长规则名在空间不足时被截断, 悬浮提示兜底显示全名
+        name_label.setToolTip(self._result.rule_name)
         header.addWidget(name_label, stretch=1)
         if self._result.category:
             cat = QLabel(self._result.category)
@@ -264,7 +263,6 @@ class ResultCard(QFrame):
         self._status_label = QLabel(_STATUS_TEXT[self._status])
         self._status_label.setObjectName("ResultStatusLabel")
         self._status_label.setProperty("status", self._status)
-        self._status_label.setStyleSheet("")
         header.addWidget(self._status_label)
         return header
 
@@ -276,7 +274,6 @@ class ResultCard(QFrame):
         self._diff_label.setFont(get_mono_font(11))
         self._diff_label.setObjectName("ResultDiffLabel")
         self._diff_label.setProperty("status", self._status)
-        self._diff_label.setStyleSheet("")
         row.addWidget(self._diff_label)
         tol_label = QLabel(f"  ·  容差: {self._result.tolerance}")
         tol_label.setObjectName("ResultTolerance")
@@ -304,11 +301,14 @@ class ResultCard(QFrame):
         table.horizontalHeader().setStretchLastSection(True)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setFixedHeight(180)
+        p = current_palette()
         for i, t in enumerate(self._result.trace):
             table.setItem(i, 0, QTableWidgetItem(t.name))
             amt = QTableWidgetItem(f"{t.amount:,.2f}")
             amt.setTextAlignment(Qt.AlignmentFlag.AlignRight)
             amt.setFont(get_mono_font(10))
+            if t.amount < 0:
+                amt.setForeground(QColor(p["amount_negative"]))
             table.setItem(i, 1, amt)
             side_text = "左" if t.side == "left" else "右" if t.side == "right" else t.side
             table.setItem(i, 2, QTableWidgetItem(side_text))
@@ -353,6 +353,43 @@ class ResultCard(QFrame):
             return f"第{page}页表内第{table_row}行"
         return f"行{row} · {column}"
 
+    def _refresh_trace_amount_colors(self) -> None:
+        """主题切换后重刷 trace 表负数金额色 (仅负金额项有内联前景色, 正数走 QSS)。"""
+        if not self._detail_built or not self._result.trace:
+            return
+        p = current_palette()
+        for table in self._detail.findChildren(QTableWidget):
+            for i, t in enumerate(self._result.trace):
+                if t.amount >= 0:
+                    continue
+                item = table.item(i, 1)
+                if item is not None:
+                    item.setForeground(QColor(p["amount_negative"]))
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        """hover 时挂阴影 (QSS 不支持 box-shadow, 用 QGraphicsDropShadowEffect)。
+
+        参数取「阴影克制」原则: 小模糊半径 + 低透明度 + 2px 纵向偏移。
+        """
+        if self.graphicsEffect() is None:
+            effect = QGraphicsDropShadowEffect(self)
+            effect.setBlurRadius(10)
+            effect.setOffset(0, 2)
+            effect.setColor(get_shadow_color(hover=True))
+            self.setGraphicsEffect(effect)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        """离开时卸载阴影, 恢复轻量渲染 (批量重建期间不累积 effect)。"""
+        self.setGraphicsEffect(None)  # type: ignore[arg-type]  # Qt 允许 None 卸载 effect
+        super().leaveEvent(event)
+
+    def _refresh_shadow_color(self) -> None:
+        """主题切换时刷新已挂载阴影的颜色 (深浅主题透明度不同)。"""
+        effect = self.graphicsEffect()
+        if isinstance(effect, QGraphicsDropShadowEffect):
+            effect.setColor(get_shadow_color(hover=True))
+
     def _on_theme_changed(self) -> None:
         """主题切换回调; 卡片不可见时只标记脏状态, 显示时再刷新。"""
         if not self.isVisible():
@@ -360,16 +397,9 @@ class ResultCard(QFrame):
             return
         self._theme_dirty = False
         self._apply_card_style()
-        p = current_palette()
-        accent = p[_STATUS_PALETTE[self._status]]
-        if hasattr(self, "_status_label"):
-            self._status_label.setStyleSheet(
-                f"color: {accent}; font-weight: 500; font-size: 13px;"
-            )
-        if hasattr(self, "_diff_label"):
-            self._diff_label.setStyleSheet(
-                f"color: {accent}; font-size: 12px; font-weight: 600;"
-            )
+        self._apply_status_style()
+        self._refresh_trace_amount_colors()
+        self._refresh_shadow_color()
 
     def showEvent(self, event: QShowEvent) -> None:
         """卡片重新显示时补齐被延迟的主题刷新。"""

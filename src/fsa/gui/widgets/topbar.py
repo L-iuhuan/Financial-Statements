@@ -6,7 +6,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -57,14 +58,18 @@ class Topbar(QFrame):
         layout.addWidget(self._theme_btn)
 
         self._reset_btn = QPushButton(" 重置")
-        self._reset_btn.setIcon(FluentIcon.ROTATE.icon())
+        # qicon(): 主题同步图标引擎 (icon() 会在构造时烘焙颜色, 切主题后不刷新)
+        self._reset_btn.setIcon(FluentIcon.ROTATE.qicon())
         self._reset_btn.setObjectName("BtnSecondary")
         self._reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._reset_btn.clicked.connect(self.reset_clicked.emit)
         layout.addWidget(self._reset_btn)
 
         self._validate_btn = QPushButton(" 执行校验")
-        self._validate_btn.setIcon(FluentIcon.PLAY.icon())
+        self._validate_btn.setIcon(
+            FluentIcon.PLAY.icon(color=QColor("white"))
+        )
+        self._validate_btn.setIconSize(QSize(16, 16))
         self._validate_btn.setObjectName("BtnPrimary")
         self._validate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._validate_btn.setEnabled(False)
@@ -72,7 +77,7 @@ class Topbar(QFrame):
         layout.addWidget(self._validate_btn)
 
         self._export_btn = QPushButton(" 导出底稿")
-        self._export_btn.setIcon(FluentIcon.DOWNLOAD.icon())
+        self._export_btn.setIcon(FluentIcon.DOWNLOAD.qicon())
         self._export_btn.setObjectName("BtnSecondary")
         self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._export_btn.setEnabled(False)
@@ -92,4 +97,5 @@ class Topbar(QFrame):
     def set_theme_icon(self, dark: bool) -> None:
         # 深色模式显示太阳(切到浅色), 浅色模式显示月亮(切到深色)
         icon = FluentIcon.QUIET_HOURS if dark else FluentIcon.BRIGHTNESS
-        self._theme_btn.setIcon(icon.icon())
+        # qicon(): 随主题自动重绘, 无需在每次切换时重建
+        self._theme_btn.setIcon(icon.qicon())

@@ -9,9 +9,10 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable
 
+from loguru import logger
 from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel, QWidget
+from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QWidget
 from qfluentwidgets import Theme, setTheme, setThemeColor
 
 # ── 设计令牌 (DESIGN_SYSTEM.md) ──
@@ -217,7 +218,7 @@ def _generate_qss(p: dict[str, str]) -> str:
         border-radius: 6px;
         padding: 8px 16px;
         font-size: 13px;
-        font-weight: 500;
+        font-weight: 600;
     }}
     QPushButton#BtnPrimary:hover {{
         background-color: {p["brand_700"]};
@@ -279,15 +280,17 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["bg_surface_active"]};
     }}
     QPushButton#FilterTab[active="true"] {{
-        background-color: {p["brand_600"]};
-        color: white;
-        border: none;
+        background-color: {p["brand_50"]};
+        color: {p["brand_700"]};
+        border: 1px solid {p["brand_200"]};
+        border-left: 3px solid {p["brand_600"]};
     }}
     QPushButton#TextBtn {{
         background-color: {p["bg_surface"]};
         color: {p["text_secondary"]};
         border: 1px solid {p["border"]};
         border-radius: 6px;
+        padding: 6px 12px;
         font-size: 12px;
     }}
     QPushButton#TextBtn:hover {{
@@ -298,15 +301,19 @@ def _generate_qss(p: dict[str, str]) -> str:
     }}
     QPushButton#DangerBtn {{
         background-color: {p["bg_surface"]};
-        color: {p["text_secondary"]};
-        border: 1px solid {p["border"]};
+        color: {p["error"]};
+        border: 1px solid {p["error_border"]};
         border-radius: 6px;
-        font-size: 12px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 500;
     }}
     QPushButton#DangerBtn:hover {{
         background-color: {p["error_bg"]};
-        border-color: {p["error_border"]};
-        color: {p["error"]};
+        border-color: {p["error"]};
+    }}
+    QPushButton#DangerBtn:pressed {{
+        background-color: {p["error_border"]};
     }}
 
     /* ── 拖放区 ── */
@@ -543,7 +550,172 @@ def _generate_qss(p: dict[str, str]) -> str:
         border-color: {p["brand_500"]};
     }}
 
-    /* ── AI 浮动按钮 ── */
+    /* ── 日期选择器 (PeriodPicker: 文本框+箭头按钮复合控件, 不用子控件 QSS) ── */
+    QLineEdit#PeriodInput {{
+        background-color: {p["bg_surface"]};
+        color: {p["text_primary"]};
+        border: 1px solid {p["border"]};
+        border-top-left-radius: 6px;
+        border-bottom-left-radius: 6px;
+        padding: 8px 10px;
+        font-size: 13px;
+        selection-background-color: {p["brand_500"]};
+        selection-color: white;
+    }}
+    QLineEdit#PeriodInput:focus {{
+        border-color: {p["brand_500"]};
+    }}
+    QPushButton#PeriodArrowBtn {{
+        background-color: {p["bg_surface"]};
+        border: 1px solid {p["border"]};
+        border-left: none;
+        border-top-right-radius: 6px;
+        border-bottom-right-radius: 6px;
+    }}
+    QPushButton#PeriodArrowBtn:hover {{
+        background-color: {p["bg_surface_hover"]};
+    }}
+    QPushButton#PeriodArrowBtn:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
+
+    /* ── 下拉选择控件 (DropdownCombo 按钮) ── */
+    QPushButton#DropdownButton {{
+        background-color: {p["bg_surface"]};
+        color: {p["text_primary"]};
+        border: 1px solid {p["border"]};
+        border-radius: 6px;
+        /* 右侧 36px 为自绘箭头预留区, 文字永不与箭头重叠 */
+        padding: 0px 36px 0px 12px;
+        font-size: 13px;
+        min-height: 32px;
+        text-align: left;
+    }}
+    QPushButton#DropdownButton:hover {{
+        border-color: {p["border_strong"]};
+    }}
+    QPushButton#DropdownButton:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
+    QPushButton#DropdownButton:focus {{
+        border-color: {p["brand_500"]};
+    }}
+
+    /* ── 下拉框 (custom_rule_dialog 的 QComboBox) ── */
+    QComboBox {{
+        background-color: {p["bg_surface"]};
+        color: {p["text_primary"]};
+        border: 1px solid {p["border"]};
+        border-radius: 6px;
+        /* 纵向 padding 置 0: Qt 对 QComboBox 的 QSS padding 会二次计入高度
+           (每 2px 纵向 padding → 高 4px), 置 0 后高度 34px 与 FilterTab 一致 */
+        padding: 0px 12px;
+        font-size: 13px;
+        min-height: 32px;
+    }}
+    QComboBox:hover {{
+        border-color: {p["border_strong"]};
+    }}
+    QComboBox:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
+    QComboBox:focus {{
+        border-color: {p["brand_500"]};
+    }}
+    QComboBox::drop-down {{
+        /* origin=border + 底色区分: 按钮区与主体明显分离, 不再是"纯文本框"观感 */
+        subcontrol-origin: border;
+        subcontrol-position: top right;
+        width: 28px;
+        background-color: {p["bg_surface_hover"]};
+        border: none;
+        border-left: 1px solid {p["border"]};
+        border-top-right-radius: 5px;
+        border-bottom-right-radius: 5px;
+    }}
+    QComboBox::down-arrow {{
+        width: 10px;
+        height: 6px;
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-top: 6px solid {p["text_primary"]};
+        border-bottom: none;
+    }}
+    QComboBox QAbstractItemView {{
+        background-color: {p["bg_surface"]};
+        color: {p["text_primary"]};
+        border: 1px solid {p["border"]};
+        border-radius: 6px;
+        padding: 4px;
+        outline: none;
+        selection-background-color: {p["brand_50"]};
+        selection-color: {p["brand_700"]};
+    }}
+    QComboBox QAbstractItemView::item {{
+        border-radius: 4px;
+        padding: 6px 8px;
+        min-height: 28px;
+    }}
+    QComboBox QAbstractItemView::item:hover {{
+        background-color: {p["bg_surface_hover"]};
+        color: {p["text_primary"]};
+    }}
+    QComboBox QAbstractItemView::item:selected {{
+        background-color: {p["brand_50"]};
+        color: {p["brand_700"]};
+    }}
+
+    /* ── 日历弹窗 ── */
+    QCalendarWidget {{
+        background-color: {p["bg_surface"]};
+        color: {p["text_primary"]};
+        border: 1px solid {p["border"]};
+        border-radius: 8px;
+    }}
+    QCalendarWidget QWidget#qt_calendar_navigationbar {{
+        background-color: {p["bg_surface_hover"]};
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        padding: 4px;
+    }}
+    QCalendarWidget QToolButton {{
+        background-color: transparent;
+        color: {p["text_primary"]};
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 13px;
+        font-weight: 500;
+    }}
+    QCalendarWidget QToolButton:hover {{
+        background-color: {p["brand_50"]};
+    }}
+    QCalendarWidget QToolButton:pressed {{
+        background-color: {p["brand_100"]};
+    }}
+    QCalendarWidget QTableView {{
+        background-color: {p["bg_surface"]};
+        color: {p["text_primary"]};
+        selection-background-color: {p["brand_500"]};
+        selection-color: white;
+        gridline-color: {p["border"]};
+        border-bottom-left-radius: 8px;
+        border-bottom-right-radius: 8px;
+    }}
+    QCalendarWidget QTableView::item:selected {{
+        background-color: {p["brand_500"]};
+        color: white;
+        border-radius: 4px;
+    }}
+    QCalendarWidget QTableView::item:hover {{
+        background-color: {p["brand_50"]};
+    }}
+    QCalendarWidget QHeaderView::section {{
+        background-color: {p["bg_surface"]};
+        color: {p["text_secondary"]};
+        font-weight: 600;
+        padding: 6px;
+        border: none;
+    }}
     QPushButton#AgentFAB {{
         background-color: {p["brand_600"]};
         color: white;
@@ -560,7 +732,8 @@ def _generate_qss(p: dict[str, str]) -> str:
     /* ── AI 抽屉 ── */
     QFrame#AgentDrawer {{
         background-color: {p["bg_surface"]};
-        border-left: 1px solid {p["border"]};
+        /* V1: 抽屉与主内容的层次边界用 1px 强调边框分隔线 (随主题), 不用重阴影 */
+        border-left: 1px solid {p["border_strong"]};
     }}
     QFrame#AgentResizeHandle {{
         background-color: {p["border"]};
@@ -581,7 +754,6 @@ def _generate_qss(p: dict[str, str]) -> str:
         border-radius: 6px;
         color: {p["text_primary"]};
         font-size: 13px;
-        padding: 8px;
     }}
     QPushButton#AgentHeaderBtn {{
         background-color: {p["bg_surface"]};
@@ -639,15 +811,23 @@ def _generate_qss(p: dict[str, str]) -> str:
         background-color: {p["brand_100"]};
     }}
     QLabel#AgentBubbleUser {{
-        background-color: {p["brand_600"]};
+        background-color: {p["brand_700"]};
         color: white;
         border-radius: 8px;
         padding: 10px 14px;
         font-size: 13px;
     }}
+    QTextBrowser#AgentBubbleAssistant {{
+        background-color: {p["bg_surface_hover"]};
+        color: {p["text_primary"]};
+        border: 1px solid {p["border_strong"]};
+        border-radius: 10px;
+        padding: 2px;
+    }}
     QLabel#AgentBubbleAssistant {{
         background-color: {p["bg_surface_hover"]};
         color: {p["text_primary"]};
+        border: 1px solid {p["border_strong"]};
         border-radius: 8px;
         padding: 10px 14px;
         font-size: 13px;
@@ -742,6 +922,11 @@ def _generate_qss(p: dict[str, str]) -> str:
         border: 1px solid {p["warning_border"]};
         border-radius: 8px;
     }}
+    QFrame#ResultCard[status="skip"] {{
+        background-color: {p["bg_surface_hover"]};
+        border: 1px solid {p["border"]};
+        border-radius: 8px;
+    }}
     QFrame#ResultCard[status="pass"]:hover {{
         border-color: {p["success"]};
     }}
@@ -750,6 +935,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     }}
     QFrame#ResultCard[status="error"]:hover {{
         border-color: {p["warning"]};
+    }}
+    QFrame#ResultCard[status="skip"]:hover {{
+        border-color: {p["border_strong"]};
     }}
     QFrame#ResultCard[status="pass"]:pressed {{
         background-color: {p["success_border"]};
@@ -760,6 +948,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     QFrame#ResultCard[status="error"]:pressed {{
         background-color: {p["warning_border"]};
     }}
+    QFrame#ResultCard[status="skip"]:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
     QLabel#ResultStatusLabel[status="pass"] {{
         color: {p["success"]};
     }}
@@ -769,6 +960,9 @@ def _generate_qss(p: dict[str, str]) -> str:
     QLabel#ResultStatusLabel[status="error"] {{
         color: {p["warning"]};
     }}
+    QLabel#ResultStatusLabel[status="skip"] {{
+        color: {p["text_secondary"]};
+    }}
     QLabel#ResultDiffLabel[status="pass"] {{
         color: {p["success"]};
     }}
@@ -777,6 +971,26 @@ def _generate_qss(p: dict[str, str]) -> str:
     }}
     QLabel#ResultDiffLabel[status="error"] {{
         color: {p["warning"]};
+    }}
+    QLabel#ResultDiffLabel[status="skip"] {{
+        color: {p["text_secondary"]};
+    }}
+    QLabel#ResultDiffLabel[negative="true"] {{
+        color: {p["amount_negative"]};
+    }}
+
+    /* ── 汇总卡片圆点 ── */
+    QLabel#SummaryCardDot[dot_type="success"] {{
+        color: {p["success"]};
+    }}
+    QLabel#SummaryCardDot[dot_type="error"] {{
+        color: {p["error"]};
+    }}
+    QLabel#SummaryCardDot[dot_type="warning"] {{
+        color: {p["warning"]};
+    }}
+    QLabel#SummaryCardDot[dot_type="info"] {{
+        color: {p["info"]};
     }}
 
     /* ── 菜单 ── */
@@ -848,6 +1062,12 @@ def _generate_qss(p: dict[str, str]) -> str:
         font-weight: 600;
         color: {p["text_primary"]};
     }}
+    QLabel#AboutVersionSummary {{
+        font-size: 14px;
+        font-weight: 500;
+        color: {p["text_secondary"]};
+        padding-bottom: 4px;
+    }}
 
     /* ── 滚动区域 ── */
     QScrollArea {{
@@ -884,12 +1104,57 @@ _DARK_QSS = _generate_qss(_dark_palette())
 # ── 公共 API ──
 
 
+def _build_palette(p: dict[str, str]) -> QPalette:
+    """由设计令牌构建 QPalette。
+
+    覆盖没有 QSS 规则命中的原生控件 (普通 QPushButton、QMessageBox、
+    QDialog、QCheckBox 等): 它们用调色板自绘, 不设置暗色调色板时
+    深色主题下仍为浅色 (白底白字)。
+    """
+    palette = QPalette()
+    window = QColor(p["bg_app"])
+    surface = QColor(p["bg_surface"])
+    surface_hover = QColor(p["bg_surface_hover"])
+    text = QColor(p["text_primary"])
+    text_disabled = QColor(p["text_disabled"])
+    tertiary = QColor(p["text_tertiary"])
+    brand = QColor(p["brand_500"])
+    white = QColor("#ffffff")
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        palette.setColor(group, QPalette.ColorRole.Window, window)
+        palette.setColor(group, QPalette.ColorRole.WindowText, text)
+        palette.setColor(group, QPalette.ColorRole.Base, surface)
+        palette.setColor(group, QPalette.ColorRole.AlternateBase, surface_hover)
+        palette.setColor(group, QPalette.ColorRole.Text, text)
+        palette.setColor(group, QPalette.ColorRole.Button, surface)
+        palette.setColor(group, QPalette.ColorRole.ButtonText, text)
+        palette.setColor(group, QPalette.ColorRole.Highlight, brand)
+        palette.setColor(group, QPalette.ColorRole.HighlightedText, white)
+        palette.setColor(group, QPalette.ColorRole.PlaceholderText, tertiary)
+        palette.setColor(group, QPalette.ColorRole.ToolTipBase, surface_hover)
+        palette.setColor(group, QPalette.ColorRole.ToolTipText, text)
+        palette.setColor(group, QPalette.ColorRole.Link, brand)
+    disabled = QPalette.ColorGroup.Disabled
+    palette.setColor(disabled, QPalette.ColorRole.Window, window)
+    palette.setColor(disabled, QPalette.ColorRole.Base, surface)
+    palette.setColor(disabled, QPalette.ColorRole.Button, surface)
+    palette.setColor(disabled, QPalette.ColorRole.WindowText, text_disabled)
+    palette.setColor(disabled, QPalette.ColorRole.Text, text_disabled)
+    palette.setColor(disabled, QPalette.ColorRole.ButtonText, text_disabled)
+    return palette
+
+
 def apply_theme(dark: bool = False) -> None:
     """应用亮色或暗色主题。"""
     global _current_dark
     _current_dark = dark
     setTheme(Theme.DARK if dark else Theme.LIGHT)
     setThemeColor(QColor(BRAND_600))
+    # 无 QSS 规则的原生控件靠调色板自绘: 同步设置明暗调色板,
+    # 修复深色主题下普通按钮/对话框/复选框等保持浅色 (白底白字) 的问题
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        app.setPalette(_build_palette(_dark_palette() if dark else _light_palette()))
 
 
 def get_qss(dark: bool = False) -> str:
@@ -979,8 +1244,9 @@ def notify_theme_listeners() -> None:
             msg = str(exc)
             if "already deleted" in msg or "C++ object" in msg:
                 dead.append(fn)
-        except Exception:
-            # 避免单个监听器异常影响其他监听器
+        except Exception as exc:
+            # 避免单个监听器异常影响其他监听器, 但须留痕便于排查
+            logger.warning(f"主题监听器执行异常, 已跳过: {exc}")
             continue
     for fn in dead:
         with contextlib.suppress(ValueError):

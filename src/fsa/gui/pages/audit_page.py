@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -25,13 +26,15 @@ from qfluentwidgets import InfoBar, InfoBarPosition
 from fsa.core.models.rule import Severity
 from fsa.gui.app_state import AppState
 from fsa.gui.export_helper import export_audit_workbook
-from fsa.gui.theme import current_palette, get_mono_font
+from fsa.gui.theme import bind_theme_listener, current_palette, get_mono_font
 
 
 class AuditPage(QWidget):
     """校验结果页面: 以表格展示校验结果。"""
 
     history_view_exit_requested = Signal()
+    # V3: 空状态「去导入」按钮 -> 主窗口切换到数据导入页
+    go_import_requested = Signal()
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -40,6 +43,8 @@ class AuditPage(QWidget):
         self._setup_ui()
         self._connect_signals()
         self._update_table()
+        # 差额列负数红为内联前景色, 主题切换后需重渲染表格刷新
+        bind_theme_listener(self, self._update_table)
 
     def _setup_ui(self) -> None:
         scroll = QScrollArea()
@@ -101,16 +106,38 @@ class AuditPage(QWidget):
         )
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
-        layout.addWidget(self._table)
 
         # 空状态
         self._empty = QLabel("暂无校验结果，请先在「数据导入」页面执行校验")
         self._empty.setObjectName("EmptyLabel")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setVisible(True)
-        layout.addWidget(self._empty)
 
-        layout.addStretch()
+        # V3: 空状态给出下一步动作入口 (居中按钮)
+        self._go_import_btn = QPushButton("去导入")
+        self._go_import_btn.setObjectName("BtnPrimary")
+        self._go_import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._go_import_btn.setFixedHeight(32)
+        self._go_import_btn.clicked.connect(self.go_import_requested.emit)
+
+        # 表格 / 空状态切换容器 (stack 吃满剩余高度)
+        self._results_stack = QStackedWidget()
+        self._results_stack.addWidget(self._table)
+
+        empty_page = QFrame()
+        empty_page.setObjectName("EmptyContainer")
+        empty_layout = QVBoxLayout(empty_page)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.setSpacing(16)
+        empty_layout.addWidget(self._empty)
+        go_import_row = QHBoxLayout()
+        go_import_row.addStretch()
+        go_import_row.addWidget(self._go_import_btn)
+        go_import_row.addStretch()
+        empty_layout.addLayout(go_import_row)
+        self._results_stack.addWidget(empty_page)
+
+        layout.addWidget(self._results_stack, stretch=1)
         scroll.setWidget(content)
 
         main = QVBoxLayout(self)
@@ -143,10 +170,10 @@ class AuditPage(QWidget):
         self._sync_history_banner()
         if summary is None:
             self._table.setRowCount(0)
-            self._empty.setVisible(True)
+            self._results_stack.setCurrentIndex(1)
             return
 
-        self._empty.setVisible(False)
+        self._results_stack.setCurrentIndex(0)
         results = summary.results
         self._table.setRowCount(len(results))
         p = current_palette()
@@ -193,6 +220,8 @@ class AuditPage(QWidget):
             diff_item = QTableWidgetItem(f"{result.diff:,.2f}")
             diff_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
             diff_item.setFont(get_mono_font(10))
+            if result.diff < 0:
+                diff_item.setForeground(QColor(p["amount_negative"]))
             self._table.setItem(i, 5, diff_item)
 
             tol_item = QTableWidgetItem(str(result.tolerance))

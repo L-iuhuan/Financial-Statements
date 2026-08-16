@@ -192,6 +192,8 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         self._import_page.debate_requested.connect(self._on_debate)
         self._import_page.history_view_exit_requested.connect(self._on_reset)
         self._audit_page.history_view_exit_requested.connect(self._on_reset)
+        # 审计页空状态「去导入」按钮 -> 切换到数据导入页
+        self._audit_page.go_import_requested.connect(self._on_go_import)
 
         # 注意: 历史页面和设置页的信号连接延迟到页面创建时 (见 _ensure_page)
 
@@ -251,6 +253,10 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         """返回当前导航页 ID。"""
         return getattr(self, "_current_nav", "navImport")
 
+    def _on_go_import(self) -> None:
+        """审计页空状态「去导入」: 切换到数据导入页。"""
+        self._on_nav("navImport")
+
     # ── 主题 ──
 
     def _toggle_theme(self) -> None:
@@ -284,6 +290,8 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
     # ── 重置 ──
 
     def _on_reset(self) -> None:
+        # B1-1: 推进导入页后台任务代际, 进行中的导入/校验/批量任务结果将被丢弃
+        self._import_page.invalidate_background_tasks()
         self._state.clear_all()
         self._topbar.set_export_enabled(False)
         self._topbar.set_validate_enabled(False)

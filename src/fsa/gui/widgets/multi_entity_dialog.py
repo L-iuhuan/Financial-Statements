@@ -18,7 +18,12 @@ from fsa.services.multi_entity_service import MultiEntityResult
 class MultiEntityResultDialog(QDialog):
     """展示各主体校验结果与内部现金流双边核对结果。"""
 
-    def __init__(self, result: MultiEntityResult, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        result: MultiEntityResult,
+        parent: QWidget | None = None,
+        saved_count: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("多主体批量校验结果")
         self.resize(820, 560)
@@ -39,6 +44,12 @@ class MultiEntityResultDialog(QDialog):
                 f"异常 {result.combined.errored}"
             )
         layout.addWidget(summary)
+
+        # B1-5: 告知用户各主体结果已写入历史记录 (None 表示未尝试/存储不可用)
+        if saved_count is not None and saved_count > 0:
+            saved_hint = QLabel(f"结果已保存到历史记录（{saved_count} 个主体）")
+            saved_hint.setObjectName("MetaLabel")
+            layout.addWidget(saved_hint)
 
         entity_title = QLabel("主体校验结果")
         entity_title.setObjectName("SectionTitle")

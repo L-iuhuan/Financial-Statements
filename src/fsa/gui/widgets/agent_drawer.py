@@ -2,6 +2,8 @@
 
 匹配 Demo v4 设计:
 - 左侧 4px 拖拽手柄 (min 280px, max 600px, default 380px)
+- 与主内容区的层次边界: theme.py QSS `QFrame#AgentDrawer` 的 1px
+  border-left (border_strong 令牌, 随主题切换), 不用重阴影
 - 会话选择器 (QMenu 下拉切换/新建)
 - 消息时间戳
 - 快速建议气泡
@@ -41,7 +43,8 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
     # P1 取消机制: 忙碌条"■ 停止"按钮触发, main_window_agent 经 getattr 防御接线
     cancelRequested = Signal()
 
-    MIN_WIDTH = 320
+    # 最小宽度与 docstring / DESIGN_SYSTEM §15.1 对齐 (280px)
+    MIN_WIDTH = 280
     MAX_WIDTH = 600
     DEFAULT_WIDTH = 380
 
@@ -126,10 +129,10 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
 
         h.addStretch()
 
-        # 清空当前会话按钮 (垃圾桶图标)
+        # 清空当前会话按钮 (垃圾桶图标); qicon() 随主题自动重绘
         from qfluentwidgets import FluentIcon
         clear_btn = QPushButton()
-        clear_btn.setIcon(FluentIcon.DELETE.icon())
+        clear_btn.setIcon(FluentIcon.DELETE.qicon())
         clear_btn.setFixedSize(28, 28)
         clear_btn.setToolTip("清空当前会话")
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -137,9 +140,9 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         clear_btn.clicked.connect(self._clear_current_session)
         h.addWidget(clear_btn)
 
-        # 关闭按钮 (X 图标)
+        # 关闭按钮 (X 图标); qicon() 随主题自动重绘
         close_btn = QPushButton()
-        close_btn.setIcon(FluentIcon.CLOSE.icon())
+        close_btn.setIcon(FluentIcon.CLOSE.qicon())
         close_btn.setFixedSize(28, 28)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setObjectName("AgentHeaderBtn")
@@ -170,7 +173,7 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
 
         from qfluentwidgets import FluentIcon
         clear_btn = QPushButton()
-        clear_btn.setIcon(FluentIcon.CLOSE.icon())
+        clear_btn.setIcon(FluentIcon.CLOSE.qicon())
         clear_btn.setFixedSize(20, 20)
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_btn.setObjectName("AgentClearBtn")
@@ -241,6 +244,10 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         self._input = QPlainTextEdit()
         self._input.setObjectName("AgentInput")
         self._input.setPlaceholderText("输入您的问题...")
+        # 视觉内边距用文档边距实现 (与 AI 气泡同法)。
+        # QSS padding 会压缩 QPlainTextEdit 的视口高度, 空文本也出现滚动条;
+        # 文档边距不影响视口, 空态/单行时无滚动条。
+        self._input.document().setDocumentMargin(8)
         # 初始高度 36, 文字增多时自动增高 (上限 120px)
         self._input.setFixedHeight(36)
         self._input.textChanged.connect(self._on_input_text_changed)
@@ -280,11 +287,16 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
 
         逐块计算可视行数: 硬换行 (blockCount) + 超长行的自动换行 (按宽度估算),
         确保多行文本和长文本都能正确增高。
+        高度口径 = 行数*行高 + 2*文档边距 + 边框余量, 保证达到 120px 上限前
+        不出现滚动条 (文档边距见 _build_input_area 的说明)。
         """
         doc = self._input.document()
         fm = self._input.fontMetrics()
-        line_height = fm.lineSpacing()
-        viewport_width = max(1, self._input.viewport().width() - 16)
+        # QPlainTextDocumentLayout 的块实际行高通常比 lineSpacing 大 2px 左右
+        # (行距余量), 低估会导致自动增高后仍出现滚动条
+        line_height = fm.lineSpacing() + 2
+        margin = int(doc.documentMargin())
+        viewport_width = max(1, self._input.viewport().width() - margin * 2)
 
         visual_lines = 0
         for i in range(doc.blockCount()):
@@ -298,7 +310,11 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
             wrapped = max(1, -(-text_width // int(viewport_width)))
             visual_lines += wrapped
 
-        content_height = visual_lines * line_height + 16
+        # +8 余量 (仅多行时): 覆盖边框 2px 与块布局行高(≈字体高度)相对
+        # fontMetrics().lineSpacing() 的估算偏差, 确保到 120px 上限前不出现滚动条;
+        # 单行/空态保持 36px 基准高度不加余量
+        slack = 8 if visual_lines > 1 else 2
+        content_height = visual_lines * line_height + margin * 2 + slack
         new_height = int(max(36, min(120, content_height)))
         if new_height != self._input.height():
             self._input.setFixedHeight(new_height)

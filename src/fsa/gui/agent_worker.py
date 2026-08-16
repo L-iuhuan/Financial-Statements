@@ -127,13 +127,17 @@ class AgentWorker(QObject):
 
     @Slot(str)
     def _deliver_chunk(self, text: str) -> None:
-        """主线程: 内容分块回传。"""
+        """主线程: 内容分块回传 (已取消后丢弃迟到的分块)。"""
+        if self._cancel_event.is_set():
+            return
         if self._on_chunk is not None:
             self._on_chunk(text)
 
     @Slot(str)
     def _deliver_reasoning_chunk(self, text: str) -> None:
-        """主线程: 推理分块回传。"""
+        """主线程: 推理分块回传 (已取消后丢弃迟到的分块)。"""
+        if self._cancel_event.is_set():
+            return
         if self._on_reasoning_chunk is not None:
             self._on_reasoning_chunk(text)
 

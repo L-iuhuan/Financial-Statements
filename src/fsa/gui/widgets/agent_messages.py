@@ -100,7 +100,7 @@ def _markdown_css() -> dict[str, str]:
 def _inline(escaped: str, css: dict[str, str]) -> str:
     """行内标记替换 (入参须已 html.escape)。
 
-    支持: `code` -> <code>, [文本](url) -> 仅文本, **粗** -> <strong>,
+    支持: `code` -> <code class="md-code">, [文本](url) -> 仅文本, **粗** -> <strong>,
     *斜* -> <em>。code/链接内容先占位, 避免被粗斜体规则二次改写。
     """
     placeholders: dict[str, str] = {}
@@ -114,12 +114,7 @@ def _inline(escaped: str, css: dict[str, str]) -> str:
         token = m.group(0)
         if token.startswith("`") and token.endswith("`"):
             inner = token[1:-1]
-            return store(
-                f'<code style="background-color:{css["code_bg"]};'
-                f'border:1px solid {css["border"]};border-radius:3px;'
-                f'padding:0 3px;font-family:Consolas,monospace;font-size:12px;">'
-                f"{inner}</code>"
-            )
+            return store(f'<code class="md-code">{inner}</code>')
         lm = re.match(r"\[([^\]]*)\]\([^)]*\)", token)
         if lm:
             return store(lm.group(1))
@@ -151,9 +146,9 @@ def _parse_blocks(content: str, css: dict[str, str]) -> str:
         nonlocal list_kind, list_items
         if list_kind:
             tag = "ul" if list_kind == "ul" else "ol"
-            out.append(f"<{tag} style=\"margin:4px 0;\">")
+            out.append(f'<{tag} class="md-list">')
             for item in list_items:
-                out.append(f'<li style="margin:3px 0;">{_inline(item, css)}</li>')
+                out.append(f'<li class="md-list-item">{_inline(item, css)}</li>')
             out.append(f"</{tag}>")
             list_kind = None
             list_items = []
@@ -161,17 +156,12 @@ def _parse_blocks(content: str, css: dict[str, str]) -> str:
     def flush_table() -> None:
         nonlocal table
         if table:
-            out.append('<table style="border-collapse:collapse;width:100%;margin:4px 0;">')
+            out.append('<table class="md-table">')
             for ri, row in enumerate(table):
                 tag = "th" if ri == 0 else "td"
-                style = (
-                    f'border:1px solid {css["border"]};padding:4px 8px;'
-                    "font-size:12px;text-align:left;"
-                )
-                if ri == 0:
-                    style += f'font-weight:600;background-color:{css["code_bg"]};'
+                cls = "md-th" if ri == 0 else "md-td"
                 cells = "".join(
-                    f'<{tag} style="{style}">{_inline(c, css)}</{tag}>' for c in row
+                    f'<{tag} class="{cls}">{_inline(c, css)}</{tag}>' for c in row
                 )
                 out.append(f"<tr>{cells}</tr>")
             out.append("</table>")
@@ -231,35 +221,50 @@ def _parse_blocks(content: str, css: dict[str, str]) -> str:
     return "".join(out)
 
 
+def _markdown_style_block() -> str:
+    """生成当前主题下 Markdown 渲染所需 CSS 样式块 (由 _AssistantBubble 注入 HTML 头部)。"""
+    p = current_palette()
+    return (
+        "<style>"
+        f".md-content {{ color: {p['text_primary']}; font-size: 13px; line-height: 1.55; word-wrap: break-word; }}"
+        f".md-pre {{ font-family: 'JetBrains Mono','Cascadia Code','Consolas',monospace; background-color: {p['bg_app']}; color: {p['text_primary']}; border: 1px solid {p['border_strong']}; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; margin: 4px 0; font-size: 12px; }}"
+        f".md-code {{ background-color: {p['bg_surface_hover']}; color: {p['text_primary']}; border: 1px solid {p['border_strong']}; border-radius: 3px; padding: 0 3px; font-family: Consolas,monospace; font-size: 12px; }}"
+        f".md-table {{ border-collapse: collapse; width: 100%; margin: 4px 0; }}"
+        f".md-th, .md-td {{ border: 1px solid {p['border']}; padding: 4px 8px; font-size: 12px; text-align: left; }}"
+        f".md-th {{ font-weight: 600; background-color: {p['bg_surface_hover']}; }}"
+        ".md-list { margin: 4px 0; }"
+        ".md-list-item { margin: 3px 0; }"
+        "</style>"
+    )
+
+
 def md_to_html(text: str) -> str:
-    """将 Markdown 子集渲染为带主题内联 CSS 的 HTML (供 QTextBrowser 使用)。
+    """将 Markdown 子集渲染为带主题类名的 HTML。
 
     支持语法:
-    - ``` 围栏代码块 -> <pre> (等宽/弱背景/圆角/padding, 原文 html.escape)
-    - |a|b| 表格行 (分隔行跳过) -> <table> (细边框, 首行表头加粗)
+    - ``` 围栏代码块 -> <pre class="md-pre"> (等宽/弱背景/圆角/padding, 原文 html.escape)
+    - |a|b| 表格行 (分隔行跳过) -> <table class="md-table"> (细边框, 首行表头加粗)
     - #/##/### 标题 -> <h3>/<h4>
-    - -/* 无序列表, 1. 有序列表 -> <ul>/<ol>
+    - -/* 无序列表, 1. 有序列表 -> <ul>/<ol> class="md-list"
     - 空行段落分隔, 其余 -> <p>
-    - 行内: **粗** -> <strong>, *斜* -> <em>, `code` -> <code>,
+    - 行内: **粗** -> <strong>, *斜* -> <em>, `code` -> <code class="md-code">,
       [文本](url) -> 仅保留文本
     - 所有原文内容先 html.escape 再注入标签 (XSS 安全)
+
+    注意: 返回的 HTML 不含 <style> 样式块; 调用方 (如 _AssistantBubble) 需自行注入
+    _markdown_style_block(), 主题切换时只更新样式块即可, 无需重解析 Markdown。
     """
     css = _markdown_css()
     body: list[str] = []
     for is_code, content in _split_fenced(text):
         if is_code:
             body.append(
-                "<pre style=\"font-family:'JetBrains Mono','Cascadia Code',"
-                f"Consolas,monospace;background-color:{css['pre_bg']};"
-                f"color:{css['text']};border:1px solid {css['border']};"
-                "border-radius:6px;padding:8px 10px;white-space:pre-wrap;"
-                f'margin:4px 0;font-size:12px;">{html.escape(content)}</pre>'
+                f'<pre class="md-pre">{html.escape(content)}</pre>'
             )
         else:
             body.append(_parse_blocks(content, css))
     return (
-        f'<div style="font-size:13px;line-height:1.55;color:{css["text"]};'
-        f'word-wrap:break-word;">{"".join(body)}</div>'
+        f'<div class="md-content">{ "".join(body) }</div>'
     )
 
 
@@ -269,6 +274,7 @@ class _AssistantBubble(QTextBrowser):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._raw = ""
+        self._html_body = ""
         self.setOpenExternalLinks(False)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -285,7 +291,8 @@ class _AssistantBubble(QTextBrowser):
 
     def set_markdown(self, text: str) -> None:
         self._raw = text
-        self.setHtml(md_to_html(text))
+        self._html_body = md_to_html(text)
+        self.setHtml(_markdown_style_block() + self._html_body)
         self._resize_to_content()
 
     def raw_text(self) -> str:
@@ -296,8 +303,11 @@ class _AssistantBubble(QTextBrowser):
         return self.toPlainText()
 
     def refresh(self) -> None:
-        """主题切换后按当前主题重渲染。"""
-        self.setHtml(md_to_html(self._raw))
+        """主题切换: 仅更新 <style> 块, 不重解析 Markdown, 保持滚动位置。"""
+        if not self._html_body:
+            self.set_markdown(self._raw)
+            return
+        self.setHtml(_markdown_style_block() + self._html_body)
         self._resize_to_content()
 
     def _resize_to_content(self, *_: object) -> None:
@@ -452,6 +462,10 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
 
         self._messages_layout.addStretch()
         self._scroll.setWidget(container)
+        # QScrollArea.setWidget 会强制容器 autoFillBackground=True,
+        # 未设 QSS 背景的裸容器因此用浅色调色板自绘 → 深色主题下问答区白底。
+        # 关闭自绘后透出抽屉 QSS 背景 (bg_surface, 随主题), 修复深色白底问题。
+        container.setAutoFillBackground(False)
         btn = getattr(self, "_stick_button", None)
         if btn is not None:
             btn.hide()
@@ -474,7 +488,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         self._welcome_items.append((desc, "desc"))
 
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(6)
+        btn_row.setSpacing(8)
         btn_row.addStretch()
         for text in _SUGGESTIONS:
             btn = QPushButton(text)
@@ -524,9 +538,10 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         self._suggestions_frame = QFrame()
         # 2 列网格: 窄窗 (280px) 下 3 个 chip 不横排截断
         self._suggestions_layout = QGridLayout(self._suggestions_frame)
-        self._suggestions_layout.setContentsMargins(16, 0, 16, 8)
-        self._suggestions_layout.setHorizontalSpacing(6)
-        self._suggestions_layout.setVerticalSpacing(6)
+        # V2: 行距按 4px 基准放宽 (垂直 8px + 上内边距 4px), 避免气泡行偏密
+        self._suggestions_layout.setContentsMargins(16, 4, 16, 8)
+        self._suggestions_layout.setHorizontalSpacing(8)
+        self._suggestions_layout.setVerticalSpacing(8)
         self._render_suggestions(_SUGGESTIONS)
         return self._suggestions_frame
 
@@ -785,12 +800,8 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
     # ── 气泡主题样式 ──
 
     def _style_assistant_bubble(self, bubble: _AssistantBubble) -> None:
-        """AI 气泡背景/圆角 (随主题, 内联覆盖 QSS 对 QTextBrowser 的默认白底)。"""
-        p = current_palette()
-        bg = p.get("bg_surface_hover", "#f3f4f6")
-        bubble.setStyleSheet(
-            f"QTextBrowser {{ background-color: {bg}; border-radius: 8px; }}"
-        )
+        """AI 气泡背景/圆角/描边已迁移到 theme.py QSS, 此处仅保留占位防止外部调用报错。"""
+        # 历史原因: 主题切换不再需要逐气泡 setStyleSheet; 由全局 QSS 统一驱动。
 
     def refresh_theme(self) -> None:
         """主题切换后重刷已渲染 AI 气泡 (含流式中) 与悬浮元素。

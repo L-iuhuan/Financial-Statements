@@ -119,15 +119,6 @@ class AppState(QObject):
     def set_period(self, period: str) -> None:
         self._period = period
 
-    def set_default_tolerance(self, tolerance: float) -> None:
-        """设置默认容差 (供设置页写入)。"""
-        self._default_tolerance = tolerance
-
-    @property
-    def default_tolerance(self) -> float:
-        """当前默认容差。"""
-        return getattr(self, "_default_tolerance", 0.01)
-
     def set_reports(self, reports: list[Report]) -> None:
         self._reports = reports
         self._history_view_id = None
@@ -137,10 +128,12 @@ class AppState(QObject):
         """设置明细数据集（附表 2~6 合并结果）。"""
         self._detail_dataset = dataset
 
-    def set_results(self, results: ValidationSummary, persist: bool = True) -> None:
+    def set_results(self, results: ValidationSummary | None, persist: bool = True) -> None:
         """设置校验结果并可选持久化到 SQLite。
 
         查看历史记录时传 persist=False，避免重复保存产生新历史条目。
+        传 None 表示清空当前结果 (如重新导入新批次报表后, 旧结果失效)。
+        None 不触发持久化。
         results_changed 信号立即触发 (UI 不等待持久化完成);
         history_changed 信号在持久化完成后触发 (后台线程)。
 
@@ -150,7 +143,7 @@ class AppState(QObject):
         if persist:
             self._history_view_id = None
         self.results_changed.emit()
-        if persist:
+        if persist and results is not None:
             self._persist_results_async(results)
 
     def _persist_results_async(self, results: ValidationSummary) -> None:
@@ -213,6 +206,7 @@ class AppState(QObject):
             count = self._registry.count()
             logger.info(f"加载规则库: {count} 条规则")
             self._apply_overrides()
+            self._record_rule_version_migration()
             return True, f"成功加载 {count} 条规则"
         except FileNotFoundError:
             msg = f"规则库文件不存在: {_RULES_FILE.name}"
@@ -231,19 +225,53 @@ class AppState(QObject):
             logger.error(msg)
             return False, msg
 
+    def _record_rule_version_migration(self) -> None:
+        """首次启动或规则库版本变化时写入迁移记录 (审计留痕)。"""
+        if self._history_repo is None or self._registry is None:
+            return
+        current_version = self._registry.rule_library_version
+        if not current_version:
+            return
+        try:
+            latest = self._history_repo.get_latest_rule_version_migration()
+        except sqlite3.DatabaseError:
+            logger.exception("读取规则库版本迁移记录失败")
+            return
+        if latest is None:
+            note = "首次加载内置规则库"
+            from_version = ""
+        elif str(latest["to_version"]) == current_version:
+            return
+        else:
+            note = "升级内置规则库"
+            from_version = str(latest["to_version"])
+        try:
+            self._history_repo.record_rule_version_migration(
+                from_version, current_version, note
+            )
+        except sqlite3.DatabaseError:
+            logger.exception("写入规则库版本迁移记录失败")
+
     def _apply_overrides(self) -> None:
-        """将 SQLite 中保存的容差覆写应用到规则注册表。"""
+        """将 SQLite 中保存的容差/启停覆写应用到规则注册表。"""
         if self._override_repo is None or self._registry is None:
             return
         overrides = self._override_repo.get_all()
         if not overrides:
             return
-        count = 0
-        for rule_id, tolerance in overrides.items():
-            if self._registry.set_tolerance(rule_id, tolerance):
-                count += 1
-        if count > 0:
-            logger.info(f"已应用 {count} 条容差覆写")
+        tol_count = 0
+        disabled_count = 0
+        for rule_id, override in overrides.items():
+            if self._registry.set_tolerance(rule_id, override.tolerance):
+                tol_count += 1
+            if override.enabled:
+                self._registry.enable(rule_id)
+            elif self._registry.disable(rule_id):
+                disabled_count += 1
+        if tol_count > 0:
+            logger.info(f"已应用 {tol_count} 条容差覆写")
+        if disabled_count > 0:
+            logger.info(f"已应用 {disabled_count} 条规则禁用覆写")
 
     def _merge_custom_rules(self) -> None:
         """合并自定义规则到注册表 (在内置规则加载后调用)。"""

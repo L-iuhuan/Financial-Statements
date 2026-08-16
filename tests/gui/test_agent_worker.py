@@ -202,8 +202,12 @@ class TestAgentWorkerStreamChunks:
                 return ChatMessage(role="assistant", content="完整回答")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 if on_chunk is not None:
                     on_chunk("逐字")
@@ -219,14 +223,15 @@ class TestAgentWorkerStreamChunks:
         def on_chunk(text: str) -> None:
             chunks.append(text)
 
-        worker = AgentWorker(
-            run, on_success=lambda _v: None, on_error=lambda _m: None, on_chunk=on_chunk
-        )
+        worker = AgentWorker(run, on_success=lambda _v: None, on_error=lambda _m: None, on_chunk=on_chunk)
         worker.start()
         # 正常结束前最后一个分块为 DISCLAIMER_TEXT 免责标注
         qtbot.waitUntil(lambda: len(chunks) == 3, timeout=5000)
         assert chunks[:2] == ["逐字", "内容"]
-        assert chunks[2] == "\n\n" + "⚠️ 以上内容由 AI 模型生成，仅供参考，不构成审计意见；最终判断请以规则引擎结果与人工复核为准。"
+        assert (
+            chunks[2]
+            == "\n\n" + "⚠️ 以上内容由 AI 模型生成，仅供参考，不构成审计意见；最终判断请以规则引擎结果与人工复核为准。"
+        )
 
 
 class TestAgentBusyState:
@@ -238,16 +243,17 @@ class TestAgentBusyState:
         app_state.load_registry()
         results = [
             make_result(
-                "A-001", passed=False, diff=5.0,
-                severity=Severity.ERROR, category="A-表内平衡",
+                "A-001",
+                passed=False,
+                diff=5.0,
+                severity=Severity.ERROR,
+                category="A-表内平衡",
             ),
         ]
         app_state.set_results(make_summary(results), persist=False)
         return window
 
-    def test_set_agent_busy_disables_and_restores_buttons(
-        self, qapp, qtbot, app_state
-    ) -> None:
+    def test_set_agent_busy_disables_and_restores_buttons(self, qapp, qtbot, app_state) -> None:
         """busy=True 禁用 AI 按钮, busy=False 恢复。"""
         window = self._setup_window(qapp, qtbot, app_state)
         card = window._import_page.findChildren(ResultCard)[0]
@@ -306,9 +312,7 @@ class TestUnifiedLlmClient:
         assert client.base_url == "http://127.0.0.1:8000/v1"
         assert client.model == "test-model"
 
-    def test_llm_available_cache_invalidated_by_config_change(
-        self, qapp, qtbot, app_state
-    ) -> None:
+    def test_llm_available_cache_invalidated_by_config_change(self, qapp, qtbot, app_state) -> None:
         """可用性缓存按 base_url|model 键控, 配置切换后重新探测。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
@@ -325,11 +329,16 @@ class TestUnifiedLlmClient:
 
             def chat(self, messages, tools=None, timeout=None):
                 from fsa.agent.llm_client import ChatMessage
+
                 return ChatMessage(role="assistant", content="ok")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -342,9 +351,7 @@ class TestUnifiedLlmClient:
         assert window._llm_available(c2) is True
         assert c2.checks == 1  # 新配置 -> 重新探测 (缓存失效)
 
-    def test_llm_available_ttl_expiry_reprobes(
-        self, qapp, qtbot, app_state, monkeypatch
-    ) -> None:
+    def test_llm_available_ttl_expiry_reprobes(self, qapp, qtbot, app_state, monkeypatch) -> None:
         """可用性缓存带 TTL: 60 秒内不重探测, 过期后重新探测 (P1-3)。"""
         import fsa.gui.main_window_agent as mwa
 
@@ -366,11 +373,16 @@ class TestUnifiedLlmClient:
 
             def chat(self, messages, tools=None, timeout=None):
                 from fsa.agent.llm_client import ChatMessage
+
                 return ChatMessage(role="assistant", content="ok")
 
             def chat_stream(
-                self, messages, tools=None, timeout=None,
-                on_chunk=None, on_reasoning_chunk=None,
+                self,
+                messages,
+                tools=None,
+                timeout=None,
+                on_chunk=None,
+                on_reasoning_chunk=None,
             ):
                 return self.chat(messages, tools=tools, timeout=timeout)
 
@@ -403,15 +415,18 @@ class TestTraceLocationFormat:
 
     def test_pdf_row_decoded(self) -> None:
         from fsa.gui.main_window import _format_trace_loc
+
         # 页码 2, 表内行 5
         assert _format_trace_loc(20_000_005, "") == "第2页表内第5行"
 
     def test_excel_row_unchanged(self) -> None:
         from fsa.gui.main_window import _format_trace_loc
+
         assert _format_trace_loc(35, "期末余额") == "第35行 期末余额列"
 
     def test_row_zero_shows_column(self) -> None:
         from fsa.gui.main_window import _format_trace_loc
+
         assert _format_trace_loc(0, "未在报表中找到（按 0 处理）") == "未在报表中找到（按 0 处理）"
         assert _format_trace_loc(0, "") == "位置未知"
 
@@ -454,3 +469,20 @@ class TestAgentBusyHint:
         assert not window._agent_drawer._busy_hint.isHidden()
         window._set_agent_busy(False)
         assert window._agent_drawer._busy_hint.isHidden()
+
+    def test_cancelled_worker_drops_late_chunks(self, qapp, qtbot) -> None:
+        """用户停止后, 已排队但未投递的分块不再渲染。"""
+        received: list[str] = []
+
+        worker = AgentWorker(
+            target=lambda: "ok",
+            on_success=lambda _v: None,
+            on_error=lambda _m: None,
+            on_chunk=received.append,
+            on_reasoning_chunk=received.append,
+        )
+        worker.cancel()
+        worker.emit_chunk("迟到分块")
+        worker.emit_reasoning_chunk("迟到推理")
+        qtbot.wait(100)
+        assert received == []

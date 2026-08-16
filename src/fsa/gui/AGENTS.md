@@ -14,14 +14,14 @@
 
 ## 线程约定（重要）
 
-- **无 QThread 并发**（`QThread` 仅在 agent_drawer 用于当前线程断言）；统一模式 = `threading.Thread` + `QMetaObject.invokeMethod(QueuedConnection)` 回主线程
+- **无 QThread 并发**（`QThread` 仅在 agent_drawer 用于当前线程断言）；统一模式 = `threading.Thread` 后台执行 + Qt 信号桥回主线程（`AgentWorker` 用 `QMetaObject.invokeMethod(QueuedConnection)`；import_page 用 `_ImportBridge` 等 QObject `Signal`，跨线程 emit 自动排队到 GUI 线程）
 - **LLM 长任务全部后台化**：AgentLoop/诊断/辩论走 `AgentWorker`；启动新任务前 `_cancel_active_worker()` 取消旧任务；`on_finished` 统一走 `_on_worker_finished()`（恢复 UI + 释放引用）；`closeEvent` 先取消 worker 再关库——不要直接在主线程调 LLM
-- 校验/导入/导出仍主线程同步执行
+- **校验/导入/导出已全部后台化且可取消**（import_page 三条 `threading.Thread` 路径 + cancel_event/信号桥），主线程不再同步执行长任务
 - SQLite `check_same_thread=False` + WAL 已为多线程预留
 
 ## 样式约定
 
-- `setObjectName` PascalCase：`"Sidebar"`/`"Topbar"`/`"ResultCard"`/`"BtnPrimary"`/`"FilterTab"` 等；属性选择器驱动状态：`[active="true"]`、`[status="pass|fail|error"]`、`[drag="true"]`
+- `setObjectName` PascalCase：`"Sidebar"`/`"Topbar"`/`"ResultCard"`/`"BtnPrimary"`/`"FilterTab"` 等；属性选择器驱动状态：`[active="true"]`、`[status="pass|fail|error|skip"]`、`[drag="true"]`；**skipped 结果是第四视觉态**（灰底中性色+「跳过」文案），卡片/筛选/表格三处必须一致
 - `theme.py` 单一 QSS 生成；品牌色精炼靛蓝 `BRAND_500=#5b5ee6`（由钢蓝灰演进，见 DESIGN_SYSTEM.md；HANDOFF.md"深青玉/钢蓝灰"表述已过时）；金额用 `get_mono_font()` + `{:,.2f}`
 - Fluent 组件克制使用：仅 `FluentIcon`/`InfoBar`/`IconWidget`/`SwitchButton`；其余自定义 + QSS；**不用 Emoji 图标**
 - 内联样式组件须用 `bind_theme_listener(self, fn)` 注册主题监听（自动随控件销毁注销，防泄漏）
@@ -41,4 +41,4 @@
 
 ## QSettings 键
 
-`theme_mode, default_tolerance, gross_margin_threshold, history_retention_days, update_manifest_url, llm_provider, llm_base_url, llm_model, llm_api_key, llm_allow_remote_ack`（组织/应用名：`FSA`/`FinancialAudit`；`_reset_to_defaults` 只重置前 5 个非 LLM 键）
+`theme_mode, industry, history_retention_days, update_manifest_url, llm_provider, llm_base_url, llm_model, llm_api_key, llm_allow_remote_ack`（组织/应用名：`FSA`/`FinancialAudit`；`_reset_to_defaults` 只重置前 4 个非 LLM 键）

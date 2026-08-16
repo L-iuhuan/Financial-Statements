@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QDate, QPoint, QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget
@@ -75,9 +76,7 @@ class TestTableFocusOutline:
 
 
 class TestHistoryViewNavigation:
-    def test_view_history_syncs_state_sidebar_and_scroll(
-        self, qapp, qtbot, app_state
-    ) -> None:
+    def test_view_history_syncs_state_sidebar_and_scroll(self, qapp, qtbot, app_state) -> None:
         """查看历史后进入导入页, 侧边栏/历史状态/横幅/滚动位置一致。"""
         results = [
             make_result("A-001", passed=True, severity=Severity.ERROR),
@@ -120,9 +119,7 @@ class TestHistoryViewNavigation:
         assert f"历史回看 #{history_id}" in window._audit_page._history_banner_text.text()
         assert window._audit_page._table.rowCount() == 2
 
-    def test_importing_new_file_exits_history_view(
-        self, qapp, qtbot, app_state
-    ) -> None:
+    def test_importing_new_file_exits_history_view(self, qapp, qtbot, app_state) -> None:
         """进入历史回看后重新导入文件, 自动退出回看并隐藏横幅。"""
         results = [make_result("A-001", passed=True)]
         summary = ValidationSummary(total=1, passed=1, results=results)
@@ -141,9 +138,7 @@ class TestDropZoneClick:
         window.show()
         received: list[int] = []
         # 断开真实文件对话框处理, 仅验证 DropZone 的点击信号
-        window._import_page._drop_zone.clicked.disconnect(
-            window._import_page._on_choose_files
-        )
+        window._import_page._drop_zone.clicked.disconnect(window._import_page._on_choose_files)
         window._import_page._drop_zone.clicked.connect(lambda: received.append(1))
         QTest.mouseClick(
             window._import_page._drop_zone,
@@ -219,7 +214,8 @@ class TestAuditEvidenceChain:
 
         window._import_page.trigger_validate()
         qtbot.waitUntil(
-            lambda: app_state.history_repo.count() >= 1, timeout=5000  # type: ignore[union-attr]
+            lambda: app_state.history_repo.count() >= 1,
+            timeout=5000,  # type: ignore[union-attr]
         )
 
         summary = app_state.results
@@ -273,9 +269,7 @@ class TestBackgroundImport:
             return {}
 
         monkeypatch.setattr(import_page_module, "read_excel", slow_read)
-        page._importer.import_data = (
-            lambda data, source_file, suffix: [make_report()]
-        )
+        page._importer.import_data = lambda data, source_file, suffix: [make_report()]
         page._detail_importer.import_data = lambda data: DetailDataset()
 
         started = time.monotonic()
@@ -313,6 +307,26 @@ class TestBackgroundImport:
 
 
 class TestAgentPageAwareSuggestions:
+    @pytest.mark.parametrize(
+        ("nav_id", "expected_title"),
+        [
+            ("navImport", "数据导入与校验"),
+            ("navAudit", "校验结果"),
+            ("navRules", "规则管理"),
+            ("navHistory", "历史记录"),
+            ("navSettings", "系统设置"),
+        ],
+    )
+    def test_each_page_builds_page_specific_context(self, qapp, qtbot, app_state, nav_id, expected_title) -> None:
+        """5 个页面均注入各自的软件上下文 (页面感知问答)。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window._on_nav(nav_id)
+
+        context = window._build_agent_context()
+        assert "用户当前页面" in context
+        assert expected_title in context
+
     def test_page_switch_changes_suggestions(self, qapp, qtbot, app_state) -> None:
         """不同页面显示不同的 AI 建议问题。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
@@ -352,9 +366,7 @@ class TestAgentPageAwareSuggestions:
 
 
 class TestMultiEntityGui:
-    def test_run_multi_entity_produces_combined_result(
-        self, qapp, qtbot, app_state, tmp_path
-    ) -> None:
+    def test_run_multi_entity_produces_combined_result(self, qapp, qtbot, app_state, tmp_path) -> None:
         """多主体批量校验入口可按子文件夹生成合并结果。"""
         from tests.importer.conftest import make_multi_sheet_excel
 
@@ -380,9 +392,7 @@ class TestDeepSeekTemplate:
         """设置页一键填入 DeepSeek 模板, 不自动填密钥。"""
         page = SettingsPage(app_state)
         qtbot.addWidget(page)
-        btn = next(
-            b for b in page.findChildren(QPushButton) if b.text() == "填入 DeepSeek 模板"
-        )
+        btn = next(b for b in page.findChildren(QPushButton) if b.text() == "填入 DeepSeek 模板")
         btn.click()
         qtbot.wait(20)
 
@@ -422,10 +432,7 @@ class TestHistorySearchAndCompare:
         page._search_input.setText("b.xlsx")
         qtbot.wait(20)
         assert len(page._cards) == 1
-        card_texts = [
-            label.text()
-            for label in page._cards[0].findChildren(QLabel)
-        ]
+        card_texts = [label.text() for label in page._cards[0].findChildren(QLabel)]
         assert any("2025-01" in text for text in card_texts)
 
         page._search_input.clear()

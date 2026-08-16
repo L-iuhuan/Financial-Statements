@@ -5,7 +5,15 @@
 
 匹配 Demo v4 设计: 拖放区 + 报表卡片 + 汇总卡片 + 筛选标签 + 规则明细卡片。
 
-结果卡片渲染与筛选逻辑在 import_page_results.py (ImportPageResultsMixin)。
+拆分结构 (纯移动, 不改行为):
+- 结果卡片渲染与筛选: import_page_results.py (ImportPageResultsMixin)
+- 后台任务启动/取消/代际守卫/信号桥: import_page_tasks.py (ImportPageTasksMixin)
+- 导入/校验结果应用与多主体落库: import_page_apply.py (ImportPageApplyMixin)
+
+本模块保留: 类壳 + UI 构建 + 信号接线 + 纯数据管线
+(_import_paths / _run_validation / _run_multi_entity)。
+注意: 测试经 fsa.gui.pages.import_page 模块级 monkeypatch read_excel /
+sha256_file, 故引用这两个名字的管线不可外移。
 """
 
 from __future__ import annotations
@@ -14,9 +22,8 @@ import threading
 from pathlib import Path
 
 from loguru import logger
-from PySide6.QtCore import QDate, QObject, Qt, Signal
+from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
-    QDateEdit,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -26,7 +33,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import FluentIcon, IndeterminateProgressBar
+from qfluentwidgets import FluentIcon, IconWidget, IndeterminateProgressBar
 
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
@@ -37,39 +44,23 @@ from fsa.core.models.report import Report, ReportType
 from fsa.core.models.result import ValidationResult
 from fsa.core.resources import sha256_file
 from fsa.gui.app_state import AppState
+from fsa.gui.pages.import_page_apply import ImportPageApplyMixin
 from fsa.gui.pages.import_page_results import ImportPageResultsMixin
+from fsa.gui.pages.import_page_tasks import (
+    ImportPageTasksMixin,
+    _ImportBridge,
+    _MultiEntityBridge,
+    _ValidationBridge,
+)
 from fsa.gui.widgets.drop_zone import DropZone
+from fsa.gui.widgets.period_picker import PeriodPicker
 from fsa.gui.widgets.result_card import ResultCard
 from fsa.gui.widgets.summary_card import SummaryCard
 from fsa.services.package_service import PackageValidationService
 
 
-class _ImportBridge(QObject):
-    """后台导入线程 -> GUI 线程的信号桥。"""
-
-    finished = Signal(object)  # dict: reports / dataset / errors / file_count
-    failed = Signal(str)
-    progress = Signal(str)
-
-
-class _ValidationBridge(QObject):
-    """后台校验线程 -> GUI 线程的信号桥。"""
-
-    finished = Signal(object)  # ValidationSummary
-    failed = Signal(str)
-    progress = Signal(str)
-
-
-class _MultiEntityBridge(QObject):
-    """多主体批量校验线程 -> GUI 线程的信号桥。"""
-
-    finished = Signal(object)  # MultiEntityResult
-    failed = Signal(str)
-    progress = Signal(str)
-
-
-class ImportPage(ImportPageResultsMixin):
-    """数据导入与校验页面 (继承 mixin 提供结果卡片渲染与筛选逻辑)。"""
+class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMixin):
+    """数据导入与校验页面 (继承 mixin 提供后台任务/结果应用/结果卡片渲染与筛选逻辑)。"""
 
     validate_enabled_changed = Signal(bool)
     diagnose_requested = Signal(str)  # rule_id -> 主窗口打开 AI 抽屉
@@ -92,6 +83,12 @@ class ImportPage(ImportPageResultsMixin):
         self._multi_cancel_event: threading.Event | None = None
         self._multi_bridge: _MultiEntityBridge | None = None
         self._multi_running = False
+        # B1-1 代际守卫: 三类后台任务各自独立的代际计数器。
+        # 每次启动任务递增并捕获当时的代际值, 完成回调应用结果前比对,
+        # 不等则丢弃 (用户在任务进行中点「重置」/「取消」后, 旧结果不得写回 AppState)。
+        self._import_generation = 0
+        self._validation_generation = 0
+        self._multi_generation = 0
         self._setup_ui()
         self._connect_signals()
 
@@ -114,22 +111,18 @@ class ImportPage(ImportPageResultsMixin):
         period_label.setObjectName("PageTitle")
         period_label.setStyleSheet("font-size: 13px;")
         period_row.addWidget(period_label)
-        self._period_input = QDateEdit(QDate.currentDate())
-        self._period_input.setDisplayFormat("yyyy-MM")
-        self._period_input.setCalendarPopup(True)
+        self._period_input = PeriodPicker(QDate.currentDate())
+        self._period_input.setObjectName("StyledDateEdit")
         self._period_input.setFixedWidth(130)
-        self._period_input.setToolTip(
-            "选择报告期间；该期间将写入导入报表、校验历史与导出底稿，历史回看时只读"
-        )
+        self._period_input.setToolTip("选择报告期间；该期间将写入导入报表、校验历史与导出底稿，历史回看时只读")
         self._period_input.dateChanged.connect(self._on_period_changed)
         period_row.addWidget(self._period_input)
         self._on_period_changed(self._period_input.date())
         self._multi_entity_btn = QPushButton("多主体批量校验")
-        self._multi_entity_btn.setObjectName("TextBtn")
+        self._multi_entity_btn.setObjectName("BtnSecondary")
         self._multi_entity_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._multi_entity_btn.setToolTip(
-            "选择包含多个主体文件夹的目录，每个子文件夹按一个主体批量校验"
-        )
+        self._multi_entity_btn.setFixedHeight(32)
+        self._multi_entity_btn.setToolTip("选择包含多个主体文件夹的目录，每个子文件夹按一个主体批量校验")
         self._multi_entity_btn.clicked.connect(self._on_multi_entity_clicked)
         period_row.addWidget(self._multi_entity_btn)
         period_row.addStretch()
@@ -242,10 +235,10 @@ class ImportPage(ImportPageResultsMixin):
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.setSpacing(8)
 
-        empty_icon = QLabel()
-        empty_icon.setPixmap(FluentIcon.INFO.icon().pixmap(48, 48))
-        empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.addWidget(empty_icon)
+        # IconWidget: 主题同步图标 (QLabel+pixmap 烘焙颜色, 切主题后不刷新)
+        empty_icon = IconWidget(FluentIcon.INFO)
+        empty_icon.setFixedSize(48, 48)
+        empty_layout.addWidget(empty_icon, alignment=Qt.AlignmentFlag.AlignCenter)
 
         empty_text = QLabel("等待导入财务报表")
         empty_text.setObjectName("EmptyTitle")
@@ -275,6 +268,14 @@ class ImportPage(ImportPageResultsMixin):
         self._cancel_import_btn.setVisible(False)
         self._cancel_import_btn.clicked.connect(self._cancel_import)
         progress_row.addWidget(self._cancel_import_btn)
+
+        self._retry_failed_btn = QPushButton("重试失败文件")
+        self._retry_failed_btn.setObjectName("TextBtn")
+        self._retry_failed_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._retry_failed_btn.setVisible(False)
+        self._retry_failed_btn.setToolTip("仅重新导入上次失败的文件")
+        self._retry_failed_btn.clicked.connect(self._on_retry_failed)
+        progress_row.addWidget(self._retry_failed_btn)
         layout.addLayout(progress_row)
 
         layout.addStretch()
@@ -298,7 +299,7 @@ class ImportPage(ImportPageResultsMixin):
             self,
             "选择财务报表",
             "",
-            "财务报表 (*.xlsx *.xls *.pdf)",
+            "财务报表与附表 (*.xlsx *.xls *.xlsm *.csv *.pdf)",
         )
         if paths:
             self._on_files_async(paths)
@@ -330,8 +331,7 @@ class ImportPage(ImportPageResultsMixin):
         self._period_input.blockSignals(False)
         period = summary.period if summary is not None else ""
         self._history_banner_text.setText(
-            f"历史回看 #{history_id} · 期间 {period or '未设置'} · "
-            "当前为历史结果，导入新文件将自动退出回看"
+            f"历史回看 #{history_id} · 期间 {period or '未设置'} · 当前为历史结果，导入新文件将自动退出回看"
         )
         self._history_banner.setVisible(True)
 
@@ -350,41 +350,6 @@ class ImportPage(ImportPageResultsMixin):
             self._apply_import_result(file_paths, reports, dataset, errors)
         finally:
             self._set_import_running(False)
-
-    def _on_files_async(self, file_paths: list[str]) -> None:
-        """后台导入入口: 不阻塞界面, 可取消。"""
-        if self._import_cancel_event is not None:
-            self._show_info("已有导入任务正在进行，请先取消或等待完成", "warning")
-            return
-
-        logger.info(f"导入文件(后台): {file_paths}")
-        self._set_import_running(True)
-        cancel_event = threading.Event()
-        self._import_cancel_event = cancel_event
-        bridge = _ImportBridge(self)
-        bridge.finished.connect(self._on_background_import_finished)
-        bridge.failed.connect(self._on_background_import_failed)
-        bridge.progress.connect(self._import_status_label.setText)
-        self._import_bridge = bridge
-
-        def run() -> None:
-            try:
-                reports, dataset, errors = self._import_paths(
-                    file_paths,
-                    progress_cb=bridge.progress.emit,
-                    cancel_event=cancel_event,
-                )
-            except Exception as e:
-                bridge.failed.emit(str(e))
-            else:
-                bridge.finished.emit({
-                    "file_paths": file_paths,
-                    "reports": reports,
-                    "dataset": dataset,
-                    "errors": errors,
-                })
-
-        threading.Thread(target=run, daemon=True).start()
 
     def _import_paths(
         self,
@@ -407,12 +372,17 @@ class ImportPage(ImportPageResultsMixin):
             emit = progress_cb
             if callable(emit):
                 emit(f"正在读取: {Path(path).name}")
+            pdf_diagnostics = None
             try:
                 suffix = Path(path).suffix.lower()
                 if suffix == ".pdf":
-                    from fsa.core.importer.pdf_reader import read_pdf
+                    from fsa.core.importer.pdf_reader import (
+                        PdfReadDiagnostics,
+                        read_pdf,
+                    )
 
-                    raw_data = read_pdf(path)
+                    pdf_diagnostics = PdfReadDiagnostics()
+                    raw_data = read_pdf(path, diagnostics=pdf_diagnostics)
                 else:
                     raw_data = read_excel(path)
             except FileNotFoundError:
@@ -428,17 +398,27 @@ class ImportPage(ImportPageResultsMixin):
                 errors.append(f"{path}: 已取消")
                 continue
 
+            # 审查修正 (2026-08-16 终审 P2): 主表/明细导入失败计入 errors,
+            # 使成功计数与「重试失败文件」准确 (此前仅 debug 日志, 文件被误计为成功)
+            file_failures: list[str] = []
             try:
                 file_reports = self._importer.import_data(raw_data, path, suffix)
             except Exception as e:
-                logger.debug(f"主表导入失败（明细不受影响）: {path}: {e}")
+                logger.warning(f"主表导入失败（明细不受影响）: {path}: {e}")
+                file_failures.append(f"主表导入失败: {e}")
                 file_reports = []
+            if pdf_diagnostics is not None:
+                for report in file_reports:
+                    report.parse_diagnostics = pdf_diagnostics.summary_text()
 
             try:
                 file_dataset = self._detail_importer.import_data(raw_data)
             except Exception as e:
-                logger.debug(f"明细导入失败（主表不受影响）: {path}: {e}")
+                logger.warning(f"明细导入失败（主表不受影响）: {path}: {e}")
+                file_failures.append(f"明细导入失败: {e}")
                 file_dataset = DetailDataset(source_file=path, period=self._state.period)
+            if file_failures:
+                errors.append(f"{path}: {'；'.join(file_failures)}")
 
             for report in file_reports:
                 if report.report_type not in reports_by_type:
@@ -450,162 +430,13 @@ class ImportPage(ImportPageResultsMixin):
             dataset.merge(file_dataset)
         return list(reports_by_type.values()), dataset, errors
 
-    def _apply_import_result(
-        self,
-        file_paths: list[str],
-        reports: list[Report],
-        dataset: DetailDataset,
-        errors: list[str],
-    ) -> None:
-        """将导入结果写回 AppState 并给出中文反馈 (仅 GUI 线程调用)。"""
-        if not reports and dataset.is_empty:
-            if errors:
-                self._show_info(f"{len(errors)} 个文件失败: {'; '.join(errors)}", "warning")
-            else:
-                self._show_info("未识别到任何财务报表或明细数据", "warning")
-            self.validate_enabled_changed.emit(False)
-            return
-
-        self._state.set_reports(reports)
-        self._state.set_detail_dataset(dataset)
-        detail_rows = (
-            len(dataset.trial_balance)
-            + len(dataset.trial_balance_current)
-            + len(dataset.journal)
-            + len(dataset.journal_current)
-            + len(dataset.cash_flow_detail)
-            + len(dataset.cash_flow_detail_current)
-            + len(dataset.reclassifications)
-            + len(dataset.related_party_purchases)
-            + len(dataset.sales_details)
-            + len(dataset.internal_cash_flows)
-        )
-        succeeded = len(file_paths) - len(errors)
-        message = f"成功导入 {succeeded} 个文件：{len(reports)} 张报表、{detail_rows} 行明细数据"
-        unit_warnings = [
-            f"{r.report_type.value}: {r.unit_warning}" for r in reports if r.unit_warning
-        ]
-        unit_warnings.extend(dataset.unit_warnings)
-        if unit_warnings:
-            message += f"；金额单位提示: {'; '.join(unit_warnings)}"
-        if errors or unit_warnings:
-            message += f"；{len(errors)} 个文件失败: {'; '.join(errors)}" if errors else ""
-            self._show_info(message, "warning")
-        else:
-            self._show_info(message, "success")
-        self.validate_enabled_changed.emit(bool(reports) or detail_rows > 0)
-
-    def _on_background_import_finished(self, payload: object) -> None:
-        """后台导入完成 (queued 到 GUI 线程)。"""
-        data = payload if isinstance(payload, dict) else {}
-        file_paths = list(data.get("file_paths", []))
-        reports = list(data.get("reports", []))
-        dataset = data.get("dataset", DetailDataset(period=self._state.period))
-        errors = list(data.get("errors", []))
-        self._set_import_running(False)
-        self._apply_import_result(file_paths, reports, dataset, errors)
-
-    def _on_background_import_failed(self, message: str) -> None:
-        """后台导入出现未预期异常。"""
-        self._set_import_running(False)
-        self._show_info(f"导入失败: {message}", "error")
-
-    def _cancel_import(self) -> None:
-        """请求取消当前后台导入任务。"""
-        event = self._import_cancel_event
-        if event is not None:
-            event.set()
-            self._import_status_label.setText("正在取消…")
-        validation_event = self._validation_cancel_event
-        if validation_event is not None:
-            validation_event.set()
-            self._import_status_label.setText("正在取消校验…")
-        multi_event = self._multi_cancel_event
-        if multi_event is not None:
-            multi_event.set()
-            self._import_status_label.setText("正在取消批量校验…")
-
-    def _set_import_running(self, running: bool) -> None:
-        """切换导入进度/取消控件可见性。"""
-        if not running:
-            self._import_cancel_event = None
-            self._import_bridge = None
-        self._sync_progress_controls()
-
-    def _set_validation_running(self, running: bool) -> None:
-        """切换校验进度/取消控件可见性。"""
-        self._validation_running = running
-        if not running:
-            self._validation_cancel_event = None
-            self._validation_bridge = None
-        self._sync_progress_controls()
-
-    def _set_multi_running(self, running: bool) -> None:
-        """切换多主体批量校验进度/取消控件可见性。"""
-        self._multi_running = running
-        if not running:
-            self._multi_cancel_event = None
-            self._multi_bridge = None
-        self._sync_progress_controls()
-
-    def _sync_progress_controls(self) -> None:
-        """按任一后台任务运行状态刷新进度控件。"""
-        running = (
-            self._import_cancel_event is not None
-            or self._validation_running
-            or self._multi_running
-        )
-        self._progress.setVisible(running)
-        self._cancel_import_btn.setVisible(running)
-        self._import_status_label.setVisible(running)
-        if not running:
-            self._import_status_label.setText("")
-
     def trigger_validate(self) -> None:
         """同步校验入口 (保留给测试与内部调用)。"""
         summary = self._run_validation()
         if summary is not None:
             self._apply_validation_summary(summary)
 
-    def trigger_validate_async(self) -> None:
-        """后台校验入口: 不阻塞界面, 可取消。"""
-        if self._validation_running:
-            self._show_info("已有校验任务正在进行", "warning")
-            return
-        registry = self._state.registry
-        if registry is None:
-            self._show_info("规则库未加载，请检查规则文件", "error")
-            return
-        dataset = self._state.detail_dataset
-        if not self._state.reports and dataset is None:
-            self._show_info("请先导入报表", "warning")
-            return
-
-        self._set_validation_running(True)
-        cancel_event = threading.Event()
-        self._validation_cancel_event = cancel_event
-        bridge = _ValidationBridge(self)
-        bridge.finished.connect(self._on_background_validation_finished)
-        bridge.failed.connect(self._on_background_validation_failed)
-        bridge.progress.connect(self._import_status_label.setText)
-        self._validation_bridge = bridge
-
-        def run() -> None:
-            try:
-                summary = self._run_validation(cancel_event)
-            except Exception as e:
-                bridge.failed.emit(str(e))
-            else:
-                if summary is None:
-                    bridge.failed.emit("校验已取消或无可校验数据")
-                else:
-                    bridge.finished.emit(summary)
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def _run_validation(
-        self, cancel_event: threading.Event | None = None
-    ) -> object | None:
+    def _run_validation(self, cancel_event: threading.Event | None = None) -> object | None:
         """纯校验管线 (可在后台线程运行, 不触碰 Qt 控件)。"""
         registry = self._state.registry
         if registry is None:
@@ -621,90 +452,43 @@ class ImportPage(ImportPageResultsMixin):
             self._state.reports,
             dataset or DetailDataset(period=self._state.period),
             self._state.period,
+            threshold_vars=self._industry_threshold_vars(),
         )
 
-        source_files = sorted({
-            report.source_file for report in self._state.reports if report.source_file
-        })
+        source_files = sorted({report.source_file for report in self._state.reports if report.source_file})
         if not source_files and dataset is not None and dataset.source_file:
             source_files = [dataset.source_file]
         summary.source_files = source_files
         hashes: list[str] = []
+        sizes: list[int] = []
         for path in source_files:
             if cancel_event is not None and cancel_event.is_set():
                 return None
-            hashes.append(sha256_file(path))
+            # S5: 读取失败返回空串时记「未计算」, 保持与 source_files/sizes 平行对齐
+            digest = sha256_file(path)
+            hashes.append(digest if digest else "未计算")
+            try:
+                sizes.append(Path(path).stat().st_size)
+            except OSError:
+                sizes.append(-1)
         summary.source_hashes = hashes
+        summary.source_file_sizes = sizes
         summary.rule_version = registry.rule_library_version
         return summary
 
-    def _apply_validation_summary(self, summary: object) -> None:
-        """将校验结果写回 AppState 并提示 (仅 GUI 线程调用)。"""
-        from fsa.core.models.result import ValidationSummary
+    @staticmethod
+    def _industry_threshold_vars() -> dict[str, float] | None:
+        """按设置页选择的行业生成 LR-* 阈值变量; 通用行业返回 None (走默认)。"""
+        from PySide6.QtCore import QSettings
 
-        if not isinstance(summary, ValidationSummary):
-            self._show_info("校验结果无效，请重试", "error")
-            return
-        self._state.set_results(summary)
-        kind = "success" if summary.all_passed else "warning"
-        self._show_info(
-            f"校验完成: 通过 {summary.passed}, 不通过 {summary.failed}",
-            kind,
-        )
+        from fsa.core.engine.thresholds import threshold_vars_for
 
-    def _on_background_validation_finished(self, payload: object) -> None:
-        """后台校验完成 (queued 到 GUI 线程)。"""
-        self._set_validation_running(False)
-        self._apply_validation_summary(payload)
+        industry = str(QSettings("FSA", "FinancialAudit").value("industry", "general"))
+        if industry == "general":
+            return None
+        return threshold_vars_for(industry)
 
-    def _on_background_validation_failed(self, message: str) -> None:
-        """后台校验异常。"""
-        self._set_validation_running(False)
-        self._show_info(f"校验失败: {message}", "error")
-
-    def _on_multi_entity_clicked(self) -> None:
-        """选择根目录, 将每个子文件夹作为一个主体批量校验。"""
-        from PySide6.QtWidgets import QFileDialog
-
-        root = QFileDialog.getExistingDirectory(
-            self, "选择多主体根目录（每个子文件夹一个主体）"
-        )
-        if not root:
-            return
-        folders = sorted(
-            str(path)
-            for path in Path(root).iterdir()
-            if path.is_dir()
-        )
-        if not folders:
-            self._show_info("所选目录下没有主体子文件夹", "warning")
-            return
-        if self._multi_running:
-            self._show_info("已有批量校验任务正在进行", "warning")
-            return
-
-        self._set_multi_running(True)
-        cancel_event = threading.Event()
-        self._multi_cancel_event = cancel_event
-        bridge = _MultiEntityBridge(self)
-        bridge.finished.connect(self._on_multi_entity_finished)
-        bridge.failed.connect(self._on_multi_entity_failed)
-        bridge.progress.connect(self._import_status_label.setText)
-        self._multi_bridge = bridge
-
-        def run() -> None:
-            try:
-                result = self._run_multi_entity(folders, cancel_event)
-            except Exception as e:
-                bridge.failed.emit(str(e))
-            else:
-                bridge.finished.emit(result)
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def _run_multi_entity(
-        self, folders: list[str], cancel_event: threading.Event | None = None
-    ) -> object:
+    def _run_multi_entity(self, folders: list[str], cancel_event: threading.Event | None = None) -> object:
         """执行多主体批量校验 (后台线程)。"""
         from fsa.services.multi_entity_service import MultiEntityService
 
@@ -725,23 +509,4 @@ class ImportPage(ImportPageResultsMixin):
         bilateral = service.check_bilateral(outcomes)
         from fsa.services.multi_entity_service import MultiEntityResult
 
-        return MultiEntityResult(
-            outcomes=outcomes, combined=combined, bilateral=bilateral
-        )
-
-    def _on_multi_entity_finished(self, payload: object) -> None:
-        """多主体校验完成: 展示结果对话框。"""
-        self._set_multi_running(False)
-        from fsa.gui.widgets.multi_entity_dialog import MultiEntityResultDialog
-        from fsa.services.multi_entity_service import MultiEntityResult
-
-        if not isinstance(payload, MultiEntityResult):
-            self._show_info("批量校验结果无效，请重试", "error")
-            return
-        dialog = MultiEntityResultDialog(payload, self)
-        dialog.exec()
-
-    def _on_multi_entity_failed(self, message: str) -> None:
-        """多主体校验异常。"""
-        self._set_multi_running(False)
-        self._show_info(f"批量校验失败: {message}", "error")
+        return MultiEntityResult(outcomes=outcomes, combined=combined, bilateral=bilateral)

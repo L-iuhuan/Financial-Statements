@@ -1,6 +1,6 @@
 """文件选择/拖放区域组件。
 
-用户可以点击此处打开文件选择框, 或将 .xlsx/.xls/.pdf 文件拖到此处。
+用户可以点击此处打开文件选择框, 或将 .xlsx/.xls/.xlsm/.csv/.pdf 文件拖到此处。
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
+from qfluentwidgets import FluentIcon, IconWidget
 
 
 class DropZone(QFrame):
@@ -20,7 +21,7 @@ class DropZone(QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setAcceptDrops(True)
-        self.setMinimumHeight(140)
+        self.setMinimumHeight(160)
         self.setObjectName("DropZone")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._setup_ui()
@@ -28,13 +29,21 @@ class DropZone(QFrame):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setSpacing(4)
+
+        # V3: 大图标 + 主/次文案层次, 强化空状态视觉引导
+        icon = IconWidget(FluentIcon.CLOUD_DOWNLOAD)
+        icon.setFixedSize(36, 36)
+        icon.setObjectName("DropZoneIcon")
+        layout.addWidget(icon, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addSpacing(4)
 
         hint = QLabel("点击选择文件，或拖拽财务报表到此处")
         hint.setObjectName("DropZoneText")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
-        sub_hint = QLabel("支持 .xlsx / .xls / .pdf · 可一次选择或拖入主表与附表（1~6）")
+        sub_hint = QLabel("支持 .xlsx / .xls / .xlsm / .csv / .pdf · 可一次选择或拖入主表与附表（1~6）")
         sub_hint.setObjectName("DropZoneHint")
         sub_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(sub_hint)
@@ -66,7 +75,8 @@ class DropZone(QFrame):
             return
         paths = [url.toLocalFile() for url in urls]
         supported = [
-            path for path in paths if path.lower().endswith((".xlsx", ".xls", ".pdf"))
+            path for path in paths
+            if path.lower().endswith((".xlsx", ".xls", ".xlsm", ".csv", ".pdf"))
         ]
         if supported:
             event.acceptProposedAction()

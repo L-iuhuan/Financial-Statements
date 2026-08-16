@@ -84,6 +84,10 @@ class _MainWindowAgentContracts(QFrame):
         """由 MainWindowAgentMixin 提供。"""
         raise NotImplementedError
 
+    def _llm_available_cached(self, client: LLMClient) -> bool | None:
+        """由 MainWindowAgentMixin 提供: 仅查缓存不探测 (主线程非阻塞)。"""
+        raise NotImplementedError
+
     def _open_drawer(self) -> None:
         """由 MainWindowDrawerMixin 提供。"""
         raise NotImplementedError
@@ -232,7 +236,9 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
                 f"助手回答: {sanitize_llm_input(answer[-1200:], max_len=1200)}"
             )
             response = client.chat(
-                [ChatMessage(role="user", content=prompt)], timeout=20.0
+                [ChatMessage(role="user", content=prompt)],
+                timeout=20.0,
+                cancel_event=worker.cancel_event,
             )
             return response.content.strip()
 
@@ -309,7 +315,10 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
         # 尝试 AgentLoop (多轮对话 + 工具调用)
         client = self._get_llm_client()
         if client is not None:
-            if self._llm_available(client):
+            # B5-2: 主线程只查缓存不探测 (is_available 是 3s 级 urlopen);
+            # 缓存未知时在 AgentWorker 后台线程内首步探测, 不可用则回退规则化答复
+            cached = self._llm_available_cached(client)
+            if cached is not False:
                 self._run_agent_loop(client, text, context_notes)
                 return
             answer = (
@@ -329,18 +338,35 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
         self._agent_drawer.add_assistant_message(answer)
         self._update_suggestions_after_answer(text, answer)
 
+    def _llm_available_cached(self, client: LLMClient) -> bool | None:
+        """仅查缓存的可用性 (不发起网络探测, 主线程安全, B5-2)。
+
+        Returns:
+            新鲜缓存值; 无缓存或已过期时返回 None (未知)。
+        """
+        key = f"{client.base_url}|{client.model}"
+        cached = self._llm_availability.get(key)
+        if cached is None:
+            return None
+        available, cached_at = cached
+        if time.monotonic() - cached_at < _LLM_AVAILABILITY_TTL_SECONDS:
+            return available
+        return None
+
     def _llm_available(self, client: LLMClient) -> bool:
         """检查 LLM 可用性 (按地址/模型键控缓存 + TTL, 60 秒后重新探测)。
 
         缓存键为 base_url|model, 配置变更自然失效;
         TTL 保证服务恢复后缓存的 False 不会永久生效。
+
+        注意 (B5-2): is_available 内部是 urlopen (最长 3 秒阻塞),
+        本方法只允许在后台线程调用; 主线程请用 _llm_available_cached。
+        缓存字典的写入是单次原子赋值, 后台线程写入对主线程读取安全 (GIL)。
         """
-        key = f"{client.base_url}|{client.model}"
-        cached = self._llm_availability.get(key)
+        cached = self._llm_available_cached(client)
         if cached is not None:
-            available, cached_at = cached
-            if time.monotonic() - cached_at < _LLM_AVAILABILITY_TTL_SECONDS:
-                return available
+            return cached
+        key = f"{client.base_url}|{client.model}"
         try:
             available = bool(client.is_available())
         except Exception:
@@ -361,6 +387,14 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
         handle = self._agent_drawer.start_stream_message()
 
         def run() -> str:
+            # B5-2: 可用性探测挪到后台线程首步 (urlopen 最长 3 秒, 不阻塞 UI);
+            # 服务不可用时回退规则化答复, 作为普通回答文本呈现
+            if not self._llm_available(client):
+                from fsa.agent.fallback import fallback_answer
+                return (
+                    "检测到已配置大模型，但服务暂时不可用。以下先给出规则化答复：\n\n"
+                    + fallback_answer(text, self._state)
+                )
             from fsa.agent.agent_loop import AgentLoop
             loop = AgentLoop(client, self._state)
             return loop.ask_stream(
@@ -369,6 +403,7 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
                 context_notes=context_notes,
                 on_chunk=lambda chunk: worker.emit_chunk(chunk),
                 on_reasoning_chunk=lambda chunk: worker.emit_reasoning_chunk(chunk),
+                cancel_event=worker.cancel_event,
             )
 
         def on_chunk(chunk: str) -> None:
@@ -634,7 +669,9 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
             engine = DiagnosisEngine()
             # 免责标注已由 diagnose_with_client/diagnose 自带, 此处不再拼接
             if client is not None:
-                return engine.diagnose_with_client(failed[0], client)
+                return engine.diagnose_with_client(
+                    failed[0], client, cancel_event=worker.cancel_event
+                )
             return engine.diagnose(failed[0])
 
         def on_success(text: str) -> None:

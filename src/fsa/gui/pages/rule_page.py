@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 
+from loguru import logger
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -18,8 +20,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import SwitchButton
+from qfluentwidgets import InfoBar, InfoBarPosition, SwitchButton
 
+from fsa.core.exceptions import InvalidToleranceError
 from fsa.core.models.rule import ReconciliationRule, Severity
 from fsa.gui.app_state import AppState
 from fsa.gui.theme import get_mono_font
@@ -169,10 +172,24 @@ class RuleCard(QFrame):
         return row
 
     def _on_tol_changed(self) -> None:
+        import math
+
         text = self._tol_input.text().strip()
         try:
             value = float(text)
         except ValueError:
+            value = math.nan
+        if not math.isfinite(value) or value < 0:
+            InfoBar.warning(
+                "容差无效",
+                "容差请输入不小于 0 的数字（如 0.01），已恢复为当前生效值",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2500,
+                parent=self,
+            )
+            self._tol_input.setText(str(self._rule.tolerance))
             return
         self._on_tolerance_change(self._rule.rule_id, value)
 
@@ -339,14 +356,32 @@ class RulePage(QWidget):
         registry = self._state.registry
         active = len(registry.get_active()) if registry else 0
         shown = len(self._filtered_rules)
-        self._summary.setText(
-            f"共 {total} 条规则 (启用 {active} 条) · 当前显示 {shown} 条"
-        )
+        text = f"共 {total} 条规则 (启用 {active} 条) · 当前显示 {shown} 条"
+        if self._search_text:
+            # V5: 搜索时前置匹配计数, 让结果数量一眼可见
+            text = f"搜索匹配 {shown} 条 · {text}"
+        self._summary.setText(text)
 
     def _on_toggle(self, rule_id: str, checked: bool) -> None:
         registry = self._state.registry
         if registry is None:
             return
+        rule = registry.get_by_id(rule_id)
+        if rule is None:
+            return
+        # 先持久化启停覆写, 成功后再改内存注册表 (与容差覆写同一模式, B3-3)
+        override_repo = self._state.override_repo
+        if override_repo is not None:
+            try:
+                override_repo.set_enabled(rule_id, checked, rule.tolerance)
+            except sqlite3.DatabaseError as e:
+                logger.error(f"规则启停保存失败: {rule_id}: {e}")
+                self._show_toast(f"规则 {rule_id} 启停状态保存失败，请重试", "error")
+                self._load_rules()  # 回显为注册表当前生效状态
+                return
+        else:
+            # 存储降级 (B3-5): 启停仍可生效, 但明示不会保存
+            self._show_toast(f"规则 {rule_id} 启停已调整，仅本次会话生效，不会被保存", "warning")
         if checked:
             registry.enable(rule_id)
         else:
@@ -357,11 +392,31 @@ class RulePage(QWidget):
         registry = self._state.registry
         if registry is None:
             return
-        registry.set_tolerance(rule_id, value)
-        # 持久化容差覆写
+        # 先持久化覆写, 成功后再改内存注册表, 消除"内存已改/持久化失败"分叉 (B3-3)
         override_repo = self._state.override_repo
         if override_repo is not None:
-            override_repo.set(rule_id, value)
+            try:
+                override_repo.set(rule_id, value)
+            except (InvalidToleranceError, sqlite3.DatabaseError) as e:
+                logger.error(f"容差覆写保存失败: {rule_id}: {e}")
+                self._show_toast(f"容差保存失败，规则 {rule_id} 仍使用原容差", "error")
+                self._refresh_card_tolerances()
+                return
+            registry.set_tolerance(rule_id, value)
+        else:
+            # 存储降级 (B3-5): 覆写仍可生效, 但明示不会保存
+            registry.set_tolerance(rule_id, value)
+            self._show_toast(f"规则 {rule_id} 容差已调整，仅本次会话生效，不会被保存", "warning")
+
+    def _refresh_card_tolerances(self) -> None:
+        """持久化失败后把卡片容差输入框回显为注册表当前生效值。"""
+        registry = self._state.registry
+        if registry is None:
+            return
+        current = {rule.rule_id: rule.tolerance for rule in registry.get_all()}
+        for rule_id, card in self._rule_cards.items():
+            if rule_id in current:
+                card._tol_input.setText(str(current[rule_id]))
 
     def _on_add_rule(self) -> None:
         """打开新增规则对话框, 校验并保存自定义规则。"""

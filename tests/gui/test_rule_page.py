@@ -125,3 +125,71 @@ class TestRulePageFilter:
         qtbot.addWidget(page)
         page._on_search("测试规则")
         assert len(page._filtered_rules) == 3
+
+
+class TestRuleTogglePersistence:
+    """规则启停持久化测试 (审查报告 2026-08-16 终审 P2 补修: 此前仅改内存, 重启丢失)。"""
+
+    @staticmethod
+    def _swap_tmp_db(app_state, tmp_path) -> None:
+        """把 AppState 的持久化层替换为临时数据库 (同 test_tolerance_persistence 模式)。"""
+        from fsa.storage.database import Database
+        from fsa.storage.override_repo import RuleOverrideRepo
+
+        app_state._db.close()
+        db = Database(tmp_path / "toggle.db")
+        db.connect()
+        db.init_schema()
+        app_state._db = db
+        app_state._override_repo = RuleOverrideRepo(db)
+
+    def test_toggle_persists_to_override_repo(self, qapp, qtbot, app_state, tmp_path) -> None:
+        """禁用规则写入覆写仓库, 内存注册表同步禁用。"""
+        self._swap_tmp_db(app_state, tmp_path)
+        page = RulePage(app_state)
+        qtbot.addWidget(page)
+
+        page._on_toggle("A-001", False)
+
+        repo = app_state.override_repo
+        assert repo is not None
+        override = repo.get_all()["A-001"]
+        assert override.enabled is False
+        active_ids = {r.rule_id for r in app_state.registry.get_active()}
+        assert "A-001" not in active_ids
+
+    def test_toggle_applied_on_reload(self, qapp, qtbot, app_state, tmp_path) -> None:
+        """重启后 (_apply_overrides 回放) 禁用状态恢复。"""
+        from tests.gui.helpers import make_registry
+
+        self._swap_tmp_db(app_state, tmp_path)
+        page = RulePage(app_state)
+        qtbot.addWidget(page)
+        page._on_toggle("A-001", False)
+        page._on_toggle("B-001", False)
+
+        # 模拟重启: 全新注册表 + 回放覆写
+        app_state._registry = make_registry()
+        app_state._apply_overrides()
+
+        active_ids = {r.rule_id for r in app_state.registry.get_active()}
+        assert "A-001" not in active_ids
+        assert "B-001" not in active_ids
+        assert "C-001" in active_ids
+
+    def test_toggle_without_repo_session_only(self, qapp, qtbot, app_state) -> None:
+        """存储降级时启停仅内存生效, 并提示「仅本次会话生效」(沿用 B3-5 模式)。"""
+        app_state._override_repo = None
+        page = RulePage(app_state)
+        qtbot.addWidget(page)
+        toasts: list[tuple[str, str]] = []
+        page._show_toast = lambda message, kind: toasts.append((message, kind))
+
+        page._on_toggle("A-001", False)
+
+        active_ids = {r.rule_id for r in app_state.registry.get_active()}
+        assert "A-001" not in active_ids
+        assert toasts
+        message, kind = toasts[-1]
+        assert "仅本次会话生效" in message
+        assert kind == "warning"
