@@ -16,6 +16,13 @@ FIXTURE = (
     / "fixtures" / "real_reports" / "测试报表_含权益变动表.xlsx"
 )
 
+# 合成 fixture 已入库 (tests/fixtures/real_reports/), 正常 clone 即可运行;
+# 缺失时跳过而非报错 (运行 tests/fixtures/generate_sce_report.py 重建)
+pytestmark = pytest.mark.skipif(
+    not FIXTURE.exists(),
+    reason="SCE 测试 fixture 缺失（运行 tests/fixtures/generate_sce_report.py 重建）",
+)
+
 
 @pytest.fixture(scope="module")
 def sce_raw():

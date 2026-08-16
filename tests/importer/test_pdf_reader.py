@@ -17,6 +17,13 @@ FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "real_reports"
 THREE_REPORTS_PDF = FIXTURE_DIR / "测试报表_三大报表.pdf"
 MERGED_BS_PDF = FIXTURE_DIR / "测试报表_合并资产负债表.pdf"
 
+# 合成 fixture 已入库 (tests/fixtures/real_reports/), 正常 clone 即可运行;
+# 缺失时跳过而非报错 (运行 tests/fixtures/generate_pdf_report.py 重建)
+pytestmark = pytest.mark.skipif(
+    not (THREE_REPORTS_PDF.exists() and MERGED_BS_PDF.exists()),
+    reason="PDF 测试 fixture 缺失（运行 tests/fixtures/generate_pdf_report.py 重建）",
+)
+
 # PDF 行号编码基数 (与 src/fsa/core/importer/pdf_reader.py 保持一致, D-01)
 _PDF_ROW_BASE = 10_000_000
 

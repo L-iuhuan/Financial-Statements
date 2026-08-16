@@ -52,9 +52,13 @@ verify_*.png
 ux_*.png
 *.xlsx.tmp
 
-# 真实报表数据 (合规红线: 严禁提交 git; 目录整体忽略。
-# 注: 已入 index 的历史测试 fixture 不受 gitignore 影响, 仍保持追踪。)
-tests/fixtures/real_reports/
+# 真实报表数据 (合规红线: 严禁提交 git)。
+# 例外: 三个"测试报表_*"合成 fixture 由生成脚本产出 (不含真实公司数据),
+# 已入库以便任何环境 clone 即可全量运行测试。
+tests/fixtures/real_reports/*
+!tests/fixtures/real_reports/测试报表_三大报表.pdf
+!tests/fixtures/real_reports/测试报表_合并资产负债表.pdf
+!tests/fixtures/real_reports/测试报表_含权益变动表.xlsx
 
 # Database
 *.db

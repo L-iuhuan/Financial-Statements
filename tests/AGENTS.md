@@ -1,7 +1,7 @@
 # tests — 测试约定
 
 ## OVERVIEW
-镜像 src。日常全量 **1419 测试**（收集口径，约 35-60 秒；另有 22 个 `slow` 标记用例——`test_drawer_stress.py` 20 例 + `test_excel_reader_large.py` 2 例——默认跳过，`python -m pytest -m slow` 单独跑）。注意：依赖 `tests/fixtures/real_reports/` 的用例在 fixture 缺失时失败——真实年报已按合规红线移出 git（.gitignore 忽略该目录），依赖它的用例以 skipif 跳过；可再生文件用 `tests/fixtures/generate_*.py` 重建，真实年报需手动放置后自动启用。GUI 测试自动 offscreen（`tests/gui/conftest.py` 在 import PySide6 前设置 `QT_QPA_PLATFORM=offscreen`），无需环境变量。
+镜像 src。日常全量 **1419 测试**（收集口径，约 35-60 秒；另有 22 个 `slow` 标记用例——`test_drawer_stress.py` 20 例 + `test_excel_reader_large.py` 2 例——默认跳过，`python -m pytest -m slow` 单独跑）。注意：真实年报已按合规红线移出 git，依赖它的用例在 fixture 缺失时以 skipif 跳过；三个合成测试报表（SCE/PDF）已入库，clone 即可运行对应测试；缺失时同样跳过而非失败，可用 `tests/fixtures/generate_*.py` 重建。GUI 测试自动 offscreen（`tests/gui/conftest.py` 在 import PySide6 前设置 `QT_QPA_PLATFORM=offscreen`），无需环境变量。
 
 ## CONFTEST 两种风格（勿混用）
 
@@ -19,9 +19,9 @@
 
 ## FIXTURES 数据
 
-- `tests/fixtures/real_reports/`：真实年报数据 + 生成的 SCE/PDF 测试报表（`validate_real_data.py` 需先放好 fixtures）
-- 再生脚本：`tests/fixtures/generate_{realistic,pdf,sce}_report.py`；语料构建见 `scripts/build_real_corpus.py` + `scripts/validate_corpus.py`
-- GUI/importer 测试经 `_MOUTAI_FILE` 常量引用真实年报
+- `tests/fixtures/real_reports/`：真实年报数据（git 忽略，需手动放置）＋ 合成测试报表（**已入库**：`测试报表_三大报表.pdf`、`测试报表_合并资产负债表.pdf`、`测试报表_含权益变动表.xlsx`，clone 即可运行对应测试）
+- 合成 fixture 缺失时对应用例以 skipif 跳过（不报错），用 `tests/fixtures/generate_{realistic,pdf,sce}_report.py` 重建；语料构建见 `scripts/build_real_corpus.py` + `scripts/validate_corpus.py`
+- GUI/importer 测试经 `_MOUTAI_FILE` 常量引用真实年报（缺失时跳过）
 
 ## 规则测试双层
 
