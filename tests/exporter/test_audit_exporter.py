@@ -120,8 +120,11 @@ class TestTraceSourceRowRendering:
         """PDF 来源行号 (页码编码) 渲染为「第X页表内第N行」。"""
         trace = [
             _make_trace(
-                key="asset_total", name="资产总计", amount=100.0,
-                row=10_000_005, column="期末余额",
+                key="asset_total",
+                name="资产总计",
+                amount=100.0,
+                row=10_000_005,
+                column="期末余额",
             ),
         ]
         results = [_make_result(rule_id="BS-BAL-001", trace=trace)]
@@ -163,8 +166,11 @@ class TestTraceSourceRowRendering:
         """
         trace = [
             _make_trace(
-                key="income_tax_expense", name="income_tax_expense", amount=0.0,
-                row=0, column="未在报表中找到（按 0 处理）",
+                key="income_tax_expense",
+                name="income_tax_expense",
+                amount=0.0,
+                row=0,
+                column="未在报表中找到（按 0 处理）",
             ),
         ]
         results = [_make_result(trace=trace)]
@@ -237,7 +243,11 @@ class TestAuditExporter:
         summary = _make_summary(
             results=results,
             period="2024-03",
-            total=3, passed=1, failed=1, errored=1, skipped=0,
+            total=3,
+            passed=1,
+            failed=1,
+            errored=1,
+            skipped=0,
         )
         exporter = AuditExporter()
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
@@ -256,8 +266,10 @@ class TestAuditExporter:
                         data[key] = str(cell.value)
             # 校验计数
             values_str = " ".join(
-                str(cell) for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True)
-                for cell in row if cell is not None
+                str(cell)
+                for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True)
+                for cell in row
+                if cell is not None
             )
             assert "3" in values_str  # total
             assert "1" in values_str  # passed
@@ -338,8 +350,12 @@ class TestAuditExporter:
         """追溯 sheet 内容包含正确的科目名、金额、行列信息。"""
         trace = [
             _make_trace(
-                key="asset_total", name="资产总计", amount=1234567.89,
-                row=35, column="期末余额", side="left",
+                key="asset_total",
+                name="资产总计",
+                amount=1234567.89,
+                row=35,
+                column="期末余额",
+                side="left",
             ),
         ]
         results = [_make_result(rule_id="BS-BAL-001", rule_name="资产=负债+所有者权益", trace=trace)]
@@ -577,7 +593,11 @@ class TestAuditExporter:
         """全部通过时结论为"全部通过"。"""
         summary = _make_summary(
             results=[_make_result(passed=True)],
-            total=1, passed=1, failed=0, errored=0, skipped=0,
+            total=1,
+            passed=1,
+            failed=0,
+            errored=0,
+            skipped=0,
         )
         exporter = AuditExporter()
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
@@ -587,8 +607,10 @@ class TestAuditExporter:
             wb = load_workbook(tmp_path)
             ws = wb["校验汇总"]
             values_str = " ".join(
-                str(cell) for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True)
-                for cell in row if cell is not None
+                str(cell)
+                for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True)
+                for cell in row
+                if cell is not None
             )
             assert "全部通过" in values_str
             wb.close()
@@ -599,7 +621,11 @@ class TestAuditExporter:
         """有不通过时结论包含"不通过"。"""
         summary = _make_summary(
             results=[_make_result(passed=False, diff=5.0)],
-            total=1, passed=0, failed=1, errored=0, skipped=0,
+            total=1,
+            passed=0,
+            failed=1,
+            errored=0,
+            skipped=0,
         )
         exporter = AuditExporter()
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
@@ -609,8 +635,10 @@ class TestAuditExporter:
             wb = load_workbook(tmp_path)
             ws = wb["校验汇总"]
             values_str = " ".join(
-                str(cell) for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True)
-                for cell in row if cell is not None
+                str(cell)
+                for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True)
+                for cell in row
+                if cell is not None
             )
             assert "不通过" in values_str
             wb.close()
@@ -633,6 +661,25 @@ class TestAuditExporter:
             ws = wb["科目追溯"]
             data_rows = ws.max_row - 1
             assert data_rows == 1, f"预期 1 行追溯 (仅 R2)，实际 {data_rows} 行"
+            wb.close()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_workpaper_info_sheet_records_amount_unit_notes(self) -> None:
+        """底稿说明 sheet 写入金额单位留痕。"""
+        summary = _make_summary(results=[_make_result()])
+        summary.amount_unit_notes = ["资产负债表: 金额单位 万元，已统一换算为元"]
+
+        exporter = AuditExporter()
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            tmp_path = f.name
+        try:
+            exporter.export(summary, tmp_path)
+            wb = load_workbook(tmp_path)
+            ws = wb["底稿说明"]
+            values = [str(cell.value) for row in ws.iter_rows() for cell in row]
+            assert "金额单位留痕" in values
+            assert any("资产负债表: 金额单位 万元" in value for value in values)
             wb.close()
         finally:
             os.unlink(tmp_path)

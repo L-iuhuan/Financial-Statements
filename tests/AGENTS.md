@@ -1,7 +1,7 @@
 # tests — 测试约定
 
 ## OVERVIEW
-镜像 src。日常全量 **1156 测试**（约 80 秒；另有 20 个 `slow` 标记压测 `test_drawer_stress.py` 默认跳过，`python -m pytest -m slow` 单独跑）。注意：依赖 `tests/fixtures/real_reports/` 的用例在 fixture 缺失时失败——真实年报已按合规红线移出 git（.gitignore 忽略该目录），依赖它的用例以 skipif 跳过；可再生文件用 `tests/fixtures/generate_*.py` 重建，真实年报需手动放置后自动启用。GUI 测试自动 offscreen（`tests/gui/conftest.py` 在 import PySide6 前设置 `QT_QPA_PLATFORM=offscreen`），无需环境变量。
+镜像 src。日常全量 **1419 测试**（收集口径，约 35-60 秒；另有 22 个 `slow` 标记用例——`test_drawer_stress.py` 20 例 + `test_excel_reader_large.py` 2 例——默认跳过，`python -m pytest -m slow` 单独跑）。注意：依赖 `tests/fixtures/real_reports/` 的用例在 fixture 缺失时失败——真实年报已按合规红线移出 git（.gitignore 忽略该目录），依赖它的用例以 skipif 跳过；可再生文件用 `tests/fixtures/generate_*.py` 重建，真实年报需手动放置后自动启用。GUI 测试自动 offscreen（`tests/gui/conftest.py` 在 import PySide6 前设置 `QT_QPA_PLATFORM=offscreen`），无需环境变量。
 
 ## CONFTEST 两种风格（勿混用）
 
