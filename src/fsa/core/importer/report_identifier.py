@@ -25,7 +25,15 @@ _SHEET_NAME_PATTERNS: dict[str, ReportType] = {
     "Cash Flow": ReportType.CASH_FLOW_STATEMENT,
     "合并所有者权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
     "所有者权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
+    "合并股东权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
+    "股东权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
+    "附注": ReportType.NOTES,
+    "报表附注": ReportType.NOTES,
 }
+
+# M-a: SCE 名称匹配需排除"股东大会"等误匹配
+# "股东权益变动表" 包含"股东"但必须同时包含"权益变动"才匹配
+_SCE_FAKE_PATTERNS = frozenset({"股东大会", "股东会", "股东大会决议"})
 
 # 内容关键词 -> 报表类型（当工作表名无法识别时使用）
 _CONTENT_KEYWORDS: dict[str, ReportType] = {
@@ -76,8 +84,13 @@ def _identify_by_name(sheet_name: str) -> ReportType | None:
     Returns:
         ReportType 或 None
     """
+    sheet_lower = sheet_name.lower()
     for pattern, report_type in _SHEET_NAME_PATTERNS.items():
-        if pattern.lower() in sheet_name.lower():
+        if pattern.lower() in sheet_lower:
+            # M-a: SCE 匹配需排除"股东大会"等误匹配
+            # "股东权益变动表" 模式要求名称中必须包含"权益变动"
+            if report_type == ReportType.STATEMENT_OF_CHANGES_IN_EQUITY and "权益变动" not in sheet_name:
+                continue
             return report_type
     return None
 

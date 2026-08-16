@@ -311,6 +311,13 @@ class TestExpandedStandardNames:
         for name in names:
             assert get_key(name) is not None, f"缺少标准科目映射: {name}"
 
+    def test_new_revenue_standard_names_mapped(self) -> None:
+        """新收入准则科目：合同负债与使用权资产。"""
+        assert get_key("合同负债") == "contract_liabilities"
+        assert get_key("使用权资产") == "right_of_use_assets"
+        assert get_name("contract_liabilities") == "合同负债"
+        assert get_name("right_of_use_assets") == "使用权资产"
+
     def test_bs_total_names_mapped(self) -> None:
         assert get_key("负债和所有者权益总计") == "liability_equity_total"
 

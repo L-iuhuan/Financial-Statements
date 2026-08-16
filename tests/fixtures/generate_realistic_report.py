@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
-from openpyxl.utils import get_column_letter
 
 OUTPUT_PATH = "tests/fixtures/realistic_report.xlsx"
 

@@ -169,11 +169,15 @@ class DetailDataset:
     trial_balance: list[TrialBalanceRow] = field(default_factory=list)
     trial_balance_current: list[TrialBalanceRow] = field(default_factory=list)
     journal: list[JournalRow] = field(default_factory=list)
+    journal_current: list[JournalRow] = field(default_factory=list)
     cash_flow_detail: list[CashFlowDetailRow] = field(default_factory=list)
+    cash_flow_detail_current: list[CashFlowDetailRow] = field(default_factory=list)
     reclassifications: list[ReclassificationRow] = field(default_factory=list)
     related_party_purchases: list[RelatedPartyPurchaseRow] = field(default_factory=list)
     sales_details: list[SalesDetailRow] = field(default_factory=list)
     internal_cash_flows: list[InternalCashFlowRow] = field(default_factory=list)
+    amount_unit: str = "元"
+    unit_warnings: list[str] = field(default_factory=list)
 
     def merge(self, other: DetailDataset) -> None:
         """合并另一个数据集（多文件导入同一期间时使用）。"""
@@ -181,10 +185,15 @@ class DetailDataset:
             self.period = other.period
         if not self.source_file:
             self.source_file = other.source_file
+        if self.amount_unit == "元" and other.amount_unit != "元":
+            self.amount_unit = other.amount_unit
+        self.unit_warnings.extend(other.unit_warnings)
         self.trial_balance.extend(other.trial_balance)
         self.trial_balance_current.extend(other.trial_balance_current)
         self.journal.extend(other.journal)
+        self.journal_current.extend(other.journal_current)
         self.cash_flow_detail.extend(other.cash_flow_detail)
+        self.cash_flow_detail_current.extend(other.cash_flow_detail_current)
         self.reclassifications.extend(other.reclassifications)
         self.related_party_purchases.extend(other.related_party_purchases)
         self.sales_details.extend(other.sales_details)
@@ -198,7 +207,9 @@ class DetailDataset:
                 self.trial_balance,
                 self.trial_balance_current,
                 self.journal,
+                self.journal_current,
                 self.cash_flow_detail,
+                self.cash_flow_detail_current,
                 self.reclassifications,
                 self.related_party_purchases,
                 self.sales_details,

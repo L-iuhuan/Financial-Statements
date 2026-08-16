@@ -19,13 +19,20 @@ from fsa.core.models.rule import Severity
 from fsa.services.entity_config import EntityConfig
 from fsa.services.package_service import PackageValidationService, merge_summaries
 
-_SUPPORTED_SUFFIXES = (".xlsx", ".xls", ".pdf")
+_SUPPORTED_SUFFIXES = (".xlsx", ".xls", ".xlsm", ".csv", ".pdf")
 
-# 内部现金流双边核对: 一方的流入项目 ↔ 对方相应的流出项目
-_BILATERAL_PAIRS: dict[str, str] = {
-    "收到的其他与经营活动的现金": "支付的其他与经营活动的现金",
+# 内部现金流双边核对: 一方的流入项目 ↔ 对方相应的流出项目（缺省配置，可经
+# entity_config.bilateral_pairs 覆写）。命名与 detail_checks.CF_PROJECT_ALIASES
+# 内部项目命名一致（"收到的…/支付的…"），保证与明细行项目名精确匹配。
+DEFAULT_BILATERAL_PAIRS: dict[str, str] = {
     "销售商品、提供劳务收到的现金": "购买商品、接受劳务支付的现金",
+    "收到的其他与经营活动的现金": "支付的其他与经营活动的现金",
+    # 对应主表项目「收到/支付其他与投资活动有关的现金」
+    "收到的其他与投资活动的现金": "支付的其他与投资活动的现金",
+    # 对应主表项目「收到/支付其他与筹资活动有关的现金」
+    "收到的其他与筹资活动的现金": "支付的其他与筹资活动的现金",
 }
+DEFAULT_BILATERAL_TOLERANCE: float = 0.01
 
 
 @dataclass
@@ -102,10 +109,12 @@ class MultiEntityService:
         reports = list(reports_by_type.values())
         config = self._configs.get(entity)
         detail_config = config.to_detail_config() if config is not None else None
+        # 按主体行业注入 LR-* 阈值; 无配置时 None -> runner 回落 general 默认阈值
+        threshold_vars = config.threshold_vars() if config is not None else None
         try:
             summary = PackageValidationService(
                 self._registry, detail_config
-            ).validate(reports, dataset, period)
+            ).validate(reports, dataset, period, threshold_vars)
         except (FSAError, ValueError, KeyError, TypeError) as error:
             logger.error(f"主体「{entity}」校验失败: {error}")
             summary = None
@@ -127,21 +136,31 @@ class MultiEntityService:
         errors: list[str],
         period: str,
     ) -> None:
-        """导入单个文件：主表去重、明细合并，失败只记录不中断。"""
+        """导入单个文件：主表去重、明细合并，失败只记录不中断。
+
+        先导入主表，主表成功后才尝试明细导入（避免对既非主表也非明细的
+        文件产生两条重复错误）；明细导入失败仅记录调试日志，因为该文件
+        可能就是纯主表文件，明细导入失败属预期路径。
+        """
         try:
             reports = ImportService(period).import_file(str(path))
-            for report in reports:
-                if report.report_type not in reports_by_type:
-                    reports_by_type[report.report_type] = report
         except (FileNotFoundError, FSAError, ValueError, OSError, ImportError) as error:
             errors.append(f"{path.name}: {error}")
+            return
+        for report in reports:
+            if report.report_type not in reports_by_type:
+                reports_by_type[report.report_type] = report
         try:
             dataset.merge(DetailImporter(period).import_file(str(path)))
         except (FileNotFoundError, FSAError, ValueError, OSError, ImportError) as error:
-            errors.append(f"{path.name}: {error}")
+            logger.debug(f"「{path.name}」明细导入失败，可能为纯主表文件: {error}")
 
     def check_bilateral(self, outcomes: list[EntityOutcome]) -> list[ValidationResult]:
-        """按主体名核对内部交易现金流双边金额（流入方 vs 流出方）。"""
+        """按主体名核对内部交易现金流双边金额（流入方 vs 流出方）。
+
+        科目对与容差按"流出方主体"的配置解析（其自定义 -> 全局首个自定义 ->
+        默认值），避免第一个主体的配置被误用到所有主体对（口径隔离）。
+        """
         datasets = {
             outcome.entity_id: outcome.dataset for outcome in outcomes
         }
@@ -151,7 +170,8 @@ class MultiEntityService:
             for right_idx in range(left_idx + 1, len(entities)):
                 left = entities[left_idx]
                 right = entities[right_idx]
-                for inflow_project, outflow_project in _BILATERAL_PAIRS.items():
+                pairs, tolerance = self._bilateral_settings_for(left)
+                for inflow_project, outflow_project in pairs.items():
                     results.extend(
                         self._pair_results(
                             datasets[left],
@@ -160,9 +180,34 @@ class MultiEntityService:
                             right,
                             inflow_project,
                             outflow_project,
+                            tolerance,
                         )
                     )
         return results
+
+    def _bilateral_settings_for(self, entity_id: str) -> tuple[dict[str, str], float]:
+        """按主体解析双边核对配置：该主体自定义 -> 全局兜底。"""
+        own = self._configs.get(entity_id)
+        if own is not None and (own.bilateral_pairs or own.bilateral_tolerance is not None):
+            return (
+                own.bilateral_pairs or DEFAULT_BILATERAL_PAIRS,
+                own.bilateral_tolerance
+                if own.bilateral_tolerance is not None
+                else DEFAULT_BILATERAL_TOLERANCE,
+            )
+        return self._bilateral_settings()
+
+    def _bilateral_settings(self) -> tuple[dict[str, str], float]:
+        """集团双边核对的全局兜底配置：首个自定义主体配置，否则默认值。"""
+        for config in self._configs.values():
+            pairs = config.bilateral_pairs or DEFAULT_BILATERAL_PAIRS
+            tolerance = (
+                config.bilateral_tolerance
+                if config.bilateral_tolerance is not None
+                else DEFAULT_BILATERAL_TOLERANCE
+            )
+            return pairs, tolerance
+        return DEFAULT_BILATERAL_PAIRS, DEFAULT_BILATERAL_TOLERANCE
 
     @staticmethod
     def _pair_results(
@@ -172,6 +217,7 @@ class MultiEntityService:
         right_name: str,
         inflow_project: str,
         outflow_project: str,
+        tolerance: float,
     ) -> list[ValidationResult]:
         """生成一对主体的双向核对结果（跳过双方均为零的组合）。"""
         left_in = MultiEntityService._sum_flows(left_data, right_name, inflow_project)
@@ -184,14 +230,14 @@ class MultiEntityService:
             results.append(
                 MultiEntityService._build_pair_result(
                     left_name, right_name, inflow_project, outflow_project,
-                    left_in, right_out,
+                    left_in, right_out, tolerance,
                 )
             )
         if right_in or left_out:
             results.append(
                 MultiEntityService._build_pair_result(
                     right_name, left_name, inflow_project, outflow_project,
-                    right_in, left_out,
+                    right_in, left_out, tolerance,
                 )
             )
         return results
@@ -204,10 +250,11 @@ class MultiEntityService:
         outflow_project: str,
         inflow: float,
         outflow: float,
+        tolerance: float,
     ) -> ValidationResult:
         """构建单方向的双边核对结果。"""
         diff = inflow - outflow
-        passed = abs(diff) <= 0.01
+        passed = abs(diff) <= tolerance
         return ValidationResult(
             rule_id="ICF-002",
             rule_name="内部现金流双边核对",
@@ -216,7 +263,7 @@ class MultiEntityService:
             left_value=inflow,
             right_value=outflow,
             diff=diff,
-            tolerance=0.01,
+            tolerance=tolerance,
             formula="内部流入金额 == 对方内部流出金额",
             message=(
                 f"「{entity}」对「{counterparty}」「{inflow_project}」"

@@ -1,10 +1,10 @@
-"""规则库 v1.1.0 完整性测试。
+"""规则库 v1.3.0 完整性测试。
 
 验证:
 (a) 每条规则公式可解析 (== 拆分 或 布尔求值)
     - 合同内变量: 必须能求值
     - 合同外变量 (SCE/NOTES/IS-TAX): 允许 NameNotDefined
-(b) 恰好 37 条规则
+(b) 恰好 42 条规则
 (c) 无重复公式
 (d) 所有比率规则含除零保护
 """
@@ -15,8 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from fsa.core.engine.rule_loader import load_rules_from_json
 from fsa.core.engine.evaluator import ExpressionEvaluator
+from fsa.core.engine.rule_loader import load_rules_from_json
+from fsa.core.engine.thresholds import DEFAULT_THRESHOLDS
 from fsa.core.exceptions import EvaluationError, FormulaParseError
 from fsa.core.models.result import KNOWN_LINE_ITEM_KEYS
 
@@ -80,6 +81,8 @@ def _build_namespace() -> dict[str, float]:
         ns[k] = 1.0
     for k in _NEW_KEYS:
         ns[k] = 1.0
+    for k in DEFAULT_THRESHOLDS:
+        ns[k] = DEFAULT_THRESHOLDS[k]
     return ns
 
 
@@ -91,6 +94,10 @@ _SCE_WHITELIST: frozenset[str] = frozenset({
     "sce_other_comprehensive_comprehensive",
     "sce_equity_total_comprehensive",
     "sce_paid_in_capital_ending",
+    "sce_capital_reserve_ending",
+    "sce_surplus_reserve_ending",
+    "sce_undistributed_profit_ending",
+    "sce_equity_total_ending",
     "sce_other_comprehensive",
     "sce_total_comprehensive",
     "sce_paid_in_capital",
@@ -101,6 +108,9 @@ _SCE_WHITELIST: frozenset[str] = frozenset({
     "beginning",
     "total_changes",
     "parent_equity",
+    # 派生变量 (runner 执行期注入: 归母净利润 = 归母行 or 净利润),
+    # 静态合同命名空间中不存在, 允许 NameNotDefined
+    "net_profit_attributable",
 })
 
 # NOTES/附注变量 (不在 MVP 范围内)
@@ -148,10 +158,10 @@ _RATIO_RULE_IDS: frozenset[str] = frozenset({
 class TestRuleCount:
     """规则数量验证。"""
 
-    def test_exactly_39_rules(self) -> None:
-        """规则库应恰好包含 39 条规则。"""
+    def test_exactly_42_rules(self) -> None:
+        """规则库应恰好包含 42 条规则。"""
         rules = load_rules_from_json(RULE_LIBRARY)
-        assert len(rules) == 37, f"预期 37 条规则, 实际 {len(rules)} 条"
+        assert len(rules) == 42, f"预期 42 条规则, 实际 {len(rules)} 条"
 
 
 class TestNoDuplicateFormulas:
@@ -160,7 +170,6 @@ class TestNoDuplicateFormulas:
     def test_no_duplicate_formulas(self) -> None:
         """剩余规则中不应有重复公式。"""
         rules = load_rules_from_json(RULE_LIBRARY)
-        formulas: list[str] = [r.formula for r in rules]
         seen: dict[str, str] = {}
         for r in rules:
             if r.formula in seen:
@@ -224,7 +233,8 @@ class TestFormulaParsability:
         sce_notes_ids = {
             "SCE-BAL-001", "SCE-BAL-002",
             "SCE-IS-001", "SCE-IS-002", "SCE-IS-003",
-            "SCE-BS-001",
+            "SCE-BS-001", "SCE-BS-002", "SCE-BS-003",
+            "SCE-BS-004", "SCE-BS-005",
             "NOTES-001", "NOTES-002",
             "IS-TAX-001",
         }
@@ -309,11 +319,11 @@ class TestDeletedRules:
 class TestVersion:
     """版本信息验证。"""
 
-    def test_version_is_1_2_0(self) -> None:
-        """规则库版本应为 1.2.0。"""
+    def test_version_is_1_3_0(self) -> None:
+        """规则库版本应为 1.3.0。"""
         import json
         data = json.loads(RULE_LIBRARY.read_text(encoding="utf-8"))
-        assert data["ruleLibrary"]["version"] == "1.2.0"
+        assert data["ruleLibrary"]["version"] == "1.3.0"
 
     def test_changelog_exists(self) -> None:
         """规则库应包含 changelog 字段。"""

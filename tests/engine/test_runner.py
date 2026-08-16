@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from fsa.core.engine.runner import RuleRunner
+from fsa.core.models.report import Report, ReportItem, ReportType
+from fsa.core.models.result import ValidationContext
 from fsa.core.models.rule import ReconciliationRule, Severity, ToleranceType
 from tests.conftest import make_context, make_rule_bs_bal_001
 
@@ -161,3 +163,144 @@ class TestRuleRunner:
         keys = {t.key for t in result.trace}
         assert "asset_total" in keys
         assert "liability_total" in keys
+
+    def test_missing_known_item_trace_has_chinese_annotation(self) -> None:
+        """KNOWN_LINE_ITEM_KEYS 预填充 0 的变量: trace column 标注中文说明。"""
+        rule = ReconciliationRule(
+            rule_id="TEST-MISS-001",
+            name="缺失科目按 0 处理",
+            category="A-表内平衡",
+            statements=["资产负债表"],
+            formula="asset_total == monetary_funds + liability_total",
+            tolerance_type=ToleranceType.EXACT,
+            tolerance=0.01,
+            severity=Severity.WARNING,
+        )
+        ctx = make_context(asset_total=100.0, liability_total=60.0, equity_total=40.0)
+        result = RuleRunner.run(rule, ctx)
+        missing = [t for t in result.trace if t.key == "monetary_funds"]
+        assert len(missing) == 1
+        assert missing[0].row == 0
+        assert missing[0].column == "未在报表中找到（按 0 处理）"
+        assert missing[0].amount == 0.0
+
+    def test_trace_with_sce_suffixed_key_uses_whole_key_first(self) -> None:
+        """SCE 变量如 sce_paid_in_capital_ending 本身以 _ending 结尾:
+        trace 应先尝试完整 key 查找，而非剥离 _ending 后查找 sce_paid_in_capital 导致 miss。"""
+
+        rule = ReconciliationRule(
+            rule_id="TEST-SCE-001",
+            name="权益变动表勾稽",
+            category="B-表间勾稽",
+            statements=["所有者权益变动表", "资产负债表"],
+            formula="sce_paid_in_capital_ending == paid_in_capital",
+            tolerance_type=ToleranceType.EXACT,
+            tolerance=0.01,
+            severity=Severity.ERROR,
+        )
+        sce = Report(
+            report_type=ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
+            period="2024-12",
+            items=[
+                ReportItem(
+                    key="sce_paid_in_capital_ending",
+                    name="实收资本",
+                    amount=100.0,
+                    row=5,
+                    column="实收资本",
+                )
+            ],
+        )
+        bs = Report(
+            report_type=ReportType.BALANCE_SHEET,
+            period="2024-12",
+            items=[
+                ReportItem(
+                    key="paid_in_capital",
+                    name="实收资本",
+                    amount=100.0,
+                    row=10,
+                    column="期末余额",
+                )
+            ],
+        )
+        ctx = ValidationContext(period="2024-12")
+        ctx.add_report(sce)
+        ctx.add_report(bs)
+        result = RuleRunner.run(rule, ctx)
+        sce_trace = [t for t in result.trace if t.key == "sce_paid_in_capital_ending"]
+        assert len(sce_trace) == 1
+        assert sce_trace[0].amount == 100.0
+        assert sce_trace[0].name == "实收资本"
+        # 不应出现"按 0 处理"的标注
+        assert "按 0 处理" not in sce_trace[0].column
+
+    def test_trace_beginning_var_uses_beginning_column(self) -> None:
+        """_beginning 变量 trace: 列归属期初列 (beginning_column), 而非期末列。"""
+        rule = ReconciliationRule(
+            rule_id="TEST-BEG-001",
+            name="期初勾稽",
+            category="A-表内平衡",
+            statements=["资产负债表"],
+            formula="monetary_funds == monetary_funds_beginning + 10",
+            tolerance_type=ToleranceType.EXACT,
+            tolerance=0.01,
+            severity=Severity.ERROR,
+        )
+        bs = Report(
+            report_type=ReportType.BALANCE_SHEET,
+            period="2024-12",
+            items=[
+                ReportItem(
+                    key="monetary_funds",
+                    name="货币资金",
+                    amount=100.0,
+                    beginning_amount=90.0,
+                    row=3,
+                    column="期末余额",
+                    beginning_column="年初余额",
+                )
+            ],
+        )
+        ctx = ValidationContext(period="2024-12")
+        ctx.add_report(bs)
+        result = RuleRunner.run(rule, ctx)
+        assert result.passed is True
+        beg_trace = [t for t in result.trace if t.key == "monetary_funds_beginning"]
+        assert len(beg_trace) == 1
+        assert beg_trace[0].amount == 90.0
+        assert beg_trace[0].column == "年初余额"
+
+    def test_trace_beginning_var_falls_back_to_column(self) -> None:
+        """_beginning 变量 trace: beginning_column 为空时回退到期末列名。"""
+        rule = ReconciliationRule(
+            rule_id="TEST-BEG-002",
+            name="期初勾稽",
+            category="A-表内平衡",
+            statements=["资产负债表"],
+            formula="monetary_funds == monetary_funds_beginning + 10",
+            tolerance_type=ToleranceType.EXACT,
+            tolerance=0.01,
+            severity=Severity.ERROR,
+        )
+        bs = Report(
+            report_type=ReportType.BALANCE_SHEET,
+            period="2024-12",
+            items=[
+                ReportItem(
+                    key="monetary_funds",
+                    name="货币资金",
+                    amount=100.0,
+                    beginning_amount=90.0,
+                    row=3,
+                    column="期末余额",
+                )
+            ],
+        )
+        ctx = ValidationContext(period="2024-12")
+        ctx.add_report(bs)
+        result = RuleRunner.run(rule, ctx)
+        beg_trace = [t for t in result.trace if t.key == "monetary_funds_beginning"]
+        assert len(beg_trace) == 1
+        assert beg_trace[0].amount == 90.0
+        assert beg_trace[0].column == "期末余额"

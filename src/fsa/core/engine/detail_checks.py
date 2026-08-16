@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import cast
 
@@ -60,9 +61,9 @@ def check_journal_voucher_balance(
             rule_name="序时账逐凭证借贷平衡",
             passed=passed,
             severity=Severity.ERROR,
-            left_value=sum(debit.values()),
-            right_value=sum(credit.values()),
-            diff=sum(debit.values()) - sum(credit.values()),
+            left_value=math.fsum(debit.values()),
+            right_value=math.fsum(credit.values()),
+            diff=math.fsum(debit.values()) - math.fsum(credit.values()),
             tolerance=tolerance,
             formula="借方合计 == 贷方合计（按凭证）",
             message=message,
@@ -99,19 +100,21 @@ def check_cash_flow_detail_vs_statement(
         amount = inflow[key] if inflow[key] > 0 else outflow[key]
         statement_amount = statement.get(alias)
         if statement_amount is None:
+            # P1: 明细项目在主表无对应行通常是科目映射缺口, 降级为跳过+提示,
+            # 不作为异常/不通过 (宁可漏报不可误报)
             results.append(
                 ValidationResult(
                     rule_id="CF-DTL-001",
                     rule_name="现金流量明细=现金流量表",
-                    passed=False,
+                    passed=True,
                     severity=Severity.WARNING,
                     left_value=amount,
                     right_value=0.0,
                     diff=amount,
                     tolerance=tolerance,
                     formula="明细项目合计 == 主表项目",
-                    message=f"现金流量明细项目「{key}」未在主表中找到对应项目",
-                    errored=True,
+                    message=f"现金流量明细项目「{key}」未在主表中找到对应项目, 已跳过核对该项",
+                    skipped=True,
                     category="L2-明细勾稽",
                 )
             )
@@ -123,7 +126,7 @@ def check_cash_flow_detail_vs_statement(
                 rule_id="CF-DTL-001",
                 rule_name="现金流量明细=现金流量表",
                 passed=passed,
-                severity=Severity.ERROR if not passed else Severity.ERROR,
+                severity=Severity.ERROR,
                 left_value=amount,
                 right_value=statement_amount,
                 diff=diff,
@@ -153,11 +156,13 @@ def check_cash_flow_detail_vs_journal(
         detail_net[row.voucher_no] += sign * row.amount
 
     journal_net: dict[str, float] = defaultdict(float)
-    for row in dataset.journal:
-        if not any(row.account_code.startswith(code) for code in cash_equivalent_codes):
+    for journal_row in dataset.journal:
+        if not any(
+            journal_row.account_code.startswith(code) for code in cash_equivalent_codes
+        ):
             continue
-        sign = 1.0 if row.direction == "借" else -1.0
-        journal_net[row.voucher_no] += sign * row.amount
+        sign = 1.0 if journal_row.direction == "借" else -1.0
+        journal_net[journal_row.voucher_no] += sign * journal_row.amount
 
     mismatches = [
         (voucher, detail_net[voucher] - journal_net[voucher])
@@ -180,9 +185,9 @@ def check_cash_flow_detail_vs_journal(
             rule_name="现金流明细=序时账现金科目",
             passed=passed,
             severity=Severity.WARNING,
-            left_value=sum(detail_net.values()),
-            right_value=sum(journal_net.values()),
-            diff=sum(detail_net.values()) - sum(journal_net.values()),
+            left_value=math.fsum(detail_net.values()),
+            right_value=math.fsum(journal_net.values()),
+            diff=math.fsum(detail_net.values()) - math.fsum(journal_net.values()),
             tolerance=tolerance,
             formula="明细金额 == 现金等价物科目净变动（按凭证）",
             message=message,
@@ -221,7 +226,7 @@ def check_trial_balance_vs_balance_sheet(
                 rule_id="TB-BS-001",
                 rule_name="余额表=资产负债表",
                 passed=passed,
-                severity=Severity.ERROR if not passed else Severity.ERROR,
+                severity=Severity.ERROR,
                 left_value=expected,
                 right_value=actual,
                 diff=diff,
@@ -240,10 +245,26 @@ def check_trial_balance_vs_balance_sheet(
 def _sum_trial_balance(
     dataset: DetailDataset, codes: tuple[str, ...], side: str
 ) -> float:
-    """汇总余额表指定顶层科目期末余额（精确编码匹配，避免层级重复加总）。"""
+    """汇总余额表指定科目期末余额（前缀匹配 + 父级排除）。
+
+    匹配规则：科目编码以任一映射编码开头即纳入，与序时账侧
+    check_cash_flow_detail_vs_journal 的 startswith 口径（:160-161）一致。
+    再排除「其编码是另一匹配行编码的真前缀」的父级行——余额表若一级
+    科目与末级科目混列，一级行金额已含末级明细，不排除会重复加总。
+    """
+    matched = [
+        row
+        for row in dataset.trial_balance
+        if any(row.account_code.startswith(c) for c in codes)
+    ]
+    matched_codes = [row.account_code for row in matched]
     total = 0.0
-    for row in dataset.trial_balance:
-        if row.account_code not in codes:
+    for row in matched:
+        # 父级排除：存在另一匹配行的编码以本行编码为真前缀时，本行为父级，跳过
+        if any(
+            other != row.account_code and other.startswith(row.account_code)
+            for other in matched_codes
+        ):
             continue
         if side == "credit":
             total += row.ending_credit - row.ending_debit

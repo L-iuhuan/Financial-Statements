@@ -2,50 +2,48 @@
 
 匹配 Demo v4 设计:
 - 左侧 4px 拖拽手柄 (min 280px, max 600px, default 380px)
+- 与主内容区的层次边界: theme.py QSS `QFrame#AgentDrawer` 的 1px
+  border-left (border_strong 令牌, 随主题切换), 不用重阴影
 - 会话选择器 (QMenu 下拉切换/新建)
 - 消息时间戳
 - 快速建议气泡
 - 图标式头部按钮 (28x28 bordered)
+
+消息/建议气泡渲染在 agent_messages.py (AgentMessageMixin),
+会话管理与持久化在 agent_sessions.py (AgentSessionMixin)。
 """
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime
-
-from loguru import logger
-from PySide6.QtCore import QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from fsa.gui.theme import register_theme_listener
+from fsa.gui.theme import bind_theme_listener, current_palette
+from fsa.gui.widgets.agent_messages import AgentMessageMixin
+from fsa.gui.widgets.agent_sessions import AgentSessionMixin
 from fsa.storage.chat_repo import ChatRepo
 
-_SUGGESTIONS: list[str] = [
-    "什么是勾稽关系",
-    "BS-BAL-001 规则",
-    "差额超容差怎么办",
-]
 
-
-class AgentDrawer(QFrame):
-    """AI 助手抽屉面板。"""
+class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
+    """AI 助手抽屉面板 (继承两 mixin, QFrame 由 mixin 提供)。"""
 
     close_requested = Signal()
     send_requested = Signal(str)
     context_cleared = Signal()
+    typing_changed = Signal(str)
+    # P1 取消机制: 忙碌条"■ 停止"按钮触发, main_window_agent 经 getattr 防御接线
+    cancelRequested = Signal()
 
+    # 最小宽度与 docstring / DESIGN_SYSTEM §15.1 对齐 (280px)
     MIN_WIDTH = 280
     MAX_WIDTH = 600
     DEFAULT_WIDTH = 380
@@ -57,14 +55,20 @@ class AgentDrawer(QFrame):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("AgentDrawer")
-        self.setFixedWidth(self.DEFAULT_WIDTH)
+        self.setMinimumWidth(self.MIN_WIDTH)
+        self.setMaximumWidth(self.MAX_WIDTH)
+        self.resize(self.DEFAULT_WIDTH, 600)
         self._dragging = False
         self._chat_repo = chat_repo
         self._session_id: int | None = None
         self._context_rule_id: str | None = None
+        self._messages_loaded = False
+        self._theme_dirty = False
         self._setup_ui()
+        self._apply_shell_styles()
         self._load_sessions_if_available()
-        register_theme_listener(self._on_theme_changed)
+        # 注册主题监听并在控件销毁时注销, 防止死监听器累积泄漏
+        bind_theme_listener(self, self._on_theme_changed)
 
     # ── UI 构建 ──
 
@@ -94,11 +98,23 @@ class AgentDrawer(QFrame):
         self._setup_dragging()
 
     def _build_header(self) -> QFrame:
-        header = QFrame()
-        header.setFixedHeight(48)
-        h = QHBoxLayout(header)
+        self._header = QFrame()
+        self._header.setObjectName("AgentDrawerHeader")
+        self._header.setFixedHeight(48)
+        h = QHBoxLayout(self._header)
         h.setContentsMargins(16, 0, 12, 0)
         h.setSpacing(8)
+
+        # 左侧 16px 圆形图标占位 (主色圆底白图标, 样式在 _apply_shell_styles)
+        self._header_icon = QLabel()
+        self._header_icon.setFixedSize(16, 16)
+        self._header_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        from PySide6.QtGui import QColor
+        from qfluentwidgets import FluentIcon
+        self._header_icon.setPixmap(
+            FluentIcon.CHAT.icon(color=QColor("#ffffff")).pixmap(10, 10)
+        )
+        h.addWidget(self._header_icon)
 
         title = QLabel("AI 诊断助手")
         title.setObjectName("AgentDrawerTitle")
@@ -113,10 +129,10 @@ class AgentDrawer(QFrame):
 
         h.addStretch()
 
-        # 清空当前会话按钮 (垃圾桶图标)
+        # 清空当前会话按钮 (垃圾桶图标); qicon() 随主题自动重绘
         from qfluentwidgets import FluentIcon
         clear_btn = QPushButton()
-        clear_btn.setIcon(FluentIcon.DELETE.icon())
+        clear_btn.setIcon(FluentIcon.DELETE.qicon())
         clear_btn.setFixedSize(28, 28)
         clear_btn.setToolTip("清空当前会话")
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -124,16 +140,16 @@ class AgentDrawer(QFrame):
         clear_btn.clicked.connect(self._clear_current_session)
         h.addWidget(clear_btn)
 
-        # 关闭按钮 (X 图标)
+        # 关闭按钮 (X 图标); qicon() 随主题自动重绘
         close_btn = QPushButton()
-        close_btn.setIcon(FluentIcon.CLOSE.icon())
+        close_btn.setIcon(FluentIcon.CLOSE.qicon())
         close_btn.setFixedSize(28, 28)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setObjectName("AgentHeaderBtn")
         close_btn.clicked.connect(self.close_requested.emit)
         h.addWidget(close_btn)
 
-        return header
+        return self._header
 
     def _build_context_bar(self) -> QFrame:
         self._context_bar = QFrame()
@@ -142,7 +158,13 @@ class AgentDrawer(QFrame):
         self._context_bar.setFixedHeight(36)
 
         ctx = QHBoxLayout(self._context_bar)
-        ctx.setContentsMargins(16, 0, 12, 0)
+        ctx.setContentsMargins(16, 6, 12, 6)
+        ctx.setSpacing(6)
+
+        # 左侧 6px 主色圆点 (chip 标识)
+        self._context_dot = QLabel()
+        self._context_dot.setFixedSize(6, 6)
+        ctx.addWidget(self._context_dot)
 
         self._context_label = QLabel("")
         self._context_label.setObjectName("AgentContextLabel")
@@ -151,7 +173,7 @@ class AgentDrawer(QFrame):
 
         from qfluentwidgets import FluentIcon
         clear_btn = QPushButton()
-        clear_btn.setIcon(FluentIcon.CLOSE.icon())
+        clear_btn.setIcon(FluentIcon.CLOSE.qicon())
         clear_btn.setFixedSize(20, 20)
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_btn.setObjectName("AgentClearBtn")
@@ -165,90 +187,56 @@ class AgentDrawer(QFrame):
         """当前诊断上下文对应的规则 ID，无上下文时返回 None。"""
         return self._context_rule_id
 
-    def _build_messages(self) -> QScrollArea:
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._rebuild_messages([])
-        return self._scroll
-
-    def _rebuild_messages(self, messages: list[dict]) -> None:
-        """重建消息区域 (初始化/切换会话时调用)。"""
-        old = self._scroll.widget()
-        if old is not None:
-            # 先隐藏再删除, 避免脱离 scroll 视口后闪现为独立窗口
-            old.hide()
-            old.deleteLater()
-
-        container = QWidget()
-        self._messages_layout = QVBoxLayout(container)
-        self._messages_layout.setContentsMargins(16, 12, 16, 12)
-        self._messages_layout.setSpacing(8)
-
-        if not messages:
-            self._add_message(
-                "assistant",
-                "您好！我是 AI 诊断助手。您可以点击校验结果中的"
-                "「AI 诊断」按钮，我会针对具体规则进行分析。"
-                "也可以直接向我提问关于财务勾稽、规则逻辑等任何问题。",
-            )
-        else:
-            for msg in messages:
-                self._add_message(
-                    msg["role"],
-                    msg["content"],
-                    msg.get("created_at", ""),
-                )
-
-        self._messages_layout.addStretch()
-        self._scroll.setWidget(container)
-
-    def _build_suggestions(self) -> QFrame:
-        self._suggestions_frame = QFrame()
-        self._suggestions_layout = QHBoxLayout(self._suggestions_frame)
-        self._suggestions_layout.setContentsMargins(16, 0, 16, 8)
-        self._suggestions_layout.setSpacing(6)
-        self._render_suggestions(_SUGGESTIONS)
-        return self._suggestions_frame
-
-    def _render_suggestions(self, suggestions: list[str]) -> None:
-        """渲染建议气泡 (清空旧的并重建)。"""
-        # 清空旧气泡
-        while self._suggestions_layout.count():
-            item = self._suggestions_layout.takeAt(0)
-            if item is None:
-                continue
-            widget = item.widget()
-            if widget is not None:
-                widget.hide()
-                widget.deleteLater()
-
-        for text in suggestions:
-            btn = QPushButton(text)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setObjectName("AgentSuggestion")
-            # 按内容自适应宽度, 避免文字截断; 设置最小高度保证可点
-            btn.setMinimumHeight(26)
-            btn.setSizePolicy(
-                QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
-            )
-            btn.clicked.connect(
-                lambda checked=False, t=text: self._quick_ask(t)
-            )
-            self._suggestions_layout.addWidget(btn)
-        self._suggestions_layout.addStretch()
-
-    def set_suggestions(self, suggestions: list[str]) -> None:
-        """动态更新建议气泡内容 (根据上下文智能推荐)。"""
-        if not hasattr(self, "_suggestions_layout"):
-            return
-        self._render_suggestions(suggestions)
-
     def _build_input_area(self) -> QFrame:
         area = QFrame()
         a = QVBoxLayout(area)
         a.setContentsMargins(16, 8, 16, 12)
         a.setSpacing(8)
+
+        # ── 忙碌条 (LLM 后台任务期间显示): 文案 + 动画 + "■ 停止" ──
+        self._busy_bar = QFrame()
+        self._busy_bar.setObjectName("AgentBusyBar")
+        self._busy_bar.setStyleSheet(
+            "QFrame#AgentBusyBar { background: rgba(128,128,128,0.10); border-radius: 8px; }"
+        )
+        self._busy_bar.setVisible(False)
+        bar_row = QHBoxLayout(self._busy_bar)
+        bar_row.setContentsMargins(10, 4, 10, 4)
+        bar_row.setSpacing(8)
+
+        self._busy_label = QLabel("AI 正在分析")
+        self._busy_label.setObjectName("AgentBusyLabel")
+        self._busy_label.setStyleSheet("QLabel#AgentBusyLabel { font-size: 12px; }")
+        bar_row.addWidget(self._busy_label)
+        bar_row.addStretch()
+
+        self._busy_stop_btn = QPushButton("■ 停止")
+        self._busy_stop_btn.setObjectName("AgentBusyStopBtn")
+        self._busy_stop_btn.setToolTip("停止生成")
+        self._busy_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._busy_stop_btn.setFixedHeight(24)
+        # 红弱色描边 (半透明红, 明暗主题均可读)
+        self._busy_stop_btn.setStyleSheet(
+            "QPushButton#AgentBusyStopBtn {"
+            "  color: rgba(239,68,68,0.95); border: 1px solid rgba(239,68,68,0.45);"
+            "  border-radius: 4px; background: transparent; font-size: 12px; padding: 0 8px; }"
+            "QPushButton#AgentBusyStopBtn:hover { background: rgba(239,68,68,0.12); }"
+        )
+        self._busy_stop_btn.clicked.connect(self.cancelRequested.emit)
+        bar_row.addWidget(self._busy_stop_btn)
+
+        # 动画: 400ms 轮换 "·/··/···" 后缀
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setInterval(400)
+        self._busy_timer.timeout.connect(self._on_busy_tick)
+        self._busy_base_text = "AI 正在分析"
+        self._busy_dot_count = 0
+        self._busy_active = False
+
+        # 兼容别名: 既有测试经 _busy_hint 检查忙碌显隐
+        self._busy_hint = self._busy_bar
+
+        a.addWidget(self._busy_bar)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -256,9 +244,13 @@ class AgentDrawer(QFrame):
         self._input = QPlainTextEdit()
         self._input.setObjectName("AgentInput")
         self._input.setPlaceholderText("输入您的问题...")
+        # 视觉内边距用文档边距实现 (与 AI 气泡同法)。
+        # QSS padding 会压缩 QPlainTextEdit 的视口高度, 空文本也出现滚动条;
+        # 文档边距不影响视口, 空态/单行时无滚动条。
+        self._input.document().setDocumentMargin(8)
         # 初始高度 36, 文字增多时自动增高 (上限 120px)
         self._input.setFixedHeight(36)
-        self._input.textChanged.connect(self._auto_resize_input)
+        self._input.textChanged.connect(self._on_input_text_changed)
         self._input.keyPressEvent = self._on_key_press  # type: ignore[method-assign]
         row.addWidget(self._input, stretch=1)
 
@@ -271,18 +263,40 @@ class AgentDrawer(QFrame):
         row.addWidget(send_btn)
 
         a.addLayout(row)
+
+        # ── 免责底栏 (持久显示, 半透明灰两种主题均可读) ──
+        self._disclaimer_label = QLabel(
+            "AI 输出仅供参考 · 不构成审计意见 · 请以规则引擎与人工复核为准"
+        )
+        self._disclaimer_label.setObjectName("AgentDisclaimerLabel")
+        self._disclaimer_label.setWordWrap(True)  # 280px 窄窗允许两行
+        self._disclaimer_label.setStyleSheet(
+            "QLabel#AgentDisclaimerLabel { font-size: 10px; color: rgba(136,136,136,0.85); }"
+        )
+        a.addWidget(self._disclaimer_label)
+
         return area
+
+    def _on_input_text_changed(self) -> None:
+        """输入变化时自动调整高度, 并通知宿主做智能问题预览。"""
+        self._auto_resize_input()
+        self.typing_changed.emit(self._input.toPlainText())
 
     def _auto_resize_input(self) -> None:
         """根据输入内容自动调整输入框高度 (36px 起步, 上限 120px)。
 
         逐块计算可视行数: 硬换行 (blockCount) + 超长行的自动换行 (按宽度估算),
         确保多行文本和长文本都能正确增高。
+        高度口径 = 行数*行高 + 2*文档边距 + 边框余量, 保证达到 120px 上限前
+        不出现滚动条 (文档边距见 _build_input_area 的说明)。
         """
         doc = self._input.document()
         fm = self._input.fontMetrics()
-        line_height = fm.lineSpacing()
-        viewport_width = max(1, self._input.viewport().width() - 16)
+        # QPlainTextDocumentLayout 的块实际行高通常比 lineSpacing 大 2px 左右
+        # (行距余量), 低估会导致自动增高后仍出现滚动条
+        line_height = fm.lineSpacing() + 2
+        margin = int(doc.documentMargin())
+        viewport_width = max(1, self._input.viewport().width() - margin * 2)
 
         visual_lines = 0
         for i in range(doc.blockCount()):
@@ -296,81 +310,94 @@ class AgentDrawer(QFrame):
             wrapped = max(1, -(-text_width // int(viewport_width)))
             visual_lines += wrapped
 
-        content_height = visual_lines * line_height + 16
+        # +8 余量 (仅多行时): 覆盖边框 2px 与块布局行高(≈字体高度)相对
+        # fontMetrics().lineSpacing() 的估算偏差, 确保到 120px 上限前不出现滚动条;
+        # 单行/空态保持 36px 基准高度不加余量
+        slack = 8 if visual_lines > 1 else 2
+        content_height = visual_lines * line_height + margin * 2 + slack
         new_height = int(max(36, min(120, content_height)))
         if new_height != self._input.height():
             self._input.setFixedHeight(new_height)
 
-    # ── 消息管理 ──
+    # ── 消息/会话管理 (渲染见 AgentMessageMixin, 会话见 AgentSessionMixin) ──
 
-    def _add_message(
-        self, role: str, text: str, time_str: str = ""
-    ) -> None:
-        """添加一条消息 (气泡 + 时间戳)。"""
-        if not time_str:
-            time_str = datetime.now().strftime("%H:%M")
-        elif " " in time_str:
-            time_str = time_str.split(" ")[1][:5]
-
-        is_user = role == "user"
-        sender = "您" if is_user else "AI 助手"
-
-        bubble = QLabel(text)
-        bubble.setWordWrap(True)
-        if is_user:
-            bubble.setObjectName("AgentBubbleUser")
-            # 用户气泡宽度随抽屉自适应 (约70%), 避免固定300px换行过碎
-            bubble.setMaximumWidth(max(220, int(self.width() * 0.72)))
+    def set_busy(self, busy: bool) -> None:
+        """LLM 后台任务期间显示/隐藏忙碌条, 并启停文案动画。"""
+        self._busy_active = busy
+        if busy:
+            self._busy_base_text = "AI 正在分析"
+            self._busy_dot_count = 1
+            self._busy_label.setText(self._busy_base_text + "·")
+            self._busy_timer.start()
+            self._busy_bar.setVisible(True)
         else:
-            bubble.setObjectName("AgentBubbleAssistant")
-            bubble.setMaximumWidth(max(260, int(self.width() * 0.85)))
+            self._busy_timer.stop()
+            self._busy_base_text = "AI 正在分析"
+            self._busy_dot_count = 0
+            self._busy_label.setText(self._busy_base_text)
+            self._busy_bar.setVisible(False)
 
-        time_label = QLabel(f"{sender} · {time_str}")
-        time_label.setObjectName("AgentTimeLabel")
+    def set_stage_hint(self, text: str) -> None:
+        """更新忙碌条文案 (辩论阶段提示; 空串恢复默认)。
 
-        bubble_row = QHBoxLayout()
-        if is_user:
-            bubble_row.addStretch()
-            bubble_row.addWidget(bubble)
+        线程安全: 可能被后台 worker 线程直接调用, 非 GUI 线程时
+        经 QTimer.singleShot(0) marshal 到 GUI 线程执行。
+        """
+        if QThread.currentThread() is self.thread():
+            self._set_stage_hint_internal(text)
         else:
-            bubble_row.addWidget(bubble)
-            bubble_row.addStretch()
+            QTimer.singleShot(0, lambda: self._set_stage_hint_internal(text))
 
-        time_row = QHBoxLayout()
-        if is_user:
-            time_row.addStretch()
-            time_row.addWidget(time_label)
-        else:
-            time_row.addWidget(time_label)
-            time_row.addStretch()
+    def _set_stage_hint_internal(self, text: str) -> None:
+        """GUI 线程内实际更新文案 (非忙碌状态时忽略)。"""
+        if not self._busy_active:
+            return
+        self._busy_base_text = text if text else "AI 正在分析"
+        self._busy_dot_count = 0
+        self._busy_label.setText(self._busy_base_text)
 
-        msg_layout = QVBoxLayout()
-        msg_layout.setSpacing(2)
-        msg_layout.setContentsMargins(0, 0, 0, 0)
-        msg_layout.addLayout(bubble_row)
-        msg_layout.addLayout(time_row)
-
-        self._messages_layout.insertLayout(
-            self._messages_layout.count() - 1, msg_layout
-        )
-
-        # 记录最新消息 widget, 用于自动滚动
-        self._last_bubble = bubble
-        if is_user:
-            self._last_user_bubble = bubble
-            # 用户发送后, 延迟滚动到该用户消息 (等布局完成)
-            QTimer.singleShot(50, self._scroll_to_latest_user)
+    def _on_busy_tick(self) -> None:
+        """忙碌动画: 400ms 轮换 "·/··/···" 后缀。"""
+        self._busy_dot_count = (self._busy_dot_count % 3) + 1
+        self._busy_label.setText(self._busy_base_text + "·" * self._busy_dot_count)
 
     def set_context(self, rule_id: str, rule_name: str) -> None:
         self._context_rule_id = rule_id
         self._context_bar.setVisible(True)
-        self._context_label.setText(f"当前上下文: [{rule_id}] {rule_name}")
+        text = f"当前上下文: [{rule_id}] {rule_name}"
+        # 超长规则名按抽屉宽度 elide (窄窗 280px 不溢出)。
+        # 可用宽度 = 抽屉宽 - 左右 margin(28) - 圆点+间距(12) - 清除钮+间距(26)
+        available = max(60, self.width() - 60)
+        self._context_label.setText(
+            self._context_label.fontMetrics().elidedText(
+                text, Qt.TextElideMode.ElideRight, available
+            )
+        )
 
     def _clear_context(self) -> None:
         self._context_rule_id = None
         self._context_bar.setVisible(False)
         self._context_label.setText("")
         self.context_cleared.emit()
+
+    def _apply_shell_styles(self) -> None:
+        """应用壳层主题相关内联样式 (chip/头部图标/分隔线)。
+
+        内联样式不随 theme QSS 自动刷新, 在 _on_theme_changed 时重应用。
+        """
+        p = current_palette()
+        self._header.setStyleSheet(
+            f"QFrame#AgentDrawerHeader {{ border-bottom: 1px solid {p['border']}; }}"
+        )
+        self._header_icon.setStyleSheet(
+            f"QLabel {{ background: {p['brand_600']}; border-radius: 8px; }}"
+        )
+        self._context_bar.setStyleSheet(
+            f"QFrame#AgentContextBar {{ background: {p['brand_50']}; border-radius: 12px; }}"
+        )
+        self._context_dot.setStyleSheet(
+            f"QLabel {{ background: {p['brand_500']}; border-radius: 3px; }}"
+        )
 
     def add_assistant_message(self, text: str) -> None:
         self._add_message("assistant", text)
@@ -381,17 +408,9 @@ class AgentDrawer(QFrame):
         self._add_message("user", text)
         self._persist_message("user", text)
 
-    def _scroll_to_latest_user(self) -> None:
-        """滚动到最新用户消息 (而非最底部, 便于从问题开头阅读长回答)。"""
-        bubble = getattr(self, "_last_user_bubble", None)
-        if bubble is None:
-            return
-        # 用 ensureWidgetVisible 将该气泡滚动到可视区顶部附近
-        self._scroll.ensureWidgetVisible(bubble, 0, 20)
-
     # ── 发送 / 快速提问 ──
 
-    def _on_key_press(self, event) -> None:
+    def _on_key_press(self, event: QKeyEvent) -> None:
 
         if (
             event.key() == Qt.Key.Key_Return
@@ -411,231 +430,22 @@ class AgentDrawer(QFrame):
         self._input.clear()
         self.send_requested.emit(text)
 
-    def _quick_ask(self, question: str) -> None:
-        """点击建议气泡直接发送 (防抖: 避免快速双击产生重复消息)。"""
-        if self._is_send_locked():
-            return
-        self._add_message("user", question)
-        self._persist_message("user", question)
-        self.send_requested.emit(question)
-
-    def _is_send_locked(self) -> bool:
-        """建议气泡防抖: 500ms 内的重复点击被忽略 (仅用于 _quick_ask)。
-
-        Returns:
-            True 表示处于锁定期 (应忽略本次点击)
-        """
-        import time
-        now = time.monotonic()
-        last = getattr(self, "_last_send_time", 0.0)
-        if now - last < 0.5:
-            return True
-        self._last_send_time = now
-        return False
-
-    # ── 会话管理 ──
-
-    def _load_sessions_if_available(self) -> None:
-        """初始化时加载最近会话。"""
-        if self._chat_repo is None:
-            self._session_btn.setVisible(False)
-            return
-        try:
-            sessions = self._chat_repo.get_sessions(limit=1)
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("加载会话列表失败")
-            return
-        if sessions:
-            sid = sessions[0]["id"]
-            self._session_id = sid
-            self._update_session_btn(sessions[0]["title"])
-            self._load_session_messages(sid)
-
-    def _show_session_menu(self) -> None:
-        """弹出会话选择菜单。"""
-        if self._chat_repo is None:
-            return
-        try:
-            sessions = self._chat_repo.get_sessions()
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("加载会话列表失败")
-            return
-
-        menu = QMenu(self._session_btn)
-        # 使用全局 QSS, 不设置 inline stylesheet
-
-        for s in sessions:
-            label = s.get("title") or f"会话 #{s['id']}"
-            action = QAction(label, menu)
-            action.setCheckable(True)
-            action.setChecked(s["id"] == self._session_id)
-            action.triggered.connect(
-                lambda checked=False, sid=s["id"]: self._switch_session(sid)
-            )
-            menu.addAction(action)
-
-        menu.addSeparator()
-        new_action = QAction("+ 新建会话", menu)
-        new_action.triggered.connect(self._new_session)
-        menu.addAction(new_action)
-
-        pos = self._session_btn.mapToGlobal(
-            QPoint(0, self._session_btn.height())
-        )
-        menu.exec(pos)
-
-    def _switch_session(self, session_id: int) -> None:
-        """切换到指定会话。"""
-        if session_id == self._session_id:
-            return
-        self._session_id = session_id
-        try:
-            sessions = self._chat_repo.get_sessions()  # type: ignore[union-attr]
-            for s in sessions:
-                if s["id"] == session_id:
-                    self._update_session_btn(
-                        s.get("title") or f"会话 #{session_id}"
-                    )
-                    break
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("查找会话信息失败")
-        self._load_session_messages(session_id)
-
-    def _new_session(self) -> None:
-        """创建新会话。"""
-        if self._chat_repo is None:
-            return
-        try:
-            self._session_id = self._chat_repo.create_session()
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("创建对话会话失败")
-            return
-        self._update_session_btn("新对话")
-        self._rebuild_messages([])
-
-    def _clear_current_session(self) -> None:
-        """清空当前会话的全部消息 (保留会话本身)。"""
-        if self._chat_repo is None or self._session_id is None:
-            return
-        from PySide6.QtWidgets import QMessageBox
-        reply = QMessageBox.question(
-            self, "确认清空",
-            "确定要清空当前会话的全部对话吗？此操作不可撤销。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            self._chat_repo.clear_messages(self._session_id)
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("清空会话消息失败")
-            return
-        self._rebuild_messages([])
-
-    def _load_session_messages(self, session_id: int) -> None:
-        """从数据库加载指定会话的消息。"""
-        if self._chat_repo is None:
-            return
-        try:
-            messages = self._chat_repo.get_messages(session_id)
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("加载会话消息失败")
-            return
-        self._rebuild_messages(messages)
-
-    def _update_session_btn(self, title: str) -> None:
-        """更新会话按钮显示文本。"""
-        display = title if len(title) <= 12 else title[:11] + "…"
-        self._session_btn.setText(f"{display} ▾")
-
-    # ── 持久化 ──
-
-    def _ensure_session(self) -> None:
-        if self._session_id is not None:
-            return
-        if self._chat_repo is None:
-            return
-        try:
-            self._session_id = self._chat_repo.create_session()
-            self._update_session_btn("新对话")
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("创建对话会话失败")
-
-    def _persist_message(self, role: str, content: str) -> None:
-        self._ensure_session()
-        if self._session_id is None or self._chat_repo is None:
-            return
-        try:
-            self._chat_repo.add_message(
-                self._session_id, role, content
-            )
-            # 首条用户消息 -> 自动重命名会话
-            if role == "user":
-                self._auto_rename_session(content)
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("保存对话消息失败")
-        except ValueError as e:
-            logger.error(f"保存对话消息失败: {e}")
-
-    def _auto_rename_session(self, first_message: str) -> None:
-        """根据首条用户消息自动重命名会话。
-
-        仅在会话仍是默认标题时生效, 取首条消息前 12 字作为标题。
-        """
-        if self._chat_repo is None or self._session_id is None:
-            return
-        try:
-            sessions = self._chat_repo.get_sessions()
-            current = next(
-                (s for s in sessions if s["id"] == self._session_id), None
-            )
-            if current is None:
-                return
-            # 仅在默认标题时重命名 (避免覆盖用户已命名的会话)
-            if current["title"] not in ("新对话", "新会话", ""):
-                return
-            # 取首条消息前 12 字, 去除换行
-            title = first_message.replace("\n", " ").strip()[:12]
-            if not title:
-                return
-            self._chat_repo.update_title(self._session_id, title)
-            self._update_session_btn(title)
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("自动重命名会话失败")
-
-    def get_chat_history(self, limit: int = 10) -> list:
-        """获取当前会话的最近 N 条消息 (转为 ChatMessage, 供 AgentLoop 多轮上下文)。
-
-        Returns:
-            ChatMessage 列表, 按时间正序
-        """
-        from fsa.agent.llm_client import ChatMessage
-
-        if self._session_id is None or self._chat_repo is None:
-            return []
-        try:
-            messages = self._chat_repo.get_messages(self._session_id)
-        except (sqlite3.DatabaseError, RuntimeError):
-            logger.exception("读取会话历史失败")
-            return []
-        history: list = []
-        for m in messages[-limit:]:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-            if role in ("user", "assistant") and content:
-                history.append(ChatMessage(role=role, content=content))
-        return history
-
     # ── 主题监听 ──
 
     def _on_theme_changed(self) -> None:
         """主题切换时刷新抽屉样式。"""
-        self.style().unpolish(self)
-        self.style().polish(self)
-        for child in self.findChildren(QWidget):
-            child.style().unpolish(child)
-            child.style().polish(child)
+        self._apply_shell_styles()
+        # 消息渲染层 (AgentMessageMixin) 的 QTextBrowser 内联 CSS
+        # 不走 QSS polish 刷新, 需显式重渲染注入新颜色
+        refresh = getattr(self, "refresh_theme", None)
+        if callable(refresh):
+            refresh()
+        # 仅 repolish 壳层关键控件 (抽屉自身/头部/上下文栏/输入区),
+        # 不遍历整棵子树 (消息气泡等由内联样式 + refresh_theme 处理)
+        shell_style = self.style()
+        for widget in (self, self._header, self._context_bar, self._input):
+            shell_style.unpolish(widget)
+            shell_style.polish(widget)
 
     # ── 拖拽缩放 ──
 
@@ -644,19 +454,19 @@ class AgentDrawer(QFrame):
         self._resize_handle.mouseMoveEvent = self._on_handle_move  # type: ignore[method-assign]
         self._resize_handle.mouseReleaseEvent = self._on_handle_release  # type: ignore[method-assign]
 
-    def _on_handle_press(self, event) -> None:
+    def _on_handle_press(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._dragging = True
             self._drag_start_x = event.globalPosition().toPoint().x()
             self._drag_start_width = self.width()
 
-    def _on_handle_move(self, event) -> None:
+    def _on_handle_move(self, event: QMouseEvent) -> None:
         if not self._dragging:
             return
         delta = self._drag_start_x - event.globalPosition().toPoint().x()
         new_width = self._drag_start_width + delta
         new_width = max(self.MIN_WIDTH, min(self.MAX_WIDTH, new_width))
-        self.setFixedWidth(new_width)
+        self.resize(new_width, self.height())
         # 改宽后让父窗口重新定位: 抽屉右缘始终贴合窗口右侧 (锚定右缘)。
         # 否则仅 setFixedWidth 会让右缘随宽度右移 (拖左无反应/内容右扩),
         # 或左缘固定导致抽屉脱离右缘 (拖右时露出底层内容)。
@@ -665,5 +475,24 @@ class AgentDrawer(QFrame):
         if callable(position_fn):
             position_fn()
 
-    def _on_handle_release(self, event) -> None:
+    def _on_handle_release(self, event: QMouseEvent) -> None:
         self._dragging = False
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """首次打开抽屉时才加载历史消息; 主题切换期间保持隐藏则延迟重渲染。"""
+        super().showEvent(event)
+        if not self._messages_loaded and self._session_id is not None:
+            self._load_session_messages(self._session_id)
+            self._messages_loaded = True
+        if self._theme_dirty:
+            self._theme_dirty = False
+            refresh = getattr(self, "refresh_theme", None)
+            if callable(refresh):
+                refresh()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """抽屉宽度变化 (拖拽/窗口收窄) 时, 重排消息气泡宽度跟随容器。"""
+        super().resizeEvent(event)
+        relayout = getattr(self, "relayout_bubbles", None)
+        if callable(relayout):
+            relayout()

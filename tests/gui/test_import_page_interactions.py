@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
@@ -17,6 +18,11 @@ from tests.gui.helpers import make_result, make_summary
 _TEST_ROOT = Path(__file__).resolve().parent
 _PROJECT_ROOT = _TEST_ROOT.parent.parent
 _MOUTAI_FILE = _PROJECT_ROOT / "tests" / "fixtures" / "real_reports" / "贵州茅台_2023年报_三大报表.xlsx"
+pytestmark = pytest.mark.skipif(
+    not _MOUTAI_FILE.exists(),
+    reason="真实年报 fixture 缺失（合规红线：已移出 git，需手动放置）",
+)
+
 
 
 class TestImportRealFile:
@@ -48,14 +54,15 @@ class TestImportRealFile:
         qtbot.wait(100)
         assert window._topbar._validate_btn.isEnabled() is True
 
-    def test_empty_state_visible_initially(self, qapp, qtbot, app_state) -> None:
-        """初始时显示空状态 (IP-14)。"""
+    def test_empty_state_hidden_initially(self, qapp, qtbot, app_state) -> None:
+        """首页只保留文件选择/拖放区, 旧的空状态虚线框默认隐藏 (IP-14)。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         # 确保在导入页
         window._sidebar._nav_buttons["navImport"].clicked_nav.emit("navImport")
         qtbot.wait(50)
-        assert not window._import_page._empty_state.isHidden()
+        assert window._import_page._empty_state.isHidden()
+        assert not window._import_page._drop_zone.isHidden()
 
     def test_empty_state_hidden_after_import(self, qapp, qtbot, app_state) -> None:
         """导入后空状态隐藏 (IP-14)。"""

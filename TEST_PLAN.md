@@ -18,10 +18,10 @@
 
 ## 2. 测试环境
 
-- **平台**: Windows 10+, Python 3.13, PySide6 6.11
+- **平台**: Windows 10+, Python 3.11+, PySide6 6.11
 - **无头模式**: `QT_QPA_PLATFORM=offscreen` (CI 可跑)
 - **框架**: pytest + pytest-qt (qtbot)
-- **真实数据**: 贵州茅台/格力电器 2023 年报 fixtures
+- **真实数据**: 真实企业 2023 年报 fixtures（`tests/fixtures/real_reports/`；真实年报已移出 git，需手动放置后相关用例才启用，缺失时以 skipif 跳过）
 
 ## 3. 功能测试矩阵
 
@@ -47,7 +47,7 @@
 
 | ID | 功能 | 测试用例 | 验收标准 |
 |----|------|----------|----------|
-| IP-01 | 文件导入 | 拖入茅台 Excel | 3 张报表卡片显示（名称/状态/期间/项目数/来源） |
+| IP-01 | 文件导入 | 拖入真实年报 Excel | 3 张报表卡片显示（名称/状态/期间/项目数/来源） |
 | IP-02 | 无效文件 | 导入不存在/错误格式 | 中文错误提示，不崩溃 |
 | IP-03 | 导入后 UI | 导入成功 | 拖放区隐藏、报表卡区显示、校验按钮启用 |
 | IP-04 | 汇总卡片 | 校验完成 | 通过/错误/警告/规则总数 四卡数字正确 |
@@ -77,7 +77,7 @@
 
 | ID | 功能 | 测试用例 | 验收标准 |
 |----|------|----------|----------|
-| RP-01 | 规则列表 | 进入页面 | 显示 37 条规则卡片 |
+| RP-01 | 规则列表 | 进入页面 | 显示 42 条规则卡片 |
 | RP-02 | 搜索 | 输入"BS-BAL" | 仅显示匹配规则 |
 | RP-03 | 分类筛选 | 点"表间勾稽" | 仅显示该类规则 |
 | RP-04 | 容差编辑 | 输入新值回车 | registry.set_tolerance 被调用 |
@@ -151,12 +151,34 @@
 
 ## 5. 当前覆盖与缺口
 
-| 模块 | 已有测试 | 缺口 |
+| 模块 | 测试数（收集） | 说明 |
 |------|----------|------|
-| 引擎/模型/导入/存储 | 481 单测 | - |
-| 导出 | 19 单测 | - |
-| GUI (W3) | 28 测试 (筛选/容差/trace/角标/设置) | 缺：顶栏/侧边栏/审计页/历史页/抽屉/快捷键/布局 |
-| 弹窗闪现回归 | 无 | IP-15 需新增 |
+| 引擎 engine | 205 | 主表规则 + 明细勾稽（L2/L4）+ 附表3-6 + 行业参数化阈值 + SCE-BS/IS-LR |
+| 导入 importer | 284 | 三大主表/SCE + 明细数据导入 + amount_parser + Excel COM 回退 |
+| 模型 models | 73 | report/rule/result 数据模型 |
+| 存储 storage | 77 | SQLite WAL（history/chat/override 仓库） |
+| 规则库 rules | 30 | 规则库加载与校验 |
+| 导出 exporter | 25 | Excel 审计底稿 |
+| 服务层 services | 50 | Validation/Package/MultiEntity 编排 |
+| Agent agent | 85 | AgentLoop/诊断/LLM client |
+| 更新 updater | 42 | version.json + SHA256 + 下载 |
+| 集成 integration | 24 | 端到端流水线 |
+| GUI | 134 | 页面/抽屉/容差/设置/历史/审计（6 个设置持久化用例在沙箱环境因注册表权限跳过，属环境问题） |
+| **合计** | **1000+ 收集（以实际为准）** | `pytest --collect-only` 实测（2026-08-13） |
+
+> 旧计划中"引擎/模型/导入/存储 481 单测 / 导出 19 / GUI 28"为早期口径，
+> 现以上表收集数为准。
+
+### 5.1 新增能力测试覆盖
+
+- **明细勾稽（L2）**: 序时账逐凭证借贷平衡 / 现金流明细↔主表 / 现金流明细=序时账 / 余额表↔资产负债表
+  （`tests/engine/test_detail_checks.py`）
+- **L4 现金流分类复核**: CF-CLS-001~008 凭证级分类 + 覆盖率检查（`tests/engine/test_cash_flow_checks.py`）
+- **附表3 重分类**: 负数重分类规则 + 与资产负债表勾稽（`tests/engine/test_reclassification_checks.py`）
+- **附表4/5/6**: 关联方采购 / 销售收入成本 / 内部现金流（`tests/engine/test_supplementary_checks.py`）
+- **多主体批量校验**: 逐文件夹导入+校验+合并、ICF-002 双边核对（`tests/services/test_multi_entity_service.py`）
+- **行业参数化阈值**: 行业阈值配置与参数化校验（`tests/engine/test_industry_thresholds.py`）
+- **报表包导入**: 主表+附表一次拖入、合并校验（`tests/gui/test_package_import.py`）
 
 ## 6. 执行计划
 

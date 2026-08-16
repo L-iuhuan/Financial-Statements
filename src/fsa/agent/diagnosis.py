@@ -9,13 +9,27 @@ diagnose_with_llm() 方法支持可选的 Ollama LLM 增强诊断，LLM 不可�
 
 from __future__ import annotations
 
+import json
+import threading
 from typing import TYPE_CHECKING
+from urllib.error import URLError
 
+from fsa.agent.llm_client import DISCLAIMER_TEXT, LLMError
+from fsa.agent.sanitize import sanitize_llm_input
 from fsa.core.models.result import TraceItem, ValidationResult
 
 if TYPE_CHECKING:
     from fsa.agent.llm_client import LLMClient
     from fsa.agent.ollama_client import OllamaClient
+
+# LLM 调用可能抛出的具体异常 (用于诊断降级, 避免宽 catch)
+_LLM_ERRORS: tuple[type[BaseException], ...] = (
+    LLMError,
+    URLError,
+    TimeoutError,
+    OSError,
+    json.JSONDecodeError,
+)
 
 
 def _fmt_amount(value: float) -> str:
@@ -89,12 +103,42 @@ def _build_category_advice(result: ValidationResult) -> str:
         lines.append("现金流量表平衡校验涉及期初期末现金等价物和汇率变动。")
         lines.append("常见遗漏: 请检查是否遗漏「汇率变动对现金及现金等价物的影响」项目。")
         lines.append("汇率变动金额通常较小，但若企业有大量外币业务则可能显著。")
-    elif (
-        rule_id.startswith(("BS-", "IS-"))
-        or (
-            rule_id.startswith("CF-")
-            and not rule_id.startswith(("CF-DTL", "CF-JNL", "CF-CLS"))
-        )
+    elif rule_id == "BS-IS-001":
+        lines.append("这是资产负债表与利润表之间的衔接校验（未分配利润变动 = 净利润）。")
+        lines.append("常见原因: 本期存在利润分配（提取盈余公积、分配股利）导致")
+        lines.append("未分配利润变动不等于净利润，或两表净利润取数口径不一致。")
+        lines.append("建议: 核对本期利润分配情况，并确认利润表净利润与权益变动表一致。")
+    elif rule_id.startswith("IS-CF-"):
+        lines.append("这是利润表与现金流量表补充资料（附注）之间的勾稽。")
+        lines.append("常见原因: 补充资料按间接法编制，折旧摊销、减值等调节项")
+        lines.append("取数与利润表对应科目不一致，或补充资料未完整填报。")
+        lines.append("建议: 逐项核对补充资料调节项的取数来源与利润表科目口径。")
+    elif rule_id == "IS-TAX-001":
+        lines.append("所得税费用由当期所得税与递延所得税两部分构成。")
+        lines.append("常见原因: 递延所得税漏填，或递延所得税费用符号方向错误")
+        lines.append("（递延所得税资产增加应减少所得税费用）。")
+        lines.append("建议: 核对递延所得税资产/负债的变动，确认当期与递延合计正确。")
+    elif rule_id == "IS-LR-001":
+        lines.append("信用减值损失和资产减值损失按准则以负数填列（损失为负、转回为正）。")
+        lines.append("该提示说明报表中减值损失为正数，可能是本期转回收益，")
+        lines.append("也可能是符号方向填反，需结合减值准备明细判断。")
+    elif rule_id.startswith("SCE-"):
+        if "BAL" in rule_id:
+            lines.append("所有者权益变动表表内平衡: 期初余额 + 本年增减变动 = 期末余额。")
+            lines.append("常见原因: 某权益项目（实收资本/资本公积/盈余公积/未分配利润）")
+            lines.append("的变动额漏填或方向错误，或合并报表少数股东权益未单列。")
+            lines.append("建议: 逐列核对权益变动表的期初、变动、期末三列是否衔接。")
+        else:
+            lines.append("这是所有者权益变动表与主表（利润表/资产负债表）之间的勾稽。")
+            lines.append("常见原因: 权益变动表未导入或未识别、两表期间口径不一致、")
+            lines.append("权益类科目映射错误。")
+            lines.append("建议: 确认已导入权益变动表，并逐项目核对两表对应科目金额。")
+    elif rule_id.startswith("NOTES-"):
+        lines.append("这是报表附注明细与主表项目之间的勾稽。")
+        lines.append("常见原因: 附注明细漏项、明细合计口径与主表不一致、附注未完整导入。")
+        lines.append("建议: 核对附注明细是否完整，确认明细合计与主表对应项目一致。")
+    elif rule_id.startswith(("BS-", "IS-")) or (
+        rule_id.startswith("CF-") and not rule_id.startswith(("CF-DTL", "CF-JNL", "CF-CLS"))
     ):
         if "BAL" in rule_id:
             lines.append("表内平衡规则不通过，说明相关合计项的取数不完整。")
@@ -180,13 +224,13 @@ def _build_llm_prompt(result: ValidationResult) -> str:
         "请从财务审计角度分析以下勾稽校验未通过的原因，并给出排查建议。",
         "要求：中文、简洁、不超过300字。",
         "",
-        f"规则编号: {result.rule_id}",
-        f"规则名称: {result.rule_name}",
-        f"校验公式: {result.formula}",
+        f"规则编号: {sanitize_llm_input(result.rule_id)}",
+        f"规则名称: {sanitize_llm_input(result.rule_name)}",
+        f"校验公式: {sanitize_llm_input(result.formula)}",
         f"左侧计算值: {_fmt_amount(result.left_value)} 元",
         f"右侧计算值: {_fmt_amount(result.right_value)} 元",
         f"差额: {_fmt_amount(abs(result.diff))} 元",
-        f"容差阈值: {result.tolerance}",
+        f"容差阈值: {sanitize_llm_input(str(result.tolerance))}",
     ]
 
     if result.trace:
@@ -194,8 +238,10 @@ def _build_llm_prompt(result: ValidationResult) -> str:
         lines.append("涉及科目追溯:")
         for item in result.trace:
             lines.append(
-                f"  - {item.name}（{item.key}）: {_fmt_amount(item.amount)} 元"
-                f"（{item.side}侧，第{item.row}行 {item.column}）"
+                f"  - {sanitize_llm_input(item.name)}（{sanitize_llm_input(item.key)}）: "
+                f"{_fmt_amount(item.amount)} 元"
+                f"（{sanitize_llm_input(item.side)}侧，第{item.row}行 "
+                f"{sanitize_llm_input(item.column)}）"
             )
 
     lines.append("")
@@ -225,7 +271,8 @@ class DiagnosisEngine:
             result: 校验结果（通常为未通过状态）
 
         Returns:
-            结构化的中文诊断文本
+            结构化的中文诊断文本, 已含「（规则引擎确定性诊断 · 未使用 AI）」标注
+            (P0 免责, 调用方无需再拼接)
         """
         sections = [
             _build_header(result),
@@ -234,7 +281,7 @@ class DiagnosisEngine:
             _build_category_advice(result),
             _build_action_steps(),
         ]
-        return "\n\n".join(sections)
+        return "\n\n".join(sections) + "\n\n（规则引擎确定性诊断 · 未使用 AI）"
 
     def diagnose_with_llm(
         self,
@@ -253,6 +300,8 @@ class DiagnosisEngine:
         Returns:
             中文诊断文本（可能来自 LLM 或规则引擎）
         """
+        from fsa.agent.ollama_client import OllamaError
+
         # 无客户端 -> 回退
         if client is None:
             return self.diagnose(result)
@@ -268,8 +317,8 @@ class DiagnosisEngine:
                 prompt=prompt,
                 system=_LLM_SYSTEM_PROMPT,
             )
-        except Exception:
-            # 捕获所有异常（包括 OllamaError），保证不回传异常给调用方
+        except (OllamaError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+            # 捕获 LLM 调用相关异常 (含 OllamaError), 保证不回传异常给调用方
             return self.diagnose(result)
 
         # LLM 返回空 -> 回退
@@ -282,29 +331,40 @@ class DiagnosisEngine:
         self,
         result: ValidationResult,
         client: LLMClient | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> str:
         """使用 LLMClient 协议（Ollama / OpenAI 兼容）的增强诊断。
 
         客户端不可用、调用失败或返回空内容时，回退到规则化诊断。
+        用户取消 (cancel_event 已设置) 时抛 LLMError("已取消") 向上传递,
+        由后台任务包装器走安静停止路径。
+        返回值已含 DISCLAIMER_TEXT 免责标注 (P0, 调用方无需再拼接)。
         """
         if client is None:
             return self.diagnose(result)
         try:
             available = client.is_available()
-        except Exception:
+        except _LLM_ERRORS:
             return self.diagnose(result)
         if not available:
             return self.diagnose(result)
 
-        from fsa.agent.llm_client import ChatMessage
+        from fsa.agent.llm_client import ChatMessage, response_text
 
         messages = [
             ChatMessage(role="system", content=_LLM_SYSTEM_PROMPT),
             ChatMessage(role="user", content=_build_llm_prompt(result)),
         ]
         try:
-            response = client.chat(messages)
-        except Exception:
+            if cancel_event is not None and cancel_event.is_set():
+                raise LLMError("已取消")
+            response = client.chat(messages, cancel_event=cancel_event)
+        except _LLM_ERRORS as e:
+            if "已取消" in str(e):
+                raise
             return self.diagnose(result)
-        text = (response.content or "").strip()
-        return text or self.diagnose(result)
+        # content 为空时用 reasoning 尾部兜底 (推理模型 max_tokens 耗尽场景)
+        text = response_text(response).strip()
+        if not text:
+            return self.diagnose(result)
+        return text + "\n\n" + DISCLAIMER_TEXT

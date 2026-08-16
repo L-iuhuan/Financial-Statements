@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from fsa.core.engine.evaluator import ExpressionEvaluator
@@ -75,7 +76,7 @@ _VARIABLE_REFERENCE = [
 class CustomRuleDialog(QDialog):
     """新增自定义规则的模态对话框。"""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("新增自定义规则")
         self.setMinimumWidth(520)
@@ -281,6 +282,8 @@ class CustomRuleDialog(QDialog):
             else:
                 return self._check_syntax(formula, boolean=True)
         except Exception as e:
+            # 防御性兜底: simpleeval 可能抛出名未定义/函数未定义等各类异常,
+            # 此处是公式校验边界, 必须以中文提示用户而非让对话框崩溃 (P4)
             return f"公式语法错误: {e}"
         return None
 
@@ -296,6 +299,7 @@ class CustomRuleDialog(QDialog):
             # 变量未定义 / 求值为 None 属运行期问题, 语法合法
             if "未定义" in msg or "NameNotDefined" in msg or "None" in msg:
                 return None
+            # 防御性兜底: simpleeval 各类异常在此统一转中文提示, 不崩溃对话框
             return f"公式语法错误: {msg}"
         return None
 

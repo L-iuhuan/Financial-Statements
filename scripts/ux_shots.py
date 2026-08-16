@@ -52,7 +52,10 @@ if ip._cards_layout.count() > 0:
         window.grab().save("ux_shots/light_card_expanded.png")
 
 # 深色主题全页面
+# 主题切换有 200ms 遮罩淡出过渡 (theme.py), 需沉淀后再截图, 否则首图是浅色残影
+import time
 window._toggle_theme()
+time.sleep(0.4)
 app.processEvents()
 for nav, name in pages:
     window._on_nav(nav)

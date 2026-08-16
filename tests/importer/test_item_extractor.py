@@ -484,8 +484,14 @@ class TestDualColumnBalanceSheet:
         raw = RawSheetData(
             name="资产负债表",
             headers=[
-                "资   产", "行次", "期末余额", "年初余额",
-                "负债和所有者权益", "行次#2", "期末余额#2", "年初余额#2",
+                "资   产",
+                "行次",
+                "期末余额",
+                "年初余额",
+                "负债和所有者权益",
+                "行次#2",
+                "期末余额#2",
+                "年初余额#2",
             ],
             rows=[
                 {
@@ -530,8 +536,7 @@ class TestDualColumnBalanceSheet:
             name="资产负债表",
             headers=["项目", "期末余额", "负债和所有者权益", "期末余额#2"],
             rows=[
-                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0,
-                 "负债和所有者权益": None, "期末余额#2": 999.0},
+                {"_row": 2, "项目": "资产总计", "期末余额": 2000000.0, "负债和所有者权益": None, "期末余额#2": 999.0},
             ],
         )
         items = extract_items(raw, ReportType.BALANCE_SHEET)
@@ -805,8 +810,7 @@ class TestDualColumnExtraction:
             name="现金流量表",
             headers=["项目", "本期金额", "上期金额"],
             rows=[
-                {"_row": 2, "项目": "经营活动产生的现金流量净额",
-                 "本期金额": 500000.0, "上期金额": 450000.0},
+                {"_row": 2, "项目": "经营活动产生的现金流量净额", "本期金额": 500000.0, "上期金额": 450000.0},
             ],
         )
         items = extract_items(raw, ReportType.CASH_FLOW_STATEMENT)
@@ -842,3 +846,184 @@ class TestDualColumnExtraction:
         assert len(cf_notes) == 1
         assert cf_notes[0].amount == 705000.0
         assert cf_notes[0].beginning_amount == 650000.0
+
+
+class TestFormattedNumbers:
+    """测试报表中常见数字格式的解析（千分位/括号负数/占位符/科学计数法）。"""
+
+    def test_thousands_separator_parsed(self) -> None:
+        """带千分位逗号的字符串金额被正确解析。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "资产总计", "期末余额": "1,000,000.50"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 1000000.50
+
+    def test_parenthesized_negative_parsed(self) -> None:
+        """括号负数被解析为负数。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "未分配利润", "期末余额": "(1,291,800.12)"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == -1291800.12
+
+    def test_placeholder_parsed_as_zero(self) -> None:
+        """占位符（-）被解析为 0.0，项目仍被保留。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "库存股", "期末余额": "-"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 0.0
+
+    def test_em_dash_placeholder_parsed_as_zero(self) -> None:
+        """全角破折号（—）被解析为 0.0。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "库存股", "期末余额": "—"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 0.0
+
+    def test_scientific_notation_parsed(self) -> None:
+        """科学计数法金额被正确解析。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "资产总计", "期末余额": "1.5e6"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].amount == 1500000.0
+
+    def test_beginning_amount_with_placeholder_is_zero(self) -> None:
+        """次金额列为占位符时解析为 0.0 而非 None。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额", "年初余额"],
+            rows=[{"_row": 2, "项目": "资产总计", "期末余额": 2000000.0, "年初余额": "-"}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 1
+        assert items[0].beginning_amount == 0.0
+
+    def test_empty_string_amount_skipped(self) -> None:
+        """空字符串金额（真空值）被跳过，不制造虚假的 0。"""
+        raw = RawSheetData(
+            name="资产负债表",
+            headers=["项目", "期末余额"],
+            rows=[{"_row": 2, "项目": "资产总计", "期末余额": "   "}],
+        )
+        items = extract_items(raw, ReportType.BALANCE_SHEET)
+        assert len(items) == 0
+
+
+class TestAmountUnitNormalization:
+    """金额单位识别: 主表提取时统一换算为元。"""
+
+    def test_wan_yuan_header_converts_to_yuan(self) -> None:
+        raw = RawSheetData(
+            name="资产负债表(单位:万元)",
+            headers=["项目", "期末余额(万元)"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末余额(万元)": 200.0},
+            ],
+        )
+        unit_info: dict[str, str] = {}
+        items = extract_items(raw, ReportType.BALANCE_SHEET, unit_info=unit_info)
+
+        assert len(items) == 1
+        assert items[0].amount == 2_000_000.0
+        assert unit_info["unit"] == "万元"
+        assert "已自动换算为元" in unit_info["warning"]
+
+
+class TestNotesExtraction:
+    def test_notes_items_use_note_keys(self) -> None:
+        raw = RawSheetData(
+            name="报表附注",
+            headers=["项目", "金额"],
+            rows=[{"_row": 2, "项目": "应收账款账龄", "金额": 100.0}],
+        )
+        items = extract_items(raw, ReportType.NOTES)
+        assert len(items) == 1
+        assert items[0].key.startswith("note_")
+        assert items[0].name == "应收账款账龄"
+        assert items[0].amount == 100.0
+
+
+class TestCellLevelUnitSuffix:
+    """单元格级单位后缀在提取时优先于列级单位。"""
+
+    def test_cell_suffix_converts_to_yuan(self) -> None:
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额": "1,000万元", "上期金额": "200（千元）"},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        assert len(items) == 1
+        assert items[0].amount == 10_000_000.0
+        assert items[0].beginning_amount == 200_000.0
+
+    def test_cell_suffix_not_double_converted_with_column_unit(self) -> None:
+        raw = RawSheetData(
+            name="利润表（单位：万元）",
+            headers=["项目", "本期金额", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额": "1,000万元", "上期金额": 200.0},
+            ],
+        )
+        items = extract_items(raw, ReportType.INCOME_STATEMENT)
+        assert len(items) == 1
+        # 后缀万元按万元算; 无后缀的 200 也按表级万元算
+        assert items[0].amount == 10_000_000.0
+        assert items[0].beginning_amount == 2_000_000.0
+
+
+class TestMultiColumnAmountUnit:
+    """多金额列单位独立识别与换算。"""
+
+    def test_different_explicit_column_units_convert_independently(self) -> None:
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额（万元）", "上期金额（元）"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额（万元）": 100.0, "上期金额（元）": 2_000_000.0},
+            ],
+        )
+        unit_info: dict[str, str] = {}
+        items = extract_items(raw, ReportType.INCOME_STATEMENT, unit_info=unit_info)
+
+        assert len(items) == 1
+        assert items[0].amount == 1_000_000.0
+        assert items[0].beginning_amount == 2_000_000.0
+        assert unit_info["unit"] == "万元"
+        assert "单位不一致" in unit_info["warning"]
+
+    def test_single_explicit_unit_propagates_to_other_column(self) -> None:
+        raw = RawSheetData(
+            name="利润表",
+            headers=["项目", "本期金额（万元）", "上期金额"],
+            rows=[
+                {"_row": 2, "项目": "营业收入", "本期金额（万元）": 100.0, "上期金额": 90.0},
+            ],
+        )
+        unit_info: dict[str, str] = {}
+        items = extract_items(raw, ReportType.INCOME_STATEMENT, unit_info=unit_info)
+
+        assert items[0].amount == 1_000_000.0
+        assert items[0].beginning_amount == 900_000.0
+        assert unit_info["warning"] == "识别到金额单位「万元」，系统已自动换算为元后校验"

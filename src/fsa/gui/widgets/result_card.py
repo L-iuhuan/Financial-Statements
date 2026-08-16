@@ -5,14 +5,17 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from typing import cast
+
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QColor, QEnterEvent, QMouseEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -22,14 +25,20 @@ from PySide6.QtWidgets import (
 
 from fsa.core.models.result import ValidationResult
 from fsa.gui.theme import (
+    bind_theme_listener,
     current_palette,
     get_mono_font,
-    register_theme_listener,
+    get_shadow_color,
 )
 
-_STATUS_TEXT: dict[str, str] = {"pass": "通过", "fail": "不通过", "error": "异常"}
-# 状态到 palette 键的映射
-_STATUS_PALETTE: dict[str, str] = {"pass": "success", "fail": "error", "error": "warning"}
+_STATUS_TEXT: dict[str, str] = {"pass": "通过", "fail": "不通过", "error": "异常", "skip": "跳过"}
+# 状态到 palette 键的映射 (skip 用中性灰, 与稽核表格「跳过」列一致)
+_STATUS_PALETTE: dict[str, str] = {
+    "pass": "success",
+    "fail": "error",
+    "error": "warning",
+    "skip": "text_secondary",
+}
 
 
 class ResultCard(QFrame):
@@ -47,107 +56,91 @@ class ResultCard(QFrame):
         super().__init__()
         self._result = result
         self._expanded = not result.passed
+        self._detail_built = False
+        self._theme_dirty = False
         self._status = self._get_status_key()
         self.setObjectName("ResultCard")
+        self.setProperty("status", self._status)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._setup_shadow()
         self._setup_ui()
-        register_theme_listener(self._on_theme_changed)
+        # 注册主题监听并在控件销毁时注销, 防止死监听器累积泄漏
+        bind_theme_listener(self, self._on_theme_changed)
 
     def toggle_expanded(self) -> None:
-        """展开或收起详情区域。"""
+        """展开或收起详情区域 (详情内容在首次展开时懒加载)。"""
         self._expanded = not self._expanded
+        if self._expanded and not self._detail_built:
+            self._ensure_detail_built()
         self._detail.setVisible(self._expanded)
 
-    def _get_status_key(self) -> str:
-        if self._result.errored:
-            return "error"
-        return "pass" if self._result.passed else "fail"
+    def update_result(self, result: ValidationResult) -> None:
+        """用新校验结果更新卡片所有展示字段 (复用卡片对象, 不销毁重建)。
 
-    def _setup_shadow(self) -> None:
-        self._shadow = QGraphicsDropShadowEffect()
-        self._shadow.setBlurRadius(6)
-        self._shadow.setColor(QColor(0, 0, 0, 10))
-        self._shadow.setOffset(0, 1)
-        self.setGraphicsEffect(self._shadow)
-
-    def _apply_card_style(self) -> None:
-        p = current_palette()
-        status = self._status
-        pal_key = _STATUS_PALETTE[status]
-        bg = p[f"{pal_key}_bg"]
-        border_color = p[f"{pal_key}_border"]
-        accent = p[pal_key]
-        self.setStyleSheet(
-            f"""
-            QFrame#ResultCard {{
-                background-color: {bg};
-                border: 1px solid {border_color};
-                border-radius: 8px;
-            }}
-            QFrame#ResultCard:hover {{
-                border: 1px solid {accent};
-            }}
-            """
-        )
-
-    def _setup_ui(self) -> None:
+        刷新: 状态文本/样式、差额行、详情(数值/公式/trace/消息)、展开状态、
+        诊断/辩论按钮可见性。信号连接保持不变。
+        """
+        self._result = result
+        self._status = self._get_status_key()
         self._apply_card_style()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(6)
-        layout.addLayout(self._build_header())
-        if not self._result.passed:
-            layout.addLayout(self._build_diff_line())
-        self._detail = self._build_detail()
+        self._apply_status_style()
+
+        # 更新头部状态标签
+        self._status_label.setText(_STATUS_TEXT[self._status])
+
+        # 更新差额行 (通过/不通过之间切换显隐)
+        diff_visible = not result.passed
+        self._diff_row_widget.setVisible(diff_visible)
+        self._diff_label.setText(f"差额: {result.diff:,.2f}")
+        self._tol_label.setText(f"  ·  容差: {result.tolerance}")
+
+        # 更新诊断/辩论按钮行显隐
+        self._diagnose_row_widget.setVisible(not result.passed)
+
+        # 重置展开状态: 不通过默认展开, 通过默认收起。
+        # 旧详情内容先释放; 展开时按新结果懒加载, 避免通过卡片也持有 trace 表格等重控件
+        self._expanded = not result.passed
+        if self._detail_built:
+            self._clear_detail_contents()
+        if self._expanded:
+            self._ensure_detail_built()
         self._detail.setVisible(self._expanded)
-        layout.addWidget(self._detail)
-        if not self._result.passed:
-            layout.addLayout(self._build_diagnose_button())
 
-    def _build_header(self) -> QHBoxLayout:
-        header = QHBoxLayout()
-        header.setSpacing(8)
-        id_label = QLabel(self._result.rule_id)
-        id_label.setObjectName("ResultIdLabel")
-        header.addWidget(id_label)
-        name_label = QLabel(self._result.rule_name)
-        name_label.setStyleSheet("font-size: 14px; font-weight: 600;")
-        name_label.setWordWrap(False)
-        header.addWidget(name_label, stretch=1)
-        if self._result.category:
-            cat = QLabel(self._result.category)
-            cat.setObjectName("MetaLabel")
-            header.addWidget(cat)
-        self._status_label = QLabel(_STATUS_TEXT[self._status])
-        self._status_label.setObjectName("ResultStatusLabel")
+    def _apply_status_style(self) -> None:
+        """刷新状态标签与差额标签的属性; 实际颜色由全局 QSS 负责, 仅负差额需单独标记。"""
         self._status_label.setProperty("status", self._status)
-        self._status_label.setStyleSheet("font-weight: 500; font-size: 13px;")
-        header.addWidget(self._status_label)
-        return header
-
-    def _build_diff_line(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(4)
-        diff_text = f"差额: {self._result.diff:,.2f}"
-        self._diff_label = QLabel(diff_text)
-        self._diff_label.setFont(get_mono_font(11))
-        self._diff_label.setObjectName("ResultDiffLabel")
         self._diff_label.setProperty("status", self._status)
-        self._diff_label.setStyleSheet("font-size: 12px; font-weight: 600;")
-        row.addWidget(self._diff_label)
-        tol_label = QLabel(f"  ·  容差: {self._result.tolerance}")
-        tol_label.setObjectName("ResultTolerance")
-        row.addWidget(tol_label)
-        row.addStretch()
-        return row
+        self._diff_label.setProperty("negative", "true" if self._result.diff < 0 else "false")
+        for widget in (self._status_label, self._diff_label):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
-    def _build_detail(self) -> QWidget:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(8)
-        # 数值网格 (2x2)
+    def _clear_detail_contents(self) -> None:
+        """清空详情区域的所有子控件 (隐藏详情时不保留 trace 表格等重控件)。"""
+        layout = cast(QVBoxLayout, self._detail.layout())
+        if layout is None:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            if item is None:
+                continue
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+            sub = item.layout()
+            if sub is not None:
+                self._clear_layout(sub)
+        self._detail_built = False
+
+    def _ensure_detail_built(self) -> None:
+        """首次展开时构建详情内容 (数值网格、公式、trace 表格、消息)。"""
+        if self._detail_built:
+            return
+        layout = cast(QVBoxLayout, self._detail.layout())
+        if layout is None:
+            return
+
+        # 数值网格
         grid = QGridLayout()
         grid.setSpacing(4)
         items = [
@@ -166,7 +159,8 @@ class ResultCard(QFrame):
             val.setObjectName("ResultGridValue")
             grid.addWidget(val, r, c * 2 + 1)
         layout.addLayout(grid)
-        # 公式块 (中文显示, 英文原版见 tooltip)
+
+        # 公式块
         from fsa.gui.formula_display import formula_to_chinese
         formula = QLabel(f"  {formula_to_chinese(self._result.formula)}")
         formula.setFont(get_mono_font(10))
@@ -174,15 +168,126 @@ class ResultCard(QFrame):
         formula.setWordWrap(True)
         formula.setToolTip(f"英文公式: {self._result.formula}")
         layout.addWidget(formula)
+
         # trace 表格
         if self._result.trace:
             layout.addWidget(self._build_trace_table())
-        # 消息
-        if self._result.message and not self._result.passed:
+        else:
+            empty = QLabel("— 无科目追溯 —")
+            empty.setObjectName("MetaLabel")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(empty)
+
+        # 消息 (不通过时显示差异说明; 跳过时显示跳过原因)
+        if self._result.message and (not self._result.passed or self._result.skipped):
             msg = QLabel(self._result.message)
             msg.setWordWrap(True)
             msg.setObjectName("ResultMessage")
             layout.addWidget(msg)
+
+        self._detail_built = True
+
+    @staticmethod
+    def _clear_layout(sub_layout: QLayout) -> None:
+        """递归清除布局中的所有子项。"""
+        while sub_layout.count():
+            item = sub_layout.takeAt(0)
+            if item is None:
+                continue
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+
+    def _get_status_key(self) -> str:
+        # skipped 最优先: from_skip 产出 passed=True, 不可落入「通过」
+        if self._result.skipped:
+            return "skip"
+        if self._result.errored:
+            return "error"
+        return "pass" if self._result.passed else "fail"
+
+    def _apply_card_style(self) -> None:
+        """让卡片背景/边框完全由 theme.py QSS 中的 [status] 选择器驱动。
+
+        不再为每张卡片生成内联样式表, 避免主题切换时 42 次 setStyleSheet 重排。
+        """
+        self.setProperty("status", self._status)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def _setup_ui(self) -> None:
+        self._apply_card_style()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(6)
+        layout.addLayout(self._build_header())
+
+        # 差额行: 始终创建, 通过时隐藏
+        self._diff_row_widget = QWidget()
+        self._diff_row_widget.setLayout(self._build_diff_line())
+        self._diff_row_widget.setVisible(not self._result.passed)
+        layout.addWidget(self._diff_row_widget)
+
+        self._detail = self._build_detail()
+        self._detail.setVisible(self._expanded)
+        layout.addWidget(self._detail)
+        if self._expanded:
+            self._ensure_detail_built()
+
+        # 诊断按钮行: 始终创建, 通过时隐藏
+        self._diagnose_row_widget = QWidget()
+        self._diagnose_row_widget.setLayout(self._build_diagnose_button())
+        self._diagnose_row_widget.setVisible(not self._result.passed)
+        layout.addWidget(self._diagnose_row_widget)
+
+        # 首渲染补齐状态字重/颜色 (此前仅主题切换或 update_result 时才应用)
+        self._apply_status_style()
+
+    def _build_header(self) -> QHBoxLayout:
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        id_label = QLabel(self._result.rule_id)
+        id_label.setObjectName("ResultIdLabel")
+        header.addWidget(id_label)
+        name_label = QLabel(self._result.rule_name)
+        name_label.setObjectName("RuleName")
+        name_label.setWordWrap(False)
+        # 长规则名在空间不足时被截断, 悬浮提示兜底显示全名
+        name_label.setToolTip(self._result.rule_name)
+        header.addWidget(name_label, stretch=1)
+        if self._result.category:
+            cat = QLabel(self._result.category)
+            cat.setObjectName("MetaLabel")
+            header.addWidget(cat)
+        self._status_label = QLabel(_STATUS_TEXT[self._status])
+        self._status_label.setObjectName("ResultStatusLabel")
+        self._status_label.setProperty("status", self._status)
+        header.addWidget(self._status_label)
+        return header
+
+    def _build_diff_line(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        diff_text = f"差额: {self._result.diff:,.2f}"
+        self._diff_label = QLabel(diff_text)
+        self._diff_label.setFont(get_mono_font(11))
+        self._diff_label.setObjectName("ResultDiffLabel")
+        self._diff_label.setProperty("status", self._status)
+        row.addWidget(self._diff_label)
+        tol_label = QLabel(f"  ·  容差: {self._result.tolerance}")
+        tol_label.setObjectName("ResultTolerance")
+        self._tol_label = tol_label
+        row.addWidget(tol_label)
+        row.addStretch()
+        return row
+
+    def _build_detail(self) -> QWidget:
+        """创建空详情容器；具体内容在首次展开时由 _ensure_detail_built 懒加载。"""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(8)
         return container
 
     def _build_trace_table(self) -> QTableWidget:
@@ -192,19 +297,24 @@ class ResultCard(QFrame):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        table.setAlternatingRowColors(True)
         table.horizontalHeader().setStretchLastSection(True)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setFixedHeight(180)
+        p = current_palette()
         for i, t in enumerate(self._result.trace):
             table.setItem(i, 0, QTableWidgetItem(t.name))
             amt = QTableWidgetItem(f"{t.amount:,.2f}")
             amt.setTextAlignment(Qt.AlignmentFlag.AlignRight)
             amt.setFont(get_mono_font(10))
+            if t.amount < 0:
+                amt.setForeground(QColor(p["amount_negative"]))
             table.setItem(i, 1, amt)
             side_text = "左" if t.side == "left" else "右" if t.side == "right" else t.side
             table.setItem(i, 2, QTableWidgetItem(side_text))
-            pos = f"行{t.row} · {t.column}" if t.row > 0 else t.column
+            pos = self._format_trace_pos(t.row, t.column)
             table.setItem(i, 3, QTableWidgetItem(pos))
         table.resizeColumnsToContents()
-        table.setMaximumHeight(table.horizontalHeader().height() + table.rowCount() * 36 + 4)
         return table
 
     def _build_diagnose_button(self) -> QHBoxLayout:
@@ -232,30 +342,73 @@ class ResultCard(QFrame):
         btn_row.addWidget(diagnose_btn)
         return btn_row
 
-    def _on_theme_changed(self) -> None:
-        self._apply_card_style()
-        p = current_palette()
-        accent = p[_STATUS_PALETTE[self._status]]
-        if hasattr(self, "_status_label"):
-            self._status_label.setStyleSheet(
-                f"color: {accent}; font-weight: 500; font-size: 13px;"
-            )
-        if hasattr(self, "_diff_label"):
-            self._diff_label.setStyleSheet(
-                f"color: {accent}; font-size: 12px; font-weight: 600;"
-            )
+    @staticmethod
+    def _format_trace_pos(row: int, column: str) -> str:
+        """格式化追溯位置，PDF 来源解码为「第X页表内第N行」。"""
+        _PDF_ROW_BASE = 10_000_000
+        if row <= 0:
+            return column
+        if row >= _PDF_ROW_BASE:
+            page, table_row = divmod(row, _PDF_ROW_BASE)
+            return f"第{page}页表内第{table_row}行"
+        return f"行{row} · {column}"
 
-    def enterEvent(self, event) -> None:  # type: ignore[override]
-        self._shadow.setBlurRadius(12)
-        self._shadow.setColor(QColor(0, 0, 0, 25))
+    def _refresh_trace_amount_colors(self) -> None:
+        """主题切换后重刷 trace 表负数金额色 (仅负金额项有内联前景色, 正数走 QSS)。"""
+        if not self._detail_built or not self._result.trace:
+            return
+        p = current_palette()
+        for table in self._detail.findChildren(QTableWidget):
+            for i, t in enumerate(self._result.trace):
+                if t.amount >= 0:
+                    continue
+                item = table.item(i, 1)
+                if item is not None:
+                    item.setForeground(QColor(p["amount_negative"]))
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        """hover 时挂阴影 (QSS 不支持 box-shadow, 用 QGraphicsDropShadowEffect)。
+
+        参数取「阴影克制」原则: 小模糊半径 + 低透明度 + 2px 纵向偏移。
+        """
+        if self.graphicsEffect() is None:
+            effect = QGraphicsDropShadowEffect(self)
+            effect.setBlurRadius(10)
+            effect.setOffset(0, 2)
+            effect.setColor(get_shadow_color(hover=True))
+            self.setGraphicsEffect(effect)
         super().enterEvent(event)
 
-    def leaveEvent(self, event) -> None:  # type: ignore[override]
-        self._shadow.setBlurRadius(6)
-        self._shadow.setColor(QColor(0, 0, 0, 10))
+    def leaveEvent(self, event: QEvent) -> None:
+        """离开时卸载阴影, 恢复轻量渲染 (批量重建期间不累积 effect)。"""
+        self.setGraphicsEffect(None)  # type: ignore[arg-type]  # Qt 允许 None 卸载 effect
         super().leaveEvent(event)
 
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+    def _refresh_shadow_color(self) -> None:
+        """主题切换时刷新已挂载阴影的颜色 (深浅主题透明度不同)。"""
+        effect = self.graphicsEffect()
+        if isinstance(effect, QGraphicsDropShadowEffect):
+            effect.setColor(get_shadow_color(hover=True))
+
+    def _on_theme_changed(self) -> None:
+        """主题切换回调; 卡片不可见时只标记脏状态, 显示时再刷新。"""
+        if not self.isVisible():
+            self._theme_dirty = True
+            return
+        self._theme_dirty = False
+        self._apply_card_style()
+        self._apply_status_style()
+        self._refresh_trace_amount_colors()
+        self._refresh_shadow_color()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """卡片重新显示时补齐被延迟的主题刷新。"""
+        super().showEvent(event)
+        if self._theme_dirty:
+            self._theme_dirty = False
+            self._on_theme_changed()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             widget = self.childAt(event.position().toPoint())
             if not isinstance(widget, QPushButton):

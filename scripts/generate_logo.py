@@ -1,4 +1,9 @@
-"""生成应用 Logo: 盾牌 + 对勾 (校验/可信主题), 藏青蓝品牌色。
+"""生成应用 Logo: 极简粗体对勾 + 圆角方形底, 精炼靛蓝品牌色。
+
+设计原则:
+- 1-2 个几何元素: 圆角方形底 + 单一路径粗对勾
+- 小尺寸(16-32px)下仍保持强剪影辨识度
+- 放弃天平等多细节具象图案
 
 产出:
 - resources/logo.svg  (矢量源文件)
@@ -16,45 +21,24 @@ from pathlib import Path
 import cairosvg
 from PIL import Image
 
-# 品牌深青玉 (与 theme.py brand_600 一致)
-TEAL = "#0e7a6c"
-TEAL_DARK = "#0b5a50"
-TEAL_LIGHT = "#3aa495"
-LIGHT = "#f0faf8"
+# 精炼靛蓝 (与 theme.py brand_500/600/700 一致)
+INDIGO_LIGHT = "#818cf8"
+INDIGO = "#5b5ee6"
+INDIGO_DARK = "#4f46e5"
 
-# 精致几何标记: 天平/勾稽平衡意象
-# 圆形底盘 + 内部抽象天平 (两盘平衡 = 勾稽平衡)
+# 极简标记: 粗体圆角对勾, 强剪影
 _SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="{TEAL_LIGHT}"/>
-      <stop offset="0.5" stop-color="{TEAL}"/>
-      <stop offset="1" stop-color="{TEAL_DARK}"/>
-    </linearGradient>
-    <linearGradient id="mark" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="{LIGHT}"/>
+      <stop offset="0" stop-color="{INDIGO_LIGHT}"/>
+      <stop offset="0.5" stop-color="{INDIGO}"/>
+      <stop offset="1" stop-color="{INDIGO_DARK}"/>
     </linearGradient>
   </defs>
-  <!-- 圆角方形底, 柔和渐变 -->
+  <!-- 圆角方形底: 强剪影 -->
   <rect x="10" y="10" width="236" height="236" rx="56" fill="url(#bg)"/>
-  <!-- 顶部高光, 增加立体感 -->
-  <rect x="10" y="10" width="236" height="118" rx="56" fill="#ffffff" opacity="0.08"/>
-
-  <!-- 天平: 立柱 + 横梁 + 两盘 (勾稽平衡意象), 实心白色描边清晰 -->
-  <g stroke="#ffffff" stroke-width="15" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <!-- 横梁 -->
-    <line x1="72" y1="100" x2="184" y2="100"/>
-    <!-- 立柱 -->
-    <line x1="128" y1="100" x2="128" y2="172"/>
-    <!-- 底座 -->
-    <line x1="100" y1="186" x2="156" y2="186"/>
-  </g>
-  <!-- 两盘 (左盘/右盘), 实心 -->
-  <path d="M72 100 L52 142 Q72 156 92 142 Z" fill="#ffffff"/>
-  <path d="M184 100 L164 142 Q184 156 204 142 Z" fill="#ffffff"/>
-  <!-- 立柱顶珠 -->
-  <circle cx="128" cy="92" r="10" fill="#ffffff"/>
+  <!-- 粗体对勾: 单一路径, 圆角端点, 小尺寸下仍可辨识 -->
+  <path d="M70 132 L116 178 L186 88" stroke="#ffffff" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>
 """
 

@@ -1,6 +1,10 @@
 """验证 Ollama 增强诊断: 构建假失败结果, 分别运行回退路径和 LLM 路径。
 
 用法: python scripts/verify_ollama.py
+
+说明: 脚本从应用设置 (QSettings, 与「设置 -> AI 助手 (大模型)」一致) 读取
+Ollama 服务地址与模型名; 未配置时使用脚本内默认常量。若本机 Ollama 服务
+未启动或未拉取模型, 仅「路径 1」通过, LLM 路径的模拟调用仍可完成验证。
 """
 
 from __future__ import annotations
@@ -14,6 +18,33 @@ from fsa.agent.diagnosis import DiagnosisEngine
 from fsa.agent.ollama_client import OllamaClient
 from fsa.core.models.result import TraceItem, ValidationResult
 from fsa.core.models.rule import Severity
+
+# ── Ollama 连接参数 ──
+# 优先从应用设置 (QSettings) 读取; 未配置时使用以下脚本内默认值。
+# 如你的 Ollama 地址/模型不同, 请修改下方常量, 或在应用设置页中填写。
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
+
+
+def _ollama_connection() -> tuple[str, str]:
+    """从应用设置读取 Ollama 地址与模型名, 未配置时回落脚本内默认值。
+
+    Returns:
+        (base_url, model) 元组
+    """
+    try:
+        from PySide6.QtCore import QSettings
+
+        settings = QSettings("FSA", "FinancialAudit")
+        base_url = str(settings.value("llm_base_url", "")).strip()
+        model = str(settings.value("llm_model", "")).strip()
+    except (ImportError, RuntimeError):
+        base_url, model = "", ""
+    if not base_url:
+        base_url = DEFAULT_OLLAMA_BASE_URL
+    if not model:
+        model = DEFAULT_OLLAMA_MODEL
+    return base_url, model
 
 
 def _make_result() -> ValidationResult:
@@ -53,6 +84,9 @@ def main() -> None:
 
     result = _make_result()
     engine = DiagnosisEngine()
+    base_url, model = _ollama_connection()
+    print(f"Ollama 连接参数: 地址 {base_url}, 模型 {model}")
+    print()
 
     # ── 路径 1: 无 Ollama 客户端（回退到规则化诊断）──
     print("=" * 60)
@@ -82,17 +116,17 @@ def main() -> None:
         "建议：逐一核对资产负债表各科目明细账，确认期末余额是否正确。"
     )
 
-    # 模拟 Ollama 响应
+    # 模拟 Ollama 响应 (OllamaClient 兼容层委托 OllamaProvider, 走 /api/chat 格式)
     mock_response = MagicMock()
     mock_response.status = 200
     mock_response.__enter__ = MagicMock(return_value=mock_response)
     mock_response.__exit__ = MagicMock(return_value=False)
     mock_response.read.return_value = json.dumps(
-        {"response": llm_text}
+        {"message": {"role": "assistant", "content": llm_text}}
     ).encode("utf-8")
 
-    with patch("fsa.agent.ollama_client.urlopen", return_value=mock_response):
-        mock_client = OllamaClient()
+    with patch("fsa.agent.llm_client.urlopen", return_value=mock_response):
+        mock_client = OllamaClient(base_url=base_url, model=model)
         # 模拟 is_available 返回 True
         with patch.object(mock_client, "is_available", return_value=True):
             diagnosis_llm = engine.diagnose_with_llm(

@@ -16,10 +16,13 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import FluentIcon
 
+from fsa.core.edition import get_edition_config
+from fsa.core.version import APP_VERSION
+
 # 导航项配置: (section, object_name, label, icon)
 _NAV_ITEMS: list[tuple[str, str, str, FluentIcon]] = [
     ("工作区", "navImport", "数据导入", FluentIcon.DOWNLOAD),
-    ("工作区", "navAudit", "审计底稿", FluentIcon.DOCUMENT),
+    ("工作区", "navAudit", "校验结果", FluentIcon.DOCUMENT),
     ("系统", "navRules", "规则管理", FluentIcon.LIBRARY),
     ("系统", "navHistory", "历史记录", FluentIcon.HISTORY),
     ("系统", "navSettings", "系统设置", FluentIcon.SETTING),
@@ -36,7 +39,9 @@ class NavButton(QPushButton):
         self.setObjectName("NavItem")
         self._nav_id = object_name
         if icon is not None:
-            self.setIcon(icon.icon())
+            # qicon(): 主题同步图标引擎, 深/浅色切换后自动重绘正确颜色
+            # (icon() 会在构造时烘焙颜色, 切主题后图标颜色不刷新)
+            self.setIcon(icon.qicon())
         self.setText(f"  {label}")
         self.setFixedHeight(36)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -125,7 +130,9 @@ class Sidebar(QFrame):
         footer_layout = QVBoxLayout(footer)
         footer_layout.setContentsMargins(12, 8, 12, 8)
 
-        version = QLabel("版本 0.1.0 (MVP)")
+        version = QLabel(
+            f"{get_edition_config().display_name} · 版本 {APP_VERSION}"
+        )
         version.setObjectName("SidebarVersion")
         footer_layout.addWidget(version)
 
@@ -140,7 +147,13 @@ class Sidebar(QFrame):
             btn.set_active(nid == nav_id)
         self.nav_changed.emit(nav_id)
 
-    def set_active_nav(self, nav_id: str) -> None:
+    def set_active_nav(self, nav_id: str, emit: bool = True) -> None:
+        """高亮指定导航项; emit=True 时同时发出 nav_changed 信号。
+
+        程序化切换页面时传 emit=False, 由调用方显式触发导航,
+        避免经信号再次触发 _on_nav 造成双重执行。
+        """
         for nid, btn in self._nav_buttons.items():
             btn.set_active(nid == nav_id)
-        self.nav_changed.emit(nav_id)
+        if emit:
+            self.nav_changed.emit(nav_id)

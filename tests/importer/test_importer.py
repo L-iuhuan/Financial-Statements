@@ -212,3 +212,97 @@ class TestImportServiceDefaultPeriod:
         reports = service.import_file(str(path))
 
         assert reports[0].period == ""
+
+
+class TestImportData:
+    """测试 import_data 方法（从已读取数据导入，跳过文件读取）。"""
+
+    def test_import_data_returns_same_as_import_file(self) -> None:
+        """import_data 与 import_file 对同一文件返回相同结果。"""
+        from fsa.core.importer.excel_reader import read_excel
+        from tests.importer.conftest import make_balance_sheet_excel
+
+        path = make_balance_sheet_excel()
+        raw_data = read_excel(str(path))
+
+        service = ImportService()
+        from_file = service.import_file(str(path))
+        from_data = service.import_data(raw_data, str(path), ".xlsx")
+
+        assert len(from_file) == len(from_data)
+        for r1, r2 in zip(from_file, from_data, strict=True):
+            assert r1.report_type == r2.report_type
+            assert r1.source_file == r2.source_file
+            assert r1.period == r2.period
+            # 金额一致
+            assert r1.get_amount("asset_total") == r2.get_amount("asset_total")
+
+    def test_import_data_multi_sheet(self) -> None:
+        """import_data 对多 sheet 文件返回全部报表。"""
+        from fsa.core.importer.excel_reader import read_excel
+        from tests.importer.conftest import make_multi_sheet_excel
+
+        path = make_multi_sheet_excel()
+        raw_data = read_excel(str(path))
+
+        service = ImportService()
+        reports = service.import_data(raw_data, str(path), ".xlsx")
+
+        assert len(reports) == 3
+        types = {r.report_type for r in reports}
+        assert ReportType.BALANCE_SHEET in types
+        assert ReportType.INCOME_STATEMENT in types
+        assert ReportType.CASH_FLOW_STATEMENT in types
+
+    def test_import_data_empty_data_returns_empty(self) -> None:
+        """import_data 对空数据返回空列表。"""
+        service = ImportService()
+        reports = service.import_data({}, "empty.xlsx", ".xlsx")
+        assert reports == []
+
+    def test_import_data_with_period(self) -> None:
+        """import_data 使用 ImportService 的 period。"""
+        from fsa.core.importer.excel_reader import read_excel
+        from tests.importer.conftest import make_balance_sheet_excel
+
+        path = make_balance_sheet_excel()
+        raw_data = read_excel(str(path))
+
+        service = ImportService(period="2024-12")
+        reports = service.import_data(raw_data, str(path), ".xlsx")
+
+        assert reports[0].period == "2024-12"
+
+
+class TestMagnitudeUnitWarning:
+    """无单位表头 + 千亿级金额: 提示确认单位 (P1 宁可提示不可静默)。"""
+
+    def _make_bs(self, tmp_path, amount, unit_header=None):
+        from openpyxl import Workbook
+
+        path = tmp_path / "magnitude.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "资产负债表"
+        primary = unit_header or "期末余额"
+        ws.append(["项目", primary])
+        ws.append(["资产总计", amount])
+        wb.save(str(path))
+        wb.close()
+        return path
+
+    def test_huge_amount_without_unit_warns(self, tmp_path) -> None:
+        path = self._make_bs(tmp_path, 200_000_000_000.0)
+        report = ImportService(period="2024-12").import_file(str(path))[0]
+        assert report.amount_unit == "元"
+        assert "请确认原表单位" in report.unit_warning
+
+    def test_huge_amount_with_explicit_yuan_does_not_warn(self, tmp_path) -> None:
+        path = self._make_bs(tmp_path, 200_000_000_000.0, unit_header="期末余额（元）")
+        report = ImportService(period="2024-12").import_file(str(path))[0]
+        assert report.unit_warning == ""
+
+    def test_normal_amount_without_unit_does_not_warn(self, tmp_path) -> None:
+        path = self._make_bs(tmp_path, 9_000_000.0)
+        report = ImportService(period="2024-12").import_file(str(path))[0]
+        assert report.unit_warning == ""

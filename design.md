@@ -1,5 +1,8 @@
 # 财务报表勾稽关系自动校验系统 - 设计文档
 
+> **归档说明 (2026-08-15)**: 本文为历史设计/过程文档，其中规则数量、目录结构、依赖清单等具体数值可能与现行代码不一致；一切以根 AGENTS.md 与代码为准。
+
+
 > **版本**: v1.0-draft  
 > **日期**: 2026-08-07  
 > **许可证**: MIT  
@@ -63,7 +66,7 @@
 |---|---|
 | `design.md` | 本文档 - 完整调研与设计 |
 | `project_structure.md` | 项目目录结构、模块接口定义、分阶段开发计划 |
-| `cas_gouji_rule_library.json` | CAS 勾稽规则默认库（44 条规则） |
+| `cas_gouji_rule_library.json` | CAS 勾稽规则默认库（44 条规则；v1.2.0 起调整为 37 条，v1.3.0 起为 42 条） |
 | `DEV_LOG.md` | 开发日志 |
 
 ---
@@ -1664,16 +1667,16 @@ Name: "{commondesktop}\财务报表稽核"; Filename: "{app}\FSA.exe"; Tasks: de
 
 ```json
 {
-  "latest_version": "0.1.1",
-  "minimum_version": "0.1.0",
-  "release_date": "2026-08-10",
+  "version": "0.1.1",
   "download_url": "\\\\server\\fsa-updates\\v0.1.1\\FSA-Setup-0.1.1.exe",
-  "changelog": "## v0.1.1\n1. 修复资产负债表合并单元格提取问题\n2. 新增利润表同比波动校验\n3. 优化结果看板分页性能",
-  "checksum": "sha256:a1b2c3d4e5f6...",
-  "file_size": 78643200,
-  "force_update": false
+  "release_notes": "## v0.1.1\n1. 修复资产负债表合并单元格提取问题\n2. 新增利润表同比波动校验\n3. 优化结果看板分页性能",
+  "sha256": "a1b2c3d4e5f6..."
 }
 ```
+
+> **字段说明**：必需字段 `version`（最新版本号）、`download_url`（安装包地址）；
+> 可选字段 `release_notes`（更新说明，缺失时为空）、`sha256`（安装包 SHA256 十六进制小写，
+> 清单提供该字段时下载完成后比对文件完整性，不匹配则删除文件并报错；缺失时跳过校验以保持向后兼容）。
 
 #### 更新检查流程
 
@@ -1688,14 +1691,10 @@ import os
 @dataclass
 class VersionInfo:
     """远程版本信息"""
-    latest_version: str
-    minimum_version: str
-    release_date: str
+    version: str
     download_url: str
-    changelog: str
-    checksum: str
-    file_size: int
-    force_update: bool = False
+    release_notes: str
+    sha256: str
 
 
 def parse_version(version_str: str) -> tuple[int, int, int]:
@@ -1730,19 +1729,15 @@ def check_update(
     with open(manifest_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    remote_version = data["latest_version"]
+    remote_version = data["version"]
     if not is_newer(remote_version, local_version):
         return None  # 已是最新
 
     return VersionInfo(
-        latest_version=remote_version,
-        minimum_version=data.get("minimum_version", "0.0.1"),
-        release_date=data["release_date"],
+        version=remote_version,
         download_url=data["download_url"],
-        changelog=data["changelog"],
-        checksum=data["checksum"],
-        file_size=data.get("file_size", 0),
-        force_update=data.get("force_update", False),
+        release_notes=data.get("release_notes", ""),
+        sha256=data.get("sha256", ""),
     )
 ```
 
@@ -1819,7 +1814,7 @@ iscc scripts/build_installer.iss
 certutil -hashfile FSA-Setup-0.1.1.exe SHA256
 
 # 5. 更新 version.json
-# 填入 latest_version, download_url, changelog, checksum
+# 填入 version, download_url, release_notes, sha256
 
 # 6. 复制到内网服务器
 Copy-Item FSA-Setup-0.1.1.exe \\server\fsa-updates\v0.1.1\

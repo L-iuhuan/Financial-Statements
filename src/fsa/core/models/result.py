@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from loguru import logger
+
 from fsa.core.models.report import Report, ReportItem, ReportType
 from fsa.core.models.rule import ReconciliationRule, Severity
 
@@ -36,14 +38,18 @@ KNOWN_LINE_ITEM_KEYS: frozenset[str] = frozenset({
     "paid_in_capital", "capital_reserve", "treasury_stock",
     "other_comprehensive_income", "surplus_reserve", "undistributed_profit",
     "equity_total", "liability_equity_total", "minority_interest",
-    "parent_equity", "general_risk_reserve", "special_reserve",
+    # NOTE: parent_equity is intentionally excluded from the zero-prefill set.
+    # It marks a consolidated balance sheet ("归属于母公司所有者权益合计").
+    # Pre-filling it with 0 would make SCE-BAL-002 falsely fail on standalone
+    # statements; when absent, that rule now skips (P1: 宁可漏报不可误报).
+    "general_risk_reserve", "special_reserve",
     "other_equity_instruments",
     # IS
     "revenue", "operating_cost",
     # NOTE: total_revenue/total_operating_cost intentionally excluded.
     # 仅 IS-BAL-001 使用 (营业总收入/总成本格式)。若预填 0, 标准分项格式报表
     # (营业收入/营业成本) 会误报不通过。移出后此类报表 IS-BAL-001 跳过 (P1).
-    # 茅台/格力报表实际包含这两项, 仍会被提取入 namespace, 校验不受影响。
+    # 部分企业报表实际包含这两项, 仍会被提取入 namespace, 校验不受影响。
     "interest_income", "interest_expense", "fee_commission_income",
     "fee_commission_expense", "earned_premium", "surrender_value",
     "claim_payment", "insurance_reserve_change", "policy_dividend_expense",
@@ -71,10 +77,16 @@ KNOWN_LINE_ITEM_KEYS: frozenset[str] = frozenset({
     "cash_for_dividends", "financing_cash_outflow", "financing_net",
     "net_increase_cash", "fx_effect", "beginning_cash_equiv",
     "ending_cash_equiv",
+    # NOTE: cf_notes_credit_impairment 是 P1 取舍的少数例外——预填 0 在此处
+    # 不会误报。IS-CF-002 公式为 cf_notes_impairment + cf_notes_credit_impairment；
+    # 旧格式补充资料将信用减值并入'资产减值准备'合并列示时该行不存在，
+    # 预填 0 使公式退化为原语义（cf_notes_impairment 单独承担）。
+    # 企业无单独信用减值行时该项本就为 0，故预填与真实值一致。
+    "cf_notes_credit_impairment",
     # NOTE: dividends/surplus_withheld/prior_period_adjust/restricted_adjust
     # intentionally EXCLUDED — they have no data source in the three main
     # statements. If pre-filled with 0, BS-IS-001 would falsely fail for
-    # companies with real dividend distributions (e.g. Moutai 2023 paid ~65.8B).
+    # companies with real dividend distributions.
     # Per P1 (宁可漏报不可误报), rules using them skip instead.
 })
 
@@ -189,6 +201,11 @@ class ValidationSummary:
         skipped: 跳过数（所需报表未导入）
         results: 所有校验结果明细
         report_types: 本次校验涉及的报表类型
+        source_files: 本次校验使用的源文件路径 (审计证据链)
+        source_hashes: 与 source_files 一一对应的 SHA256 哈希
+        source_file_sizes: 与 source_files 一一对应的文件大小 (字节; 无法获取为 -1)
+        rule_version: 执行校验时使用的内置规则库版本
+        amount_unit_notes: 各报表/明细附表识别到的金额单位与换算说明 (审计留痕)
     """
 
     period: str = ""
@@ -199,6 +216,11 @@ class ValidationSummary:
     skipped: int = 0
     results: list[ValidationResult] = field(default_factory=list)
     report_types: list[ReportType] = field(default_factory=list)
+    source_files: list[str] = field(default_factory=list)
+    source_hashes: list[str] = field(default_factory=list)
+    source_file_sizes: list[int] = field(default_factory=list)
+    rule_version: str = ""
+    amount_unit_notes: list[str] = field(default_factory=list)
 
     @property
     def all_passed(self) -> bool:
@@ -233,9 +255,20 @@ class ValidationContext:
     reports: dict[ReportType, Report] = field(default_factory=dict)
     period: str = ""
 
+    def __post_init__(self) -> None:
+        """初始化 namespace 缓存 (按 statements 组合缓存)。"""
+        self._ns_cache: dict[frozenset[str], dict[str, float]] = {}
+
     def add_report(self, report: Report) -> None:
-        """添加一张报表。已存在同类型则覆盖。"""
+        """添加一张报表。已存在同类型则覆盖并记录警告，同时清空缓存。"""
+        existing = self.reports.get(report.report_type)
+        if existing is not None:
+            logger.warning(
+                f"报表类型「{report.report_type.value}」已存在，将被覆盖。"
+                f"旧来源: {existing.source_file}, 新来源: {report.source_file}"
+            )
         self.reports[report.report_type] = report
+        self._ns_cache.clear()
 
     def get_report(self, report_type: ReportType) -> Report | None:
         """获取指定类型的报表。不存在返回 None。"""
@@ -266,6 +299,8 @@ class ValidationContext:
         为每个 item 同时设置 {key}_ending 和 {key}_beginning 变量（如果 beginning_amount 不为 None）。
         如果同一个 key 在多张报表中出现，抛出 ValueError。
 
+        结果按 frozenset(statement_names) 缓存——调用方必须复制后再修改 (如 runner 注入阈值变量)。
+
         Args:
             statement_names: 规则涉及的报表中文名列表，如 ["资产负债表"]
 
@@ -276,9 +311,17 @@ class ValidationContext:
             KeyError: 指定的报表类型不存在
             ValueError: 变量名冲突（同一 key 出现在多张报表中）
         """
+        cache_key = frozenset(statement_names)
+        cached = self._ns_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         namespace: dict[str, float] = {key: 0.0 for key in KNOWN_LINE_ITEM_KEYS}
         seen_keys: set[str] = set()
         name_to_type = {rt.value: rt for rt in ReportType}
+
+        # 后缀模式的 key 集合，避免对已带后缀的 key 再生成 {key}_ending/{key}_beginning
+        _SUFFIXED_KEYS: frozenset[str] = frozenset({"_ending", "_beginning", "_comprehensive"})
 
         for stmt_name in statement_names:
             report_type = name_to_type.get(stmt_name)
@@ -294,9 +337,14 @@ class ValidationContext:
                     )
                 seen_keys.add(item.key)
                 namespace[item.key] = item.amount
-                # 设置 {key}_ending 变量
-                namespace[f"{item.key}_ending"] = item.amount
-                # 设置 {key}_beginning 变量（仅当 beginning_amount 不为 None）
-                if item.beginning_amount is not None:
+                # 设置 {key}_ending 变量 (仅当 key 本身不以 _ending/_beginning/_comprehensive 结尾)
+                if not any(item.key.endswith(suffix) for suffix in _SUFFIXED_KEYS):
+                    namespace[f"{item.key}_ending"] = item.amount
+                # 设置 {key}_beginning 变量（仅当 beginning_amount 不为 None 且 key 无后缀）
+                if item.beginning_amount is not None and not any(
+                    item.key.endswith(suffix) for suffix in _SUFFIXED_KEYS
+                ):
                     namespace[f"{item.key}_beginning"] = item.beginning_amount
+
+        self._ns_cache[cache_key] = namespace
         return namespace

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from PySide6.QtWidgets import QLabel
+
+from fsa.core.version import APP_VERSION
 from fsa.gui.main_window import MainWindow
 
 
@@ -17,12 +20,12 @@ class TestSidebarNavigation:
         assert window._topbar._title.text() == "数据导入与校验"
 
     def test_click_nav_audit_switches_page_and_title(self, qapp, qtbot, app_state) -> None:
-        """点击"审计底稿"切换页面索引为1并更新顶栏标题 (SB-01)。"""
+        """点击"校验结果"切换页面索引为1并更新顶栏标题 (SB-01)。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         window._sidebar._nav_buttons["navAudit"].clicked_nav.emit("navAudit")
         assert window._stack.currentIndex() == 1
-        assert window._topbar._title.text() == "审计底稿"
+        assert window._topbar._title.text() == "校验结果"
 
     def test_click_nav_rules_switches_page_and_title(self, qapp, qtbot, app_state) -> None:
         """点击"规则管理"切换页面索引为2并更新顶栏标题 (SB-01)。"""
@@ -33,19 +36,19 @@ class TestSidebarNavigation:
         assert window._topbar._title.text() == "规则管理"
 
     def test_click_nav_history_switches_page_and_title(self, qapp, qtbot, app_state) -> None:
-        """点击"历史记录"切换页面索引为3并更新顶栏标题 (SB-01)。"""
+        """点击"历史记录"切换到历史页并更新顶栏标题 (SB-01; 懒加载页索引不固定)。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         window._sidebar._nav_buttons["navHistory"].clicked_nav.emit("navHistory")
-        assert window._stack.currentIndex() == 3
+        assert window._stack.currentWidget() is window._history_page
         assert window._topbar._title.text() == "历史记录"
 
     def test_click_nav_settings_switches_page_and_title(self, qapp, qtbot, app_state) -> None:
-        """点击"系统设置"切换页面索引为4并更新顶栏标题 (SB-01)。"""
+        """点击"系统设置"切换到设置页并更新顶栏标题 (SB-01; 懒加载页索引不固定)。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         window._sidebar._nav_buttons["navSettings"].clicked_nav.emit("navSettings")
-        assert window._stack.currentIndex() == 4
+        assert window._stack.currentWidget() is window._settings_page
         assert window._topbar._title.text() == "系统设置"
 
 
@@ -79,3 +82,15 @@ class TestSidebarActiveState:
         window._sidebar._nav_buttons["navHistory"].clicked_nav.emit("navHistory")
         assert window._sidebar._nav_buttons["navRules"].property("active") is False
         assert window._sidebar._nav_buttons["navHistory"].property("active") is True
+
+
+class TestSidebarVersion:
+    """侧边栏版本号引用 (B-17)。"""
+
+    def test_version_label_uses_app_version(self, qapp, qtbot, app_state) -> None:
+        """版本号来自 fsa.core.version.APP_VERSION, 而非硬编码。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        labels = window._sidebar.findChildren(QLabel, "SidebarVersion")
+        text = " ".join(lbl.text() for lbl in labels)
+        assert APP_VERSION in text

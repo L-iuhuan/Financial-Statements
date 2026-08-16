@@ -1,0 +1,26 @@
+# 统一换行符与二进制判定 (Phase G)
+* text=auto
+
+# 源码统一 LF
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+
+# Windows 脚本/安装脚本保持 CRLF, 避免 PowerShell/Inno 解析差异
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+*.isl text eol=crlf
+
+# 二进制资源
+*.png binary
+*.jpg binary
+*.ico binary
+*.svg text eol=lf
+*.xlsx binary
+*.xls binary
+*.pdf binary
+*.zip binary

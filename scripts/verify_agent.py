@@ -37,7 +37,7 @@ class ScriptedLLM:
     def is_available(self) -> bool:
         return True
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, timeout=None):
         self.calls += 1
         if self.calls == 1:
             # 第一轮: 决定调用工具获取差异追溯

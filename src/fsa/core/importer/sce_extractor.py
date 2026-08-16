@@ -10,11 +10,11 @@ SCE 是矩阵式报表, 不同于三大主表的"项目+金额"列表布局:
 
 from __future__ import annotations
 
-import math
 import re
 
 from loguru import logger
 
+from fsa.core.importer.amount_parser import parse_amount
 from fsa.core.importer.excel_reader import RawSheetData
 from fsa.core.importer.name_mapper import clean_name
 from fsa.core.models.report import ReportItem
@@ -161,18 +161,8 @@ def _extract_row(
 
 
 def _to_float(value: object) -> float | None:
-    """安全转换为 float, 失败返回 None。"""
-    if value is None:
-        return None
-    if not isinstance(value, (int, float, str)):
-        return None
-    try:
-        result = float(value)
-    except (ValueError, TypeError):
-        return None
-    if math.isnan(result):
-        return None
-    return result
+    """安全转换为 float, 使用统一金额解析器 (支持千分位/括号负数/占位符)。"""
+    return parse_amount(value)
 
 
 def _to_row_num(row: dict[str, object]) -> int:

@@ -32,6 +32,8 @@ class ReportItem:
         beginning_amount: 期初/上期金额（元）。None 表示报表无第二列金额。
         row: 在源文件中的行号（从1开始），用于差异追溯
         column: 在源文件中的列名，如 "期末余额"
+        beginning_column: 期初金额所在列名，如 "年初余额"。空串表示无第二列金额，
+            trace 期初变量时据此把列归属到期初列而非期末列。
     """
 
     key: str
@@ -40,6 +42,7 @@ class ReportItem:
     beginning_amount: float | None = None
     row: int = 0
     column: str = ""
+    beginning_column: str = ""
 
     def __post_init__(self) -> None:
         if not self.key:
@@ -64,12 +67,21 @@ class Report:
         period: 报告期间，如 "2024-12"
         source_file: 源文件路径
         items: 报表项目列表
+        unmapped_names: 导入时未能映射为标准科目的项目名称（有金额但无法识别），
+            供 Agent 工具与人工排查使用；不参与校验
+        amount_unit: 源报表金额单位 (元/千元/万元/百万元/亿元); items 已统一换算为元
+        unit_warning: 单位识别提示 (如无法确定单位、多列单位不一致)
+        parse_diagnostics: 解析诊断信息 (PDF 页数/表数/跳过统计/置信度等)
     """
 
     report_type: ReportType
     period: str = ""
     source_file: str = ""
     items: list[ReportItem] = field(default_factory=list)
+    unmapped_names: list[str] = field(default_factory=list)
+    amount_unit: str = "元"
+    unit_warning: str = ""
+    parse_diagnostics: str = ""
 
     def __post_init__(self) -> None:
         self._index: dict[str, ReportItem] = {}

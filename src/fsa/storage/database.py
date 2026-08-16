@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from types import TracebackType
 
 from loguru import logger
 
@@ -25,7 +26,21 @@ CREATE TABLE IF NOT EXISTS validation_history (
     failed      INTEGER NOT NULL DEFAULT 0,
     errored     INTEGER NOT NULL DEFAULT 0,
     skipped     INTEGER NOT NULL DEFAULT 0,
-    report_types TEXT NOT NULL DEFAULT '[]'
+    report_types TEXT NOT NULL DEFAULT '[]',
+    source_files TEXT NOT NULL DEFAULT '[]',
+    source_hashes TEXT NOT NULL DEFAULT '[]',
+    rule_version TEXT NOT NULL DEFAULT '',
+    amount_unit_notes TEXT NOT NULL DEFAULT '[]',
+    source_file_sizes TEXT NOT NULL DEFAULT '[]'
+);
+
+-- 规则库版本迁移记录
+CREATE TABLE IF NOT EXISTS rule_version_migrations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    migrated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    from_version TEXT NOT NULL DEFAULT '',
+    to_version   TEXT NOT NULL DEFAULT '',
+    note         TEXT NOT NULL DEFAULT ''
 );
 
 -- 校验结果明细表
@@ -42,7 +57,10 @@ CREATE TABLE IF NOT EXISTS validation_results (
     tolerance   REAL NOT NULL DEFAULT 0,
     formula     TEXT NOT NULL DEFAULT '',
     message     TEXT NOT NULL DEFAULT '',
-    errored     INTEGER NOT NULL DEFAULT 0
+    errored     INTEGER NOT NULL DEFAULT 0,
+    skipped     INTEGER NOT NULL DEFAULT 0,
+    category    TEXT NOT NULL DEFAULT '',
+    trace       TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_results_history
     ON validation_results(history_id);
@@ -67,12 +85,41 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_messages_session
     ON chat_messages(session_id);
 
--- 规则容差覆写表
+-- 规则容差/启停覆写表
 CREATE TABLE IF NOT EXISTS rule_overrides (
     rule_id   TEXT PRIMARY KEY,
-    tolerance REAL NOT NULL
+    tolerance REAL NOT NULL,
+    enabled   INTEGER NOT NULL DEFAULT 1
 );
 """
+
+# validation_results 表 v1.3.0 新增列迁移配置
+# 按列名 -> (列定义, 中文日志名)
+_RESULT_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
+    "skipped": ("skipped INTEGER NOT NULL DEFAULT 0", "跳过"),
+    "category": ("category TEXT NOT NULL DEFAULT ''", "分类"),
+    "trace": ("trace TEXT NOT NULL DEFAULT '[]'", "追溯"),
+}
+
+# validation_history 表 v0.4.1 新增审计证据链列迁移配置
+_HISTORY_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
+    "source_files": ("source_files TEXT NOT NULL DEFAULT '[]'", "源文件"),
+    "source_hashes": ("source_hashes TEXT NOT NULL DEFAULT '[]'", "源文件哈希"),
+    "rule_version": ("rule_version TEXT NOT NULL DEFAULT ''", "规则版本"),
+    "amount_unit_notes": (
+        "amount_unit_notes TEXT NOT NULL DEFAULT '[]'",
+        "金额单位留痕",
+    ),
+    "source_file_sizes": (
+        "source_file_sizes TEXT NOT NULL DEFAULT '[]'",
+        "源文件大小",
+    ),
+}
+
+# rule_overrides 表新增启停列迁移配置 (默认 1=启用, 旧数据视为启用)
+_OVERRIDE_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
+    "enabled": ("enabled INTEGER NOT NULL DEFAULT 1", "启停"),
+}
 
 
 class Database:
@@ -127,6 +174,10 @@ class Database:
     def init_schema(self) -> None:
         """初始化数据库 schema (幂等操作)。
 
+        对已存在的旧数据库，自动检测并迁移新增列 (v1.3.0+)。
+        迁移使用 PRAGMA table_info 检测列是否存在，再 ALTER TABLE ADD COLUMN，
+        确保旧数据不丢失。
+
         Raises:
             RuntimeError: 数据库未连接
         """
@@ -135,6 +186,29 @@ class Database:
         self._conn.executescript(_SCHEMA_DDL)
         self._conn.commit()
         logger.info("数据库 schema 初始化完成")
+
+        # 迁移: 为旧数据库补齐新增列
+        self._migrate_columns("validation_results", _RESULT_MIGRATION_COLUMNS)
+        self._migrate_columns("validation_history", _HISTORY_MIGRATION_COLUMNS)
+        self._migrate_columns("rule_overrides", _OVERRIDE_MIGRATION_COLUMNS)
+
+    def _migrate_columns(
+        self, table_name: str, columns: dict[str, tuple[str, str]]
+    ) -> None:
+        """检测并迁移指定表的新增列 (幂等)。"""
+        if self._conn is None:
+            return
+        existing = {
+            row[1] for row in
+            self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        for col_name, (col_def, label) in columns.items():
+            if col_name not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {col_def}"
+                )
+                self._conn.commit()
+                logger.info(f"数据库迁移: {table_name} 表新增「{label}」列")
 
     def close(self) -> None:
         """关闭数据库连接。"""
@@ -148,5 +222,10 @@ class Database:
         self.init_schema()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()

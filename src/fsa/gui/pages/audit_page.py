@@ -1,23 +1,21 @@
-"""审计底稿页面: 表格形式展示全部校验结果。
+"""校验结果页面: 表格形式展示全部校验结果。
 
-匹配 Demo v4 设计: 审计表格 + 导出按钮 + 打印预览。
+提供导出 Excel 与打印预览; 历史记录“查看”也跳转到本页展示。
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -25,14 +23,18 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import InfoBar, InfoBarPosition
 
-from fsa.core.exporter.audit_exporter import AuditExporter
 from fsa.core.models.rule import Severity
 from fsa.gui.app_state import AppState
-from fsa.gui.theme import current_palette, get_mono_font
+from fsa.gui.export_helper import export_audit_workbook
+from fsa.gui.theme import bind_theme_listener, current_palette, get_mono_font
 
 
 class AuditPage(QWidget):
-    """审计底稿页面: 以表格展示校验结果。"""
+    """校验结果页面: 以表格展示校验结果。"""
+
+    history_view_exit_requested = Signal()
+    # V3: 空状态「去导入」按钮 -> 主窗口切换到数据导入页
+    go_import_requested = Signal()
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -41,6 +43,8 @@ class AuditPage(QWidget):
         self._setup_ui()
         self._connect_signals()
         self._update_table()
+        # 差额列负数红为内联前景色, 主题切换后需重渲染表格刷新
+        bind_theme_listener(self, self._update_table)
 
     def _setup_ui(self) -> None:
         scroll = QScrollArea()
@@ -55,12 +59,12 @@ class AuditPage(QWidget):
 
         # 标题行
         title_row = QHBoxLayout()
-        title = QLabel("审计底稿预览")
-        title.setStyleSheet("font-size: 15px; font-weight: 600;")
+        title = QLabel("校验结果一览")
+        title.setObjectName("PageTitle")
         title_row.addWidget(title)
         title_row.addStretch()
 
-        export_btn = QPushButton("导出 Excel")
+        export_btn = QPushButton("导出 Excel 底稿")
         export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         export_btn.setObjectName("BtnSecondary")
         export_btn.clicked.connect(self._on_export)
@@ -72,6 +76,23 @@ class AuditPage(QWidget):
         print_btn.clicked.connect(self._on_print_preview)
         title_row.addWidget(print_btn)
         layout.addLayout(title_row)
+
+        # 历史回看横幅 (默认隐藏)
+        self._history_banner = QFrame()
+        self._history_banner.setObjectName("HistoryViewBanner")
+        self._history_banner.setVisible(False)
+        banner_layout = QHBoxLayout(self._history_banner)
+        banner_layout.setContentsMargins(12, 8, 12, 8)
+        self._history_banner_text = QLabel()
+        self._history_banner_text.setObjectName("HistoryViewBannerText")
+        self._history_banner_text.setWordWrap(True)
+        banner_layout.addWidget(self._history_banner_text, stretch=1)
+        exit_btn = QPushButton("退出回看")
+        exit_btn.setObjectName("TextBtn")
+        exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        exit_btn.clicked.connect(self.history_view_exit_requested.emit)
+        banner_layout.addWidget(exit_btn)
+        layout.addWidget(self._history_banner)
 
         # 表格
         self._table = QTableWidget()
@@ -85,16 +106,38 @@ class AuditPage(QWidget):
         )
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
-        layout.addWidget(self._table)
 
         # 空状态
         self._empty = QLabel("暂无校验结果，请先在「数据导入」页面执行校验")
         self._empty.setObjectName("EmptyLabel")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setVisible(True)
-        layout.addWidget(self._empty)
 
-        layout.addStretch()
+        # V3: 空状态给出下一步动作入口 (居中按钮)
+        self._go_import_btn = QPushButton("去导入")
+        self._go_import_btn.setObjectName("BtnPrimary")
+        self._go_import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._go_import_btn.setFixedHeight(32)
+        self._go_import_btn.clicked.connect(self.go_import_requested.emit)
+
+        # 表格 / 空状态切换容器 (stack 吃满剩余高度)
+        self._results_stack = QStackedWidget()
+        self._results_stack.addWidget(self._table)
+
+        empty_page = QFrame()
+        empty_page.setObjectName("EmptyContainer")
+        empty_layout = QVBoxLayout(empty_page)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.setSpacing(16)
+        empty_layout.addWidget(self._empty)
+        go_import_row = QHBoxLayout()
+        go_import_row.addStretch()
+        go_import_row.addWidget(self._go_import_btn)
+        go_import_row.addStretch()
+        empty_layout.addLayout(go_import_row)
+        self._results_stack.addWidget(empty_page)
+
+        layout.addWidget(self._results_stack, stretch=1)
         scroll.setWidget(content)
 
         main = QVBoxLayout(self)
@@ -104,14 +147,33 @@ class AuditPage(QWidget):
     def _connect_signals(self) -> None:
         self._state.results_changed.connect(self._update_table)
 
+    def _sync_history_banner(self) -> None:
+        """按 AppState.history_view_id 刷新历史回看横幅。"""
+        history_id = self._state.history_view_id
+        summary = self._state.results
+        if history_id is None:
+            self._history_banner.setVisible(False)
+            return
+        period = summary.period if summary is not None else ""
+        meta_parts = [f"历史回看 #{history_id}", f"期间 {period or '未设置'}"]
+        if summary is not None:
+            if summary.source_files:
+                meta_parts.append(f"源文件 {len(summary.source_files)} 个")
+            if summary.rule_version:
+                meta_parts.append(f"规则 CAS v{summary.rule_version}")
+        meta_parts.append("以下为历史校验结果，导出内容为历史数据")
+        self._history_banner_text.setText(" · ".join(meta_parts))
+        self._history_banner.setVisible(True)
+
     def _update_table(self) -> None:
         summary = self._state.results
+        self._sync_history_banner()
         if summary is None:
             self._table.setRowCount(0)
-            self._empty.setVisible(True)
+            self._results_stack.setCurrentIndex(1)
             return
 
-        self._empty.setVisible(False)
+        self._results_stack.setCurrentIndex(0)
         results = summary.results
         self._table.setRowCount(len(results))
         p = current_palette()
@@ -133,10 +195,13 @@ class AuditPage(QWidget):
                     stmts = ", ".join(rule.statements)
             self._table.setItem(i, 3, QTableWidgetItem(stmts))
 
-            # 校验结果 + 颜色
+            # 校验结果 + 颜色 (跳过先于通过判断: skipped=True 且 passed=True)
             if result.errored:
                 status_text = "异常"
                 status_color = p["warning"]
+            elif result.skipped:
+                status_text = "跳过"
+                status_color = p["text_secondary"]
             elif result.passed:
                 status_text = "通过"
                 status_color = p["success"]
@@ -155,6 +220,8 @@ class AuditPage(QWidget):
             diff_item = QTableWidgetItem(f"{result.diff:,.2f}")
             diff_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
             diff_item.setFont(get_mono_font(10))
+            if result.diff < 0:
+                diff_item.setForeground(QColor(p["amount_negative"]))
             self._table.setItem(i, 5, diff_item)
 
             tol_item = QTableWidgetItem(str(result.tolerance))
@@ -162,48 +229,8 @@ class AuditPage(QWidget):
             self._table.setItem(i, 6, tol_item)
 
     def _on_export(self) -> None:
-        summary = self._state.results
-        if summary is None:
-            InfoBar.warning(
-                "提示", "请先执行校验，再导出底稿",
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=3000, parent=self,
-            )
-            return
-
-        period = summary.period or "未命名"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_name = f"审计底稿_{period}_{timestamp}.xlsx"
-
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "导出审计底稿",
-            default_name,
-            "Excel 文件 (*.xlsx)",
-        )
-        if not path:
-            return
-
-        try:
-            exporter = AuditExporter()
-            exporter.export(summary, path)
-            InfoBar.success(
-                "导出成功", f"已导出到 {path}",
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=5000, parent=self,
-            )
-        except PermissionError:
-            InfoBar.error(
-                "导出失败", "文件被占用，请关闭已打开的 Excel 文件后重试",
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=5000, parent=self,
-            )
-        except OSError:
-            InfoBar.error(
-                "导出失败", "无法写入文件，请检查路径权限",
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=5000, parent=self,
-            )
+        """导出审计底稿 (公共逻辑见 export_helper.py)。"""
+        export_audit_workbook(self, self._state.results, show_progress=False)
 
     def _on_print_preview(self) -> None:
         summary = self._state.results
@@ -230,6 +257,7 @@ class AuditPage(QWidget):
         for result in summary.results:
             status = (
                 "异常" if result.errored
+                else "跳过" if result.skipped
                 else "通过" if result.passed
                 else "不通过" if result.severity is Severity.ERROR
                 else "警告"
@@ -262,4 +290,4 @@ class AuditPage(QWidget):
         doc = QTextDocument()
         doc.setHtml(html)
         # print 是 QTextDocument 的有效方法 (PySide6 将 C++ print 映射至此)
-        doc.print(printer)
+        doc.print_(printer)

@@ -17,6 +17,68 @@ FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "real_reports"
 THREE_REPORTS_PDF = FIXTURE_DIR / "测试报表_三大报表.pdf"
 MERGED_BS_PDF = FIXTURE_DIR / "测试报表_合并资产负债表.pdf"
 
+# PDF 行号编码基数 (与 src/fsa/core/importer/pdf_reader.py 保持一致, D-01)
+_PDF_ROW_BASE = 10_000_000
+
+
+# ── mock pdfplumber 的辅助类 ──────────────────────────────
+
+
+class _FakePage:
+    """模拟 pdfplumber 页面, 仅提供 extract_tables。"""
+
+    def __init__(
+        self,
+        table: list[list[str | None]],
+        tables: list[list[list[str | None]]] | None = None,
+    ) -> None:
+        self._tables = tables if tables is not None else [table]
+
+    def extract_tables(self) -> list[list[list[str | None]]]:
+        return self._tables
+
+
+class _FakePdf:
+    """模拟 pdfplumber.open 返回的上下文管理器。"""
+
+    def __init__(self, pages: list[_FakePage]) -> None:
+        self.pages = pages
+
+    def __enter__(self) -> _FakePdf:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class _FakePdfModule:
+    """模拟 pdfplumber 模块 (仅 open), 通过 monkeypatch 注入 pdf_reader。"""
+
+    def __init__(self, pages: list[_FakePage]) -> None:
+        self._pages = pages
+
+    def open(self, path: str, **kwargs: object) -> _FakePdf:
+        return _FakePdf(self._pages)
+
+
+_BS_TABLE: list[list[str | None]] = [
+    ["资产负债表", None, None],
+    ["项目", "期末余额", "年初余额"],
+    ["货币资金", "100", "80"],
+    ["应收账款", "200", "150"],
+    ["", "", ""],
+    ["资产总计", "300", "230"],
+    ["负债合计", "180", "130"],
+    ["所有者权益合计", "120", "100"],
+]
+
+_IS_TABLE: list[list[str | None]] = [
+    ["利润表", None, None],
+    ["项目", "本期金额", "上期金额"],
+    ["营业收入", "300", "250"],
+    ["净利润", "100", "80"],
+]
+
 
 class TestReadPdf:
     """测试 read_pdf 函数的基本功能。"""
@@ -91,9 +153,7 @@ class TestReadPdfBalanceSheet:
         bs_name = _find_sheet(data, "资产负债")
         raw = data[bs_name]
         amount_cols = [h for h in raw.headers if h != "项目"]
-        assert len(amount_cols) >= 2, (
-            f"资产负债表应有双列金额, 实际: {amount_cols}"
-        )
+        assert len(amount_cols) >= 2, f"资产负债表应有双列金额, 实际: {amount_cols}"
 
     def test_bs_contains_asset_total(self) -> None:
         """资产负债表应包含'资产总计'行。"""
@@ -193,9 +253,7 @@ class TestImportPdf:
         service = ImportService()
         reports = service.import_file(str(THREE_REPORTS_PDF))
         for report in reports:
-            assert len(report.items) > 0, (
-                f"{report.report_type.value} 无项目"
-            )
+            assert len(report.items) > 0, f"{report.report_type.value} 无项目"
 
 
 class TestDualColumnExtraction:
@@ -208,12 +266,8 @@ class TestDualColumnExtraction:
         service = ImportService()
         reports = service.import_file(str(THREE_REPORTS_PDF))
         bs = _find_report(reports, ReportType.BALANCE_SHEET)
-        items_with_beginning = [
-            item for item in bs.items if item.beginning_amount is not None
-        ]
-        assert len(items_with_beginning) > 0, (
-            "没有项目包含期初金额"
-        )
+        items_with_beginning = [item for item in bs.items if item.beginning_amount is not None]
+        assert len(items_with_beginning) > 0, "没有项目包含期初金额"
 
     def test_bs_monetary_funds_beginning(self) -> None:
         """货币资金的期初金额应为 80000。"""
@@ -245,6 +299,16 @@ class TestPdfErrors:
         with pytest.raises(FileNotFoundError):
             read_pdf("nonexistent_file.pdf")
 
+    def test_corrupted_pdf_raises_fsaerror_chinese(self, tmp_path: Path) -> None:
+        """损坏的 PDF (非 PDF 字节) 应抛中文 FSAError, 不抛技术性异常。"""
+        from fsa.core.exceptions import FSAError
+        from fsa.core.importer.pdf_reader import read_pdf
+
+        bad_file = tmp_path / "corrupted.pdf"
+        bad_file.write_bytes(b"this is not a pdf at all, just garbage bytes")
+        with pytest.raises(FSAError, match="损坏或已加密"):
+            read_pdf(str(bad_file))
+
 
 class TestPdfValidation:
     """测试导入 PDF 后进行完整校验。"""
@@ -264,9 +328,7 @@ class TestPdfValidation:
 
         bs_bal_001 = _find_result(summary.results, "BS-BAL-001")
         assert bs_bal_001 is not None, "未找到 BS-BAL-001 结果"
-        assert bs_bal_001.passed, (
-            f"BS-BAL-001 应通过, 实际: {bs_bal_001.message}"
-        )
+        assert bs_bal_001.passed, f"BS-BAL-001 应通过, 实际: {bs_bal_001.message}"
 
 
 class TestMergedReport:
@@ -308,7 +370,165 @@ class TestMergedReport:
         assert asset == liability + equity
 
 
+class TestParseCellValue:
+    """测试 PDF 单元格值解析（统一金额解析）。"""
+
+    def test_thousands_separator_parsed_to_float(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("1,000,000.50") == 1000000.50
+
+    def test_parenthesized_negative_parsed(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("(1,291,800.12)") == -1291800.12
+
+    def test_placeholder_parsed_to_zero(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("-") == 0.0
+        assert _parse_cell_value("—") == 0.0
+
+    def test_scientific_notation_parsed(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("1.5e6") == 1500000.0
+
+    def test_empty_returns_none(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value(None) is None
+        assert _parse_cell_value("") is None
+
+    def test_unparsable_returns_original_text(self) -> None:
+        from fsa.core.importer.pdf_reader import _parse_cell_value
+
+        assert _parse_cell_value("货币资金") == "货币资金"
+
+
+class TestPdfRowSemantics:
+    """D-01: PDF 行号应为「页码+表内行」可定位语义。"""
+
+    def test_same_page_multiple_tables_are_all_extracted(self, monkeypatch) -> None:
+        """一页内多个报表表格都应被提取, 不再只取第一张表。"""
+        from fsa.core.importer import pdf_reader
+
+        monkeypatch.setattr(
+            pdf_reader,
+            "pdfplumber",
+            _FakePdfModule([_FakePage(_BS_TABLE, tables=[_BS_TABLE, _IS_TABLE])]),
+        )
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
+        assert "资产负债表" in data
+        assert "利润表" in data
+
+    def test_cross_page_table_without_title_is_merged(self, monkeypatch) -> None:
+        """次页无标题的续表通过表头唯一匹配合并到已有报表。"""
+        from fsa.core.importer import pdf_reader
+
+        continuation = [
+            ["项目", "期末余额", "年初余额"],
+            ["固定资产", "500", "480"],
+            ["", "", ""],
+            ["非流动资产合计", "600", "550"],
+        ]
+        monkeypatch.setattr(
+            pdf_reader,
+            "pdfplumber",
+            _FakePdfModule([_FakePage(_BS_TABLE), _FakePage(continuation)]),
+        )
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
+        bs = data["资产负债表"]
+        items = [str(r.get("项目", "")) for r in bs.rows]
+        assert "固定资产" in items
+        assert "非流动资产合计" in items
+        # 次页行号按第 2 页编码
+        fixed_assets = next(r for r in bs.rows if str(r.get("项目", "")) == "固定资产")
+        assert fixed_assets["_row"] == 2 * _PDF_ROW_BASE + 2
+
+    def test_read_pdf_encodes_page_and_table_row(self, monkeypatch) -> None:
+        """数据行 _row = 页码 * 基数 + 表内 1-based 行号。"""
+        from fsa.core.importer import pdf_reader
+
+        monkeypatch.setattr(pdf_reader, "pdfplumber", _FakePdfModule([_FakePage(_BS_TABLE), _FakePage(_IS_TABLE)]))
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
+        assert "资产负债表" in data
+        assert "利润表" in data
+
+        bs_rows = {str(r.get("项目", "")): r["_row"] for r in data["资产负债表"].rows}
+        # 货币资金在表内第 3 行 (标题行1, 表头行2, 数据行3)
+        assert bs_rows["货币资金"] == 1 * _PDF_ROW_BASE + 3
+        # 空行被跳过, 但真实行号保留: 资产总计在表内第 6 行
+        assert bs_rows["资产总计"] == 1 * _PDF_ROW_BASE + 6
+
+        is_rows = {str(r.get("项目", "")): r["_row"] for r in data["利润表"].rows}
+        # 第 2 页: 净利润在表内第 4 行
+        assert is_rows["净利润"] == 2 * _PDF_ROW_BASE + 4
+
+    def test_read_pdf_skips_empty_rows_but_preserves_table_index(self, monkeypatch) -> None:
+        """空行不产出数据行, 但后续行的表内行号保持真实位置。"""
+        from fsa.core.importer import pdf_reader
+
+        monkeypatch.setattr(pdf_reader, "pdfplumber", _FakePdfModule([_FakePage(_BS_TABLE)]))
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
+        bs = data["资产负债表"]
+        items = [str(r.get("项目", "")) for r in bs.rows]
+        assert items == ["货币资金", "应收账款", "资产总计", "负债合计", "所有者权益合计"]
+
+        rows = {str(r.get("项目", "")): r["_row"] for r in bs.rows}
+        assert rows["资产总计"] == 1 * _PDF_ROW_BASE + 6
+        assert rows["负债合计"] == 1 * _PDF_ROW_BASE + 7
+
+    def test_import_pdf_trace_rows_are_page_encoded(self, monkeypatch) -> None:
+        """导入 PDF 并校验后, trace 行号为页码编码, 可解码为「第X页表内第N行」。"""
+        from fsa.core.engine.registry import RuleRegistry
+        from fsa.core.importer import pdf_reader
+        from fsa.core.importer.importer import ImportService
+        from fsa.services.validation_service import ValidationService
+
+        monkeypatch.setattr(pdf_reader, "pdfplumber", _FakePdfModule([_FakePage(_BS_TABLE)]))
+
+        rules_path = Path(__file__).parent.parent.parent / "cas_gouji_rule_library.json"
+        registry = RuleRegistry.from_json(str(rules_path))
+        service = ImportService()
+        reports = service.import_file(str(THREE_REPORTS_PDF))
+        validation = ValidationService(registry)
+        summary = validation.validate(reports, period="2024-12")
+
+        result = _find_result(summary.results, "BS-BAL-001")
+        assert result is not None, "未找到 BS-BAL-001 结果"
+        trace = {t.key: t for t in result.trace}
+        assert trace["asset_total"].row == 1 * _PDF_ROW_BASE + 6
+        assert trace["liability_total"].row == 1 * _PDF_ROW_BASE + 7
+        assert trace["equity_total"].row == 1 * _PDF_ROW_BASE + 8
+        # 解码语义: divmod 还原「页码, 表内行」
+        assert divmod(trace["asset_total"].row, _PDF_ROW_BASE) == (1, 6)
+
+    def test_import_pdf_fixture_bs_rows_are_page_encoded(self) -> None:
+        """真实 PDF 夹具: 资产负债表各项行号编码为第 1 页表内行。"""
+        from fsa.core.importer.importer import ImportService
+
+        service = ImportService()
+        reports = service.import_file(str(THREE_REPORTS_PDF))
+        bs = _find_report(reports, ReportType.BALANCE_SHEET)
+        assert bs.get_item("asset_total").row == 1 * _PDF_ROW_BASE + 17
+        assert bs.get_item("liability_total").row == 1 * _PDF_ROW_BASE + 30
+        assert bs.get_item("equity_total").row == 1 * _PDF_ROW_BASE + 36
+
+    def test_import_pdf_fixture_page_2_row_encoding(self) -> None:
+        """真实 PDF 夹具: 利润表在第 2 页, 净利润行号编码为第 2 页表内行。"""
+        from fsa.core.importer.importer import ImportService
+
+        service = ImportService()
+        reports = service.import_file(str(THREE_REPORTS_PDF))
+        is_report = _find_report(reports, ReportType.INCOME_STATEMENT)
+        item = is_report.get_item("net_profit")
+        assert item is not None
+        assert divmod(item.row, _PDF_ROW_BASE) == (2, 20)
+
+
 # ── 辅助函数 ──────────────────────────────────────────────
+
 
 def _find_sheet(data: dict[str, RawSheetData], keyword: str) -> str:
     """在 data 中查找名称包含 keyword 的 sheet。"""
@@ -332,3 +552,89 @@ def _find_result(results: list, rule_id: str):
         if r.rule_id == rule_id:
             return r
     return None
+
+
+class TestPdfReadDiagnostics:
+    """解析诊断: 页数/表数/跳过统计/置信度。"""
+
+    def test_basic_counts_and_confidence(self, monkeypatch) -> None:
+        from fsa.core.importer import pdf_reader
+        from fsa.core.importer.pdf_reader import PdfReadDiagnostics
+
+        bad_table: list[list[str | None]] = [["其他文档", None], ["A", "B"]]
+        monkeypatch.setattr(
+            pdf_reader,
+            "pdfplumber",
+            _FakePdfModule(
+                [
+                    _FakePage(_BS_TABLE),
+                    _FakePage([], tables=[]),
+                    _FakePage(bad_table),
+                ]
+            ),
+        )
+        diag = PdfReadDiagnostics()
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF), diagnostics=diag)
+
+        assert list(data) == ["资产负债表"]
+        assert diag.page_count == 3
+        assert diag.table_count == 2
+        assert diag.pages_without_tables == 1
+        assert diag.skipped_tables == 1
+        assert diag.confidence == "中"
+        assert "3 页" in diag.summary_text()
+        assert "解析置信度" in diag.summary_text()
+
+    def test_continuation_and_skipped_rows_counted(self, monkeypatch) -> None:
+        from fsa.core.importer import pdf_reader
+        from fsa.core.importer.pdf_reader import PdfReadDiagnostics
+
+        malformed = _BS_TABLE + [
+            ["资产总计", "300", "230", "多余列"],
+        ]
+        continuation = [
+            ["项目", "期末余额", "年初余额"],
+            ["所有者权益合计", "120", "100"],
+        ]
+        monkeypatch.setattr(
+            pdf_reader,
+            "pdfplumber",
+            _FakePdfModule([_FakePage(malformed), _FakePage(continuation)]),
+        )
+        diag = PdfReadDiagnostics()
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF), diagnostics=diag)
+
+        assert "资产负债表" in data
+        assert diag.continuation_count == 1
+        assert diag.skipped_rows == 1
+        assert diag.confidence == "中"
+
+
+class TestPdfParseDiagnosticsOnImport:
+    """ImportService 导入 PDF 时把解析诊断写入 Report。"""
+
+    def test_import_file_populates_parse_diagnostics(self) -> None:
+        from fsa.core.importer.importer import ImportService
+
+        reports = ImportService(period="2024-12").import_file(str(THREE_REPORTS_PDF))
+        assert reports
+        for report in reports:
+            assert "PDF 共" in report.parse_diagnostics
+            assert "解析置信度" in report.parse_diagnostics
+
+    def test_excel_import_has_no_pdf_diagnostics(self, tmp_path: Path) -> None:
+        from openpyxl import Workbook
+
+        from fsa.core.importer.importer import ImportService
+
+        path = tmp_path / "bs.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "资产负债表"
+        ws.append(["项目", "期末余额"])
+        ws.append(["资产总计", 100.0])
+        wb.save(path)
+        wb.close()
+
+        reports = ImportService(period="2024-12").import_file(str(path))
+        assert reports[0].parse_diagnostics == ""

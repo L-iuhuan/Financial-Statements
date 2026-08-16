@@ -23,9 +23,12 @@ class AgentFAB(QPushButton):
         self.setFixedSize(48, 48)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("AI 诊断助手")
-        # 用对话气泡图标替代"AI"文字
+        # 对话气泡图标, 显式白色 (默认黑图标在靛蓝底上不可读)
+        from PySide6.QtGui import QColor
         from qfluentwidgets import FluentIcon
-        self.setIcon(FluentIcon.MESSAGE.icon())
+        self.setIcon(
+            FluentIcon.MESSAGE.icon(color=QColor("white"))
+        )
         from PySide6.QtCore import QSize
         self.setIconSize(QSize(22, 22))
         self._setup_style()
@@ -33,7 +36,8 @@ class AgentFAB(QPushButton):
         self._badge = QLabel("!", self)
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._badge.setFixedSize(16, 16)
-        self._badge.move(self.width() - 12, 4)
+        # 角标完全落在按钮范围内 (48px 按钮, 16px 角标), 避免越界被裁剪
+        self._badge.move(self.width() - 18, 2)
         self._badge.hide()
         self._update_badge_style()
 

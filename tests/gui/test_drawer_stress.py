@@ -14,12 +14,15 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from fsa.gui.app_state import AppState
 from fsa.gui.main_window import MainWindow
 from fsa.gui.theme import get_qss
+
+# 整个文件为耗时压测 (rapid 50x/100x 循环), 默认套件跳过;
+# 改动抽屉/主题/布局相关代码或发布前, 用 pytest -m slow 显式运行
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture
@@ -170,12 +173,13 @@ class TestIconStates:
 
 class TestDrawerResize:
     def test_resize_clamped_to_min(self, window, qtbot) -> None:
-        """拖到最小宽度以下被钳制到 280。"""
+        """拖到最小宽度以下被钳制到 320。"""
         window._open_drawer()
         drawer = window._agent_drawer
-        drawer.setFixedWidth(100)  # 模拟拖到极小
-        clamped = max(drawer.MIN_WIDTH, min(drawer.MAX_WIDTH, 100))
-        assert clamped == 280
+        drawer.resize(100, drawer.height())  # 模拟拖到极小
+        qtbot.wait(5)
+        assert drawer.width() == 320
+        assert drawer.MIN_WIDTH == 320
         window._close_drawer()
 
     def test_resize_clamped_to_max(self, window, qtbot) -> None:
@@ -189,8 +193,8 @@ class TestDrawerResize:
         window._on_nav("navImport")
         window._open_drawer()
         drawer = window._agent_drawer
-        for width in (280, 400, 600):
-            drawer.setFixedWidth(width)
+        for width in (320, 400, 600):
+            drawer.resize(width, drawer.height())
             qtbot.wait(5)
             # 输入框 + 发送按钮总宽不应超过抽屉内容宽
             assert drawer._input.width() + 48 + 8 <= width
@@ -201,10 +205,10 @@ class TestDrawerResize:
         window._open_drawer()
         drawer = window._agent_drawer
         for _ in range(30):
-            drawer.setFixedWidth(280)
-            drawer.setFixedWidth(600)
+            drawer.resize(320, drawer.height())
+            drawer.resize(600, drawer.height())
         qtbot.wait(10)
-        assert 280 <= drawer.width() <= 600
+        assert 320 <= drawer.width() <= 600
         window._close_drawer()
 
 
@@ -215,7 +219,6 @@ class TestSendButton:
         """发送按钮完整显示'发送'二字。"""
         window._open_drawer()
         drawer = window._agent_drawer
-        send_btn = drawer.findChild(QPushButton, "BtnPrimary")
         # 找发送按钮 (文本为"发送")
         from PySide6.QtWidgets import QPushButton as QPB
         btns = drawer.findChildren(QPB)

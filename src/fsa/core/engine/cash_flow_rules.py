@@ -33,7 +33,7 @@ DEFAULT_CASH_FLOW_RULES: tuple[CashFlowClassificationRule, ...] = (
         rule_id="CF-CLS-001",
         project_keyword="销售商品、提供劳务收到的现金",
         direction="流入",
-        counterpart_prefixes=("1121", "1122", "1123", "2203", "2204", "6001", "6051"),
+        counterpart_prefixes=("1121", "1122", "1123", "2203", "2205", "6001", "6051"),
         description="销售收款应对应应收票据/应收账款/预收款项/合同负债/收入类科目",
     ),
     CashFlowClassificationRule(
@@ -61,15 +61,15 @@ DEFAULT_CASH_FLOW_RULES: tuple[CashFlowClassificationRule, ...] = (
         rule_id="CF-CLS-005",
         project_keyword="收回投资收到的现金",
         direction="流入",
-        counterpart_prefixes=("1101", "1511", "1521"),
-        description="收回投资应对交易性金融资产/长期股权投资/其他权益工具投资",
+        counterpart_prefixes=("1101", "1503", "1504", "1511", "1521"),
+        description="收回投资应对交易性金融资产/其他债权投资/其他权益工具投资/长期股权投资/投资性房地产",
     ),
     CashFlowClassificationRule(
         rule_id="CF-CLS-006",
         project_keyword="投资支付的现金",
         direction="流出",
-        counterpart_prefixes=("1101", "1511", "1521"),
-        description="投资支付应对交易性金融资产/长期股权投资等投资科目",
+        counterpart_prefixes=("1101", "1503", "1504", "1511", "1521"),
+        description="投资支付应对交易性金融资产/其他债权投资/其他权益工具投资/长期股权投资/投资性房地产等投资科目",
     ),
     CashFlowClassificationRule(
         rule_id="CF-CLS-007",

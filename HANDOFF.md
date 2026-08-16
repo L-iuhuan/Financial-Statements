@@ -1,8 +1,9 @@
 # 财务报表勾稽校验系统 — 开发交接文档
 
-> 更新日期: 2026-08-13
+> 更新日期: 2026-08-15
+> 最后校准: 2026-08-16
 > 用途: 跨机器开发的交接与续作指南
-> 当前版本: v0.1.0 (MVP+), 规则库 CAS v1.2.0 (37 条)
+> 当前版本: v0.4.1 (MVP+), 规则库 CAS v1.3.0 (42 条)
 
 ---
 
@@ -20,7 +21,7 @@ pip install -e ".[dev]"
 python -m fsa
 
 # 4. 测试
-python -m pytest -q          # 753 个测试
+python -m pytest -q          # 全量测试 (1000+，以实际收集数为准)
 python -m ruff check src/    # 静态检查
 ```
 
@@ -32,9 +33,9 @@ python -m ruff check src/    # 静态检查
 ## 二、当前完成状态 (全部已验证)
 
 ### 核心引擎
-- [x] 37 条 CAS 勾稽规则 (v1.2.0), 茅台/格力真实年报 0 失败 0 异常
+- [x] 42 条 CAS 勾稽规则 (v1.3.0), 真实年报压测 0 失败 0 异常
 - [x] 双金额列引擎 (期末/期初 _ending/_beginning 变量)
-- [x] 补充资料提取 (cf_notes_ 前缀, 茅台 CF 22→40 项)
+- [x] 补充资料提取 (cf_notes_ 前缀, 真实年报 CF 22→40 项)
 - [x] 科目追溯 trace (行列定位, P3 可审计)
 
 ### 数据导入
@@ -45,7 +46,7 @@ python -m ruff check src/    # 静态检查
 - [x] 所有者权益变动表 SCE (矩阵解析)
 
 ### 导出
-- [x] Excel 审计底稿 (汇总+明细+科目追溯三表)
+- [x] Excel 审计底稿 (汇总+明细+科目追溯+底稿说明四表)
 
 ### AI 助手
 - [x] 规则化诊断引擎 (确定性兜底)
@@ -56,7 +57,7 @@ python -m ruff check src/    # 静态检查
 - [x] 会话管理: 新建/切换/清空/持久化/自动重命名
 
 ### UI/UX
-- [x] 深青玉配色 + 天平 logo + FluentIcon 图标 (无 Emoji)
+- [x] 靛蓝配色 (Indigo, BRAND_600 #4f46e5) + 天平 logo + FluentIcon 图标 (无 Emoji)
 - [x] 深色主题 (完整生效)
 - [x] 规则卡片重设计 + 自定义规则 (增删/持久化/公式校验)
 - [x] 公式中文化显示 (tooltip 保留英文)
@@ -75,7 +76,7 @@ python -m ruff check src/    # 静态检查
 - [x] 一键构建 scripts/build_installer.ps1
 
 ### 测试
-- [x] 753 测试全绿 (含 20 个压力/边界测试, 48 个 GUI 功能测试)
+- [x] 全量测试套件 (含 GUI/压力/边界; slow 标记压测默认跳过)
 - [x] TEST_PLAN.md 测试方案 (9 模块 48 用例)
 
 ---
@@ -83,7 +84,7 @@ python -m ruff check src/    # 静态检查
 ## 三、接下来要做的 (按优先级)
 
 ### P0 — 真实场景验证 (最优先)
-- [ ] **多行业真实年报压测**: 当前仅茅台+格力两份。需收集银行/地产/制造业等不同
+- [ ] **多行业真实年报压测**: 当前仅两份真实年报 (酒企+制造)。需收集银行/地产/制造业等不同
   行业年报 (格式差异大), 放入 `tests/fixtures/real_reports/` 后运行
   `python scripts/validate_real_data.py`, 暴露不同格式的识别/校验边界问题。
 - [x] **Excel COM 读取适配器**: 公司 DLP 加密环境下 openpyxl/xlrd 无法读文件，
@@ -100,14 +101,16 @@ python -m ruff check src/    # 静态检查
 - [ ] **自定义规则的公式变量联想**: 新增规则时输入变量名自动补全
 - [ ] **AgentLoop 深度集成**: 把 DebateEngine 的"深度辩论"按钮接入规则卡片(已部分接入),
   优化辩论结果在抽屉中的展示 (目前是三长段文本, 可分 tab/折叠)
-- [ ] **知识库扩充**: knowledge.py 目前是手工摘要, 可接入真实 CAS 准则文档做检索
+- [x] **知识库扩充** (已完成): knowledge.py 已接入真实 CAS 准则文档检索
+  (内置条目 + `resources/knowledge/` 外部文档: CAS 准则原文 + 陈奕蔚答疑)
 
 ### P2 — V1.5 (大功能, 需排期)
 - [ ] **报表自动生成**: 从余额表+序时账自动生成三大报表 + 审计底稿
 - [ ] **附注/NOTES 规则**: 需重新设计公式 (当前是占位符)
 
 ### P3 — 工程化
-- [ ] **CI/CD**: GitHub Actions 跑测试 (注意国内网络, 可能需镜像)
+- [x] **CI/CD** (已完成): GitHub Actions 已配置 (`.github/workflows/ci.yml`,
+  ubuntu+windows × py3.11/3.12 矩阵跑 ruff+mypy+pytest + 覆盖率门禁 + Windows 打包 artifact)
 - [ ] **真实 Ollama/公司模型联调**: 当前用 DeepSeek 在线 API 测过, 本地 Ollama 未实测
 
 ---
@@ -126,11 +129,11 @@ python -m ruff check src/    # 静态检查
 │   ├── storage/        # SQLite (database/history_repo/chat_repo/override_repo)
 │   ├── updater/        # 自动更新
 │   └── gui/            # PySide6 界面
-├── tests/              # 753 测试
+├── tests/              # 1419 测试 (2026-08-16 收集口径)
 ├── scripts/            # 验证/构建脚本
 ├── resources/          # logo/图标
 ├── demo/               # demo.html 设计稿
-├── cas_gouji_rule_library.json   # 规则库 v1.2.0
+├── cas_gouji_rule_library.json   # 规则库 v1.3.0
 └── fsa.spec / installer.iss      # 打包配置
 ```
 

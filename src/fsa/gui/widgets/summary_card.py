@@ -5,16 +5,28 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtCore import QEvent
+from PySide6.QtGui import QEnterEvent
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+)
 
-from fsa.gui.theme import get_mono_font
+from fsa.gui.theme import (
+    bind_theme_listener,
+    get_mono_font,
+    get_shadow_color,
+)
 
-# 圆点颜色映射
-_DOT_COLORS: dict[str, str] = {
-    "success": "#10b981",
-    "error": "#ef4444",
-    "warning": "#f59e0b",
-    "info": "#3b82f6",
+# 圆点类型 -> 主题调色板语义色键名
+_DOT_PALETTE_KEYS: dict[str, str] = {
+    "success": "success",
+    "error": "error",
+    "warning": "warning",
+    "info": "info",
 }
 
 
@@ -26,19 +38,54 @@ class SummaryCard(QFrame):
         self.setObjectName("SummaryCard")
         self._dot_type = dot_type
         self._setup_ui()
+        self._on_theme_changed()
+        # 注册主题监听并随控件销毁自动注销, 防止死监听器累积泄漏
+        bind_theme_listener(self, self._on_theme_changed)
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        """hover 时挂阴影 (QSS 不支持 box-shadow, 用 QGraphicsDropShadowEffect)。
+
+        参数取「阴影克制」原则: 小模糊半径 + 低透明度 + 2px 纵向偏移。
+        """
+        if self.graphicsEffect() is None:
+            effect = QGraphicsDropShadowEffect(self)
+            effect.setBlurRadius(10)
+            effect.setOffset(0, 2)
+            effect.setColor(get_shadow_color(hover=True))
+            self.setGraphicsEffect(effect)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        """离开时卸载阴影, 恢复轻量渲染。"""
+        self.setGraphicsEffect(None)  # type: ignore[arg-type]  # Qt 允许 None 卸载 effect
+        super().leaveEvent(event)
+
+    def _on_theme_changed(self) -> None:
+        """主题切换: 刷新圆点颜色 + 已挂载阴影的颜色 (深浅主题透明度不同)。"""
+        self._apply_dot_color()
+        effect = self.graphicsEffect()
+        if isinstance(effect, QGraphicsDropShadowEffect):
+            effect.setColor(get_shadow_color(hover=True))
+
+    def _apply_dot_color(self) -> None:
+        """圆点颜色跟随当前主题调色板 (深色下用暗色语义色, 避免刺眼)。"""
+        self._dot.setProperty("dot_type", self._dot_type)
+        self._dot.style().unpolish(self._dot)
+        self._dot.style().polish(self._dot)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(4)
 
         # 上方: 圆点 + 标签
         top = QHBoxLayout()
         top.setSpacing(8)
 
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color: {_DOT_COLORS.get(self._dot_type, '#3b82f6')}; font-size: 10px;")
-        top.addWidget(dot)
+        self._dot = QLabel("●")
+        self._dot.setObjectName("SummaryCardDot")
+        self._dot.setProperty("dot_type", self._dot_type)
+        top.addWidget(self._dot)
 
         self._label = QLabel("")
         self._label.setObjectName("SummaryCardLabel")

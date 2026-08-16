@@ -1,0 +1,171 @@
+"""主窗口 AI 深度辩论集成 (mixin)。
+
+从 main_window_agent 拆分的三方辩论 (DebateEngine) 集成逻辑 (纯移动, 不改行为)。
+由 MainWindow 继承 (需与 MainWindowAgentMixin/MainWindowDrawerMixin 组合使用)。
+
+依赖宿主 MainWindow 提供的属性: _state / _agent_drawer / _active_worker;
+以及 MainWindowAgentMixin 提供的 _get_llm_client / _llm_available /
+_set_agent_busy / _show_llm_error_infobar, MainWindowDrawerMixin 提供的 _open_drawer。
+"""
+
+from __future__ import annotations
+
+from loguru import logger
+
+from fsa.agent.debate import DebateResult
+from fsa.agent.llm_client import LLMClient, LLMError
+from fsa.agent.sanitize import sanitize_llm_input
+from fsa.core.models.result import ValidationResult
+from fsa.gui.agent_worker import AgentWorker
+from fsa.gui.main_window_agent import _MainWindowAgentContracts
+
+# PDF 来源行号编码基数 (与 core/importer/pdf_reader.py 的 _PDF_ROW_BASE 一致)
+_PDF_ROW_BASE = 10_000_000
+
+
+def _format_trace_loc(row: int, column: str) -> str:
+    """追溯位置格式化: PDF 来源 (页码*1000万+表内行号) 解码为「第X页表内第N行」。"""
+    if row <= 0:
+        return column if column else "位置未知"
+    if row >= _PDF_ROW_BASE:
+        page, table_row = divmod(row, _PDF_ROW_BASE)
+        return f"第{page}页表内第{table_row}行"
+    return f"第{row}行 {column}列" if column else f"第{row}行"
+
+
+class MainWindowDebateMixin(_MainWindowAgentContracts):
+    """三方深度辩论集成逻辑 (继承 _MainWindowAgentContracts 提供跨 mixin 契约)。"""
+
+    def _debate_role_client(self, default_client: LLMClient, settings_key: str) -> LLMClient:
+        """为辩论角色构建可选的独立模型客户端 (高级配置, 无 UI)。
+
+        QSettings 中存在对应模型名时, 用相同 base_url/api_key 构建独立客户端;
+        否则返回 default_client (与主模型共用)。
+        """
+        from PySide6.QtCore import QSettings
+
+        from fsa.agent.llm_client import create_llm_client
+
+        model = str(QSettings("FSA", "FinancialAudit").value(settings_key, "")).strip()
+        if not model:
+            return default_client
+        settings = QSettings("FSA", "FinancialAudit")
+        try:
+            return create_llm_client(
+                provider=str(settings.value("llm_provider", "")),
+                base_url=str(settings.value("llm_base_url", "")),
+                model=model,
+                api_key=str(settings.value("llm_api_key", "")),
+            )
+        except (ValueError, KeyError) as e:
+            logger.warning(f"辩论角色模型配置无效 ({settings_key}={model}), 回退主模型: {e}")
+            return default_client
+
+    def _on_debate(self, rule_id: str) -> None:
+        """从校验卡片触发深度辩论: 打开抽屉, 三方模型对抗分析差异根因。"""
+        from fsa.agent.debate import DebateEngine
+
+        summary = self._state.results
+        if summary is None:
+            self._agent_drawer.add_assistant_message(
+                "当前没有校验结果，无法进行辩论分析。请先执行校验。"
+            )
+            return
+
+        result = next((r for r in summary.results if r.rule_id == rule_id), None)
+        if result is None:
+            self._agent_drawer.add_assistant_message(
+                f"未找到规则 {rule_id} 的校验结果。"
+            )
+            return
+
+        client = self._get_llm_client()
+        # B5-2: 主线程只查缓存不探测 (is_available 是 3s 级 urlopen);
+        # 缓存未知时放行, 由后台 worker 首步探测, 不可用则走 on_error 中文提示
+        if client is None or self._llm_available_cached(client) is False:
+            if self._llm_block_reason == "remote":
+                self._show_remote_blocked_infobar()
+            self._agent_drawer.add_assistant_message(
+                "深度辩论需要配置大模型。请在 系统设置 → AI 助手 中配置模型服务地址和密钥。"
+            )
+            return
+
+        self._open_drawer()
+        self._agent_drawer.set_context(rule_id, result.rule_name)
+        self._agent_drawer.add_user_message(
+            f"请对规则 {rule_id}（{result.rule_name}）进行深度辩论分析。"
+        )
+        self._agent_drawer.add_assistant_message(
+            "**正在启动三方辩论分析**（分析师 → 反方审计师 → 裁判）\n"
+            "请稍候，这需要调用多次大模型；可随时点击忙碌条上的「停止」中断。"
+        )
+
+        case_data = self._build_debate_case(result)
+        self._set_agent_busy(True)
+
+        def run_debate() -> str:
+            # B5-2: 可用性探测挪到后台线程首步, 不可用时抛中文错误走 on_error
+            if not self._llm_available(client):
+                raise LLMError("大模型服务不可用，无法进行深度辩论")
+            # 可选高级配置 (QSettings, 无 UI): llm_debate_critic_model /
+            # llm_debate_judge_model —— 为反方/裁判指定不同模型, 增强对抗性;
+            # 未配置时三个角色共用主模型 (原行为)
+            critic = self._debate_role_client(client, "llm_debate_critic_model")
+            judge = self._debate_role_client(client, "llm_debate_judge_model")
+            engine = DebateEngine(analyst=client, critic=critic, judge=judge)
+            # 阶段提示: 分析师/反方/裁判开始时推给抽屉 (designer 契约 set_stage_hint)
+            debate = engine.debate(case_data, on_stage=self._debate_stage_hint)
+            return self._format_debate_result(debate)
+
+        def on_success(text: str) -> None:
+            self._agent_drawer.add_assistant_message(text)
+
+        def on_error(message: str) -> None:
+            logger.error(f"深度辩论失败: {message}")
+            self._finish_agent_error(message, "深度辩论失败")
+
+        self._cancel_active_worker()
+        worker = AgentWorker(
+            run_debate, on_success, on_error, on_finished=self._on_worker_finished
+        )
+        self._active_worker = worker
+        worker.start()
+
+    def _debate_stage_hint(self, text: str) -> None:
+        """把辩论阶段提示推给抽屉 (designer 契约: set_stage_hint)。"""
+        drawer = getattr(self, "_agent_drawer", None)
+        if drawer is not None and hasattr(drawer, "set_stage_hint"):
+            drawer.set_stage_hint(text)
+
+    def _build_debate_case(self, result: ValidationResult) -> str:
+        """组装辩论案例数据 (校验结果 + 追溯)。
+
+        来自报表数据的字段 (科目名/公式/来源定位等) 过 sanitize_llm_input (P1)。
+        """
+        lines = [
+            f"规则: {sanitize_llm_input(result.rule_id)} "
+            f"{sanitize_llm_input(result.rule_name)}",
+            f"公式: {sanitize_llm_input(result.formula)}",
+            f"左侧值: {result.left_value:,.2f} 元",
+            f"右侧值: {result.right_value:,.2f} 元",
+            f"差额: {result.diff:,.2f} 元 (容差 {sanitize_llm_input(str(result.tolerance))})",
+            "涉及科目数据来源:",
+        ]
+        for t in result.trace:
+            side = "左侧" if t.side == "left" else "右侧"
+            loc = _format_trace_loc(t.row, sanitize_llm_input(t.column))
+            lines.append(
+                f"  [{side}] {sanitize_llm_input(t.name)}: "
+                f"{t.amount:,.2f} 元 ({loc})"
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_debate_result(debate: DebateResult) -> str:
+        """将辩论结果格式化为 Markdown 展示文本 (气泡富文本渲染)。"""
+        return (
+            "**三方辩论分析完成**\n\n"
+            f"### 分析师观点\n{debate.analyst_view}\n\n"
+            f"### 反方审计师质疑\n{debate.critic_view}\n\n"
+            f"### 裁判最终结论（置信度：{debate.confidence}）\n{debate.final_verdict}"
+        )

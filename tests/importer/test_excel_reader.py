@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from fsa.core.exceptions import FSAError
 from fsa.core.importer.excel_reader import read_excel
 
 
@@ -93,9 +94,7 @@ class TestReadExcelNormal:
         data = read_excel(str(path))
 
         sheet = data["现金流量表"]
-        operating_row = next(
-            r for r in sheet.rows if r["项目"] == "经营活动产生的现金流量净额"
-        )
+        operating_row = next(r for r in sheet.rows if r["项目"] == "经营活动产生的现金流量净额")
         assert operating_row["本期金额"] == 500000.00
 
     def test_read_multi_sheet_returns_all_sheets(self) -> None:
@@ -200,9 +199,7 @@ class TestHeaderRowDetection:
         assert sheet.headers[0] == "项目"
         assert sheet.rows[0]["_row"] == 3
 
-    def test_header_row_without_project_column_uses_amount_keywords(
-        self, tmp_path: Path
-    ) -> None:
+    def test_header_row_without_project_column_uses_amount_keywords(self, tmp_path: Path) -> None:
         """无「项目」列时，凭金额列关键词定位表头（如"资 产"表头）。"""
         import openpyxl
 
@@ -316,3 +313,79 @@ class TestReadXls:
         assert sheet.headers[:3] == ["项目", "行次", "期末余额"]
         assert len(sheet.rows) == 3
         assert sheet.rows[0]["项目"] == "资产总计"
+
+
+class TestReadXlsMissingDependency:
+    """测试 .xls 读取缺依赖（xlrd/pandas）时走 COM 回退并抛中文 FSAError。"""
+
+    def test_missing_xlrd_import_error_falls_back_to_com(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """缺 xlrd 的 ImportError 应被 COM 回退链路捕获，最终抛中文 FSAError。"""
+        import fsa.core.importer.excel_reader as excel_reader
+
+        monkeypatch.setattr(
+            excel_reader,
+            "_read_xls",
+            lambda path: (_ for _ in ()).throw(ImportError("读取 .xls 需要安装 pandas 与 xlrd")),
+        )
+        monkeypatch.setattr(
+            excel_reader,
+            "read_excel_com",
+            lambda path: (_ for _ in ()).throw(FSAError("未安装 pywin32，无法使用 Excel COM 读取加密文件")),
+        )
+
+        with pytest.raises(FSAError) as excinfo:
+            read_excel("missing_dep.xls")
+
+        message = str(excinfo.value)
+        assert "读取 .xls 需要安装 pandas 与 xlrd" in message
+        assert "Excel COM 打开也失败" in message
+
+
+class TestReadCsv:
+    """CSV 读取: 编码探测与 RawSheetData 转换。"""
+
+    def test_read_utf8_sig_csv(self, tmp_path: Path) -> None:
+        path = tmp_path / "利润表.csv"
+        path.write_bytes("\ufeff项目,本期金额,上期金额\n营业收入,1000,900\n净利润,500,450\n".encode("utf-8"))
+        data = read_excel(str(path))
+        sheet = data["利润表"]
+        assert sheet.headers == ["项目", "本期金额", "上期金额"]
+        row = next(r for r in sheet.rows if r["项目"] == "营业收入")
+        assert row["本期金额"] == "1000"
+        assert row["_row"] == 2
+
+    def test_read_gbk_csv(self, tmp_path: Path) -> None:
+        path = tmp_path / "资产负债表.csv"
+        path.write_bytes("项目,期末余额,年初余额\n资产总计,2000000,1850000\n负债合计,1000000,900000\n".encode("gbk"))
+        data = read_excel(str(path))
+        sheet = data["资产负债表"]
+        row = next(r for r in sheet.rows if r["项目"] == "资产总计")
+        assert row["期末余额"] == "2000000"
+        assert row["年初余额"] == "1850000"
+
+    def test_read_unknown_encoding_raises_fsa_error(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.csv"
+        path.write_bytes(b"\xff\xfe\x00\x01\xff")
+        with pytest.raises(FSAError, match="编码无法识别"):
+            read_excel(str(path))
+
+
+class TestReadXlsm:
+    """openpyxl 原生读取 .xlsm 宏工作簿数据部分。"""
+
+    def test_read_xlsm_sheet(self, tmp_path: Path) -> None:
+        from openpyxl import Workbook
+
+        path = tmp_path / "带宏报表.xlsm"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "资产负债表"
+        ws.append(["项目", "期末余额"])
+        ws.append(["资产总计", 100.0])
+        wb.save(path)
+        wb.close()
+
+        data = read_excel(str(path))
+        assert "资产负债表" in data
+        assert data["资产负债表"].headers == ["项目", "期末余额"]
+        assert data["资产负债表"].rows[0]["期末余额"] == 100.0

@@ -10,9 +10,35 @@
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 
-from fsa.core.exceptions import InvalidToleranceError
+from loguru import logger
+
+from fsa.core.exceptions import EvaluationError, InvalidToleranceError
 from fsa.core.models.rule import ToleranceType
+
+# 金额超过该量级时 float 尾数精度开始受限（1e14 附近 ULP ≈ 0.016）。
+# 比较器内部已改用 Decimal 计算, 此阈值仅用于保留提示。
+_PRECISION_WARN_MAGNITUDE: float = 1e14
+
+
+def _to_decimal(value: float) -> Decimal:
+    """将 float 金额转为 Decimal (经 str 转换, 避免二进制尾数污染)。"""
+    return Decimal(str(value))
+
+
+class RelativeBaseZeroError(EvaluationError):
+    """相对容差比较时基准值（右值）为 0 且左值非 0。
+
+    属于"数据不足"而非"执行错误"：按 P1（宁可漏报不可误报）原则，
+    此类场景应跳过校验而非计为执行异常。继承 EvaluationError，
+    使 ValidationService 将其与"缺少变量"归入同一跳过路径。
+    """
+
+    def __init__(self) -> None:
+        # 不套用 EvaluationError 的"表达式求值失败"前缀，
+        # 直接保留面向财务用户的中文消息 (P4/P6)。
+        Exception.__init__(self, "基准科目金额为 0，无法计算相对差异，本规则跳过校验")
 
 
 class ToleranceComparator:
@@ -40,30 +66,41 @@ class ToleranceComparator:
 
         Raises:
             InvalidToleranceError: 容差为负数
-            ValueError: 值为 NaN，或相对容差基准为0
+            ValueError: 值为 NaN/无穷大，或未知的容差类型
+            RelativeBaseZeroError: 相对容差基准值为 0 且左值非 0
         """
         if tolerance < 0:
             raise InvalidToleranceError(tolerance)
         if math.isnan(left) or math.isnan(right):
             raise ValueError(f"比较值包含 NaN: left={left}, right={right}")
+        if math.isinf(left) or math.isinf(right):
+            raise ValueError("比较值包含无穷大，请检查原始数据")
 
-        diff = left - right
+        if abs(left) > _PRECISION_WARN_MAGNITUDE or abs(right) > _PRECISION_WARN_MAGNITUDE:
+            logger.warning(
+                f"容差比较金额超过精度边界 (|左值|={abs(left):.2f}, "
+                f"|右值|={abs(right):.2f})，float 尾数精度有限，结果请结合业务复核"
+            )
+
+        d_left = _to_decimal(left)
+        d_right = _to_decimal(right)
+        d_tolerance = _to_decimal(tolerance)
+        d_diff = d_left - d_right
+        diff = float(d_diff)
 
         if tolerance_type in (ToleranceType.EXACT, ToleranceType.ABSOLUTE):
-            return abs(diff) <= tolerance, diff
+            return abs(d_diff) <= d_tolerance, diff
 
         if tolerance_type == ToleranceType.RELATIVE:
-            if right == 0:
-                if left == 0:
+            if d_right == 0:
+                if d_left == 0:
                     return True, 0.0
-                raise ValueError(
-                    "相对容差比较失败: 基准值(right)为0，无法计算相对差异"
-                )
-            relative_diff = abs(diff) / abs(right)
-            return relative_diff <= tolerance, diff
+                raise RelativeBaseZeroError()
+            relative_diff = abs(d_diff) / abs(d_right)
+            return relative_diff <= d_tolerance, diff
 
         if tolerance_type == ToleranceType.THRESHOLD:
-            return abs(diff) <= tolerance, diff
+            return abs(d_diff) <= d_tolerance, diff
 
         # 理论上不会到达 (枚举已穷尽)
         raise ValueError(f"未知的容差类型: {tolerance_type}")

@@ -21,16 +21,19 @@
 
 ### 2.1 主色 (Brand)
 
-选用**靛蓝 (Indigo)** 作为品牌主色。理由：比 Windows 默认蓝更深沉、更独特，传达专业与可信，不与系统 UI 混淆。
+选用**精炼靛蓝 (Refined Indigo)** 作为品牌主色（由钢蓝灰/深青玉演进而来，见文末修订记录）。理由：
+- 色相 ~245°，既远离 success 绿(~160°)、error 红、warning 黄，也与 info 天蓝(~200°)形成清晰区分；
+- 饱和度高于钢蓝灰，更现代、活泼，同时保持专业感；
+- 明暗双主题下，白字在 `BRAND_500`/`BRAND_600` 上对比度均 ≥4.5:1，满足 WCAG AA。
 
 | Token | Light | Dark | 用途 |
 |---|---|---|---|
 | `--brand-50` | #eef2ff | #1e1b4b | 悬浮态背景 |
 | `--brand-100` | #e0e7ff | #312e81 | 选中态背景 |
-| `--brand-200` | #c7d2fe | #3730a3 | 边框/分割线 |
-| `--brand-500` | #6366f1 | #818cf8 | 主色 (按钮、链接) |
-| `--brand-600` | #4f46e5 | #6366f1 | 主色 hover |
-| `--brand-700` | #4338ca | #4f46e5 | 主色 active |
+| `--brand-200` | #c7d2fe | #4338ca | 边框/分割线 |
+| `--brand-500` | #5b5ee6 | #818cf8 | 主色 (聚焦边框、轻强调) |
+| `--brand-600` | #4f46e5 | #5b5ee6 | 主色 (Primary 按钮、链接) |
+| `--brand-700` | #4338ca | #4f46e5 | 主色 hover/active |
 
 ### 2.2 语义色 (Semantic)
 
@@ -47,8 +50,9 @@
 | `--warning` | #f59e0b | #fbbf24 | 警告 | 校验不通过 (warning 级别) |
 | `--warning-bg` | #fffbeb | #422006 | 警告背景 | 卡片背景色 |
 | `--warning-border` | #fde68a | #92400e | 警告边框 | 卡片左边框 |
-| `--info` | #3b82f6 | #60a5fa | 提示 | 信息提示 (info 级别) |
-| `--info-bg` | #eff6ff | #0c1c33 | 提示背景 | 卡片背景色 |
+| `--info` | #0ea5e9 | #38bdf8 | 提示 | 信息提示 (info 级别), 天蓝以区别于靛蓝品牌色 |
+| `--info-bg` | #f0f9ff | #082f49 | 提示背景 | 卡片背景色 |
+| `--info-border` | #7dd3fc | #0369a1 | 提示边框 | 卡片左边框 |
 
 **金额色** -- 用于财务数据展示：
 
@@ -95,12 +99,13 @@
 
 | 用途 | 字体栈 | 说明 |
 |---|---|---|
-| UI 文本 | `"HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif` | 中文优先, 英文兼容 |
+| UI 文本 | `"Microsoft YaHei UI", "HarmonyOS Sans SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif` | Windows 优先, 未安装时回退 HarmonyOS |
 | 等宽数字 | `"JetBrains Mono", "Cascadia Code", "Consolas", "Courier New", monospace` | 金额/数字对齐 |
 | 显示标题 | 同 UI 文本 | 统一字体, 通过字重区分 |
 
-> **选择理由**: HarmonyOS Sans 是华为开源字体, CJK 渲染优秀且免费。
-> 系统未安装时回退到 Microsoft YaHei UI (Windows 默认中文字体)。
+> **选择理由**: 系统未安装 HarmonyOS Sans SC 时, Qt 会回退到列表中的下一个字体,
+> 导致不同控件实际族不一致、hinting 与字重出现差异。Windows 环境下 Microsoft YaHei UI
+> 始终可用, 因此作为首族; HarmonyOS Sans SC 作为回退保持设计意图。
 > 等宽字体用于金额列对齐, JetBrains Mono 免费且数字渲染清晰。
 
 ### 3.2 字号阶梯
@@ -382,7 +387,7 @@
   --brand-50: #eef2ff;
   --brand-100: #e0e7ff;
   --brand-200: #c7d2fe;
-  --brand-500: #6366f1;
+  --brand-500: #5b5ee6;
   --brand-600: #4f46e5;
   --brand-700: #4338ca;
 
@@ -396,8 +401,9 @@
   --warning: #f59e0b;
   --warning-bg: #fffbeb;
   --warning-border: #fde68a;
-  --info: #3b82f6;
-  --info-bg: #eff6ff;
+  --info: #0ea5e9;
+  --info-bg: #f0f9ff;
+  --info-border: #7dd3fc;
 
   /* === Neutral (Light) === */
   --bg-app: #f8f9fa;
@@ -439,7 +445,7 @@
   --radius-full: 9999px;
 
   /* === Typography === */
-  --font-ui: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --font-ui: "Microsoft YaHei UI", "HarmonyOS Sans SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
   --text-xs: 11px;
   --text-sm: 12px;
@@ -459,9 +465,9 @@
 [data-theme="dark"] {
   --brand-50: #1e1b4b;
   --brand-100: #312e81;
-  --brand-200: #3730a3;
+  --brand-200: #4338ca;
   --brand-500: #818cf8;
-  --brand-600: #6366f1;
+  --brand-600: #5b5ee6;
   --brand-700: #4f46e5;
 
   --success: #34d399;
@@ -473,8 +479,9 @@
   --warning: #fbbf24;
   --warning-bg: #422006;
   --warning-border: #92400e;
-  --info: #60a5fa;
-  --info-bg: #0c1c33;
+  --info: #38bdf8;
+  --info-bg: #082f49;
+  --info-border: #0369a1;
 
   --bg-app: #0a0a0b;
   --bg-surface: #18181b;
@@ -502,7 +509,7 @@
 
 | CSS Token | PySide6 QSS |
 |---|---|
-| `--brand-600: #4f46e5` | `QSS: background-color: #4f46e5;` |
+| `--brand-600: #3e5f8f` | `QSS: background-color: #3e5f8f;` |
 | `--text-md: 14px` | `QSS: font-size: 14px;` |
 | `--radius-lg: 8px` | `QSS: border-radius: 8px;` |
 | `--shadow-sm` | `QSS: 无原生支持, 需 QGraphicsDropShadowEffect` |
@@ -542,7 +549,7 @@
 | 汇总卡片大数字 | 28px 700 字重 + 语义色文字，过于醒目 | 降至 22px 600 字重，用深色文字 + 小色标 |
 | 渐变浮动按钮 | `linear-gradient(135deg, brand-600, brand-500)` | 纯色 `brand-600`，无渐变 |
 | "Sparkles" 图标 | ✨ 闪烁星星，消费应用风格 | 改用 `message-circle` 对话气泡，专业风格 |
-| 卡片彩色背景 | 通过/失败/异常用大面积彩色背景 | 改用白色/深色背景 + 左侧 3px 色条，克制 |
+| 卡片彩色背景 | 通过/失败/异常用大面积彩色背景 | 保留浅色语义背景填充 + 同色系边框，克制区分状态；hover 时边框加深为语义主色 |
 | 规则徽章彩色填充 | 通过=绿底白字、失败=红底白字 | 改用浅色底 + 深色文字（如 `bg-success/10 text-success`） |
 | 整体视觉过载 | 大量圆角 + 阴影 + 彩色 + 渐变叠加 | 减少层次：卡片去阴影（仅 hover 有），色条更细 |
 
@@ -564,31 +571,32 @@
 > **关键变化**: 数字不再用彩色。用左侧小色点指示类别，数字保持深色。
 > 这样卡片看起来像财务报表的摘要行，而非仪表盘 widget。
 
-### 14.3 修正后的规则明细卡片
+### 14.3 规则明细卡片 (实现版)
 
 ```
-┌─│──────────────────────────────────────────────┐
-│  [BS-BAL-001]  资产 = 负债 + 所有者权益  ✓ 通过 │
+┌────────────────────────────────────────────────┐
+│  [BS-BAL-001]  资产 = 负债 + 所有者权益  通过   │
 │  ────────────────────────────────────────────  │
+│  差额: 0.00  ·  容差: 0.01                     │
 │  左侧值    128,560,000.00 元                   │
 │  右侧值    128,560,000.00 元                   │
-│  差额              0.00 元 (容差 0.01)          │
 │  公式: asset_total == liability_total + ...   │
 │                                    [AI 诊断]   │
-└───────────────────────────────────────────────┘
-左侧 3px 色条 (不是 4px): var(--success/error/warning)
-背景: var(--bg-surface) (不是彩色背景)
-边框: 1px solid var(--border)
-圆角: var(--radius-lg)
-hover: 边框变 var(--border-strong), shadow-xs
-展开后: 底部显示追溯表 (trace table)
+└────────────────────────────────────────────────┘
+背景: var(--success-bg) / var(--error-bg) / var(--warning-bg) (浅色语义填充)
+边框: 1px solid var(--success-border) / var(--error-border) / var(--warning-border)
+圆角: var(--radius-lg) = 8px
+hover: 边框加深为语义主色 (var(--success/error/warning)), 阴影加深 (呼吸感)
+展开后: 底部显示数值网格 + 公式 + trace 表格
 ```
 
-> **关键变化**: 
-> - 背景不用彩色（原来的 `--success-bg` 等），改为纯白/深色背景
-> - 左边框从 4px 减到 3px，更细更克制
-> - 状态标识用图标 + 文字（如 `✓ 通过`），不用彩色徽章
-> - 规则 ID 用浅色底 + 深色文字，不用彩色底 + 白色文字
+> **设计选择**: 
+> - 采用浅色语义背景填充（`--success-bg` 等）+ 同色系边框，而非素底 + 色条。
+>   理由：财务校验结果的状态区分是核心信息，大面积浅色背景能在不刺眼的前提下
+>   让用户一眼识别通过/失败/异常，同时保持整体界面的呼吸感。
+> - hover 时边框从同色系浅色过渡到语义主色，配合阴影加深形成"呼吸感"反馈。
+> - 规则 ID 保持浅色底 + 深色文字（`bg-surface-hover` + `text-secondary`），克制。
+> - 状态文字使用语义主色（如 `--error`），但不使用彩色徽章或图标。
 
 ### 14.4 修正后的浮动按钮
 
@@ -698,6 +706,17 @@ AgentDrawer (QFrame, 浮动在主窗口右侧)
 
 ---
 
-*设计语言文档版本: v2.1*
-*最后更新: 2026-08-08*
-*修订原因: 用户反馈去除"AI味" + 新增 AI 抽屉规范*
+*设计语言文档版本: v2.3*
+*最后更新: 2026-08-15*
+*修订原因: 品牌色由钢蓝灰演进为精炼靛蓝(refined indigo)，
+  理由：1) 精炼靛蓝(~245°)比钢蓝灰更现代、活泼，同时保持财务专业感；
+  2) 与 success 绿/error 红/warning 黄及 info 天蓝均保持足够色相距离，语义清晰；
+  3) 明暗双主题下白字在 BRAND_500/600 上对比度均 ≥4.5:1 (BRAND_500 5.01:1, BRAND_600 6.29:1)；
+  4) 同步调整 info 色为天蓝(#0ea5e9/#38bdf8)，避免与品牌靛蓝混淆。
+
+*字体渲染修订 (2026-08-15):*
+  1) 统一 UI 字体首族为 Microsoft YaHei UI (Windows 可用性最好)，消除 theme.py 与 app.py 字体族不一致；
+  2) app.py 全局字体改用 setPixelSize(13)，与 QSS 13px 基准对齐，避免 pt/px 混用导致的字号漂移；
+  3) hinting 由 PreferFullHinting 改为 PreferVerticalHinting，配合 PreferAntialias | PreferQuality，
+     减轻低分屏/分数缩放下横竖笔画粗细不均与锐化问题；
+  4) 高 DPI 取整策略保持 RoundPreferFloor，文档化其防止分数缩放字体发虚的取舍。

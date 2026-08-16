@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fsa"
-version = "0.1.0"
+version = "0.4.1"
 description = "财务报表勾稽关系自动校验桌面软件"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -50,9 +50,14 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+# 默认跳过 slow 标记的压测用例 (test_drawer_stress.py, 单用例可达 500s+);
+# 改动抽屉/主题相关代码或发布前, 用 pytest -m slow 显式运行压测
+addopts = "-v --tb=short -m \"not slow\""
 pythonpath = ["src"]
 qt_api = "pyside6"
+markers = [
+    "slow: 耗时压测/压力测试, 默认跳过, 用 pytest -m slow 运行",
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -73,5 +78,6 @@ source = ["src/fsa"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-fail_under = 90
+# 整体基线 84 与 CI 一致；core/services/storage ≥90% 由 CI 单独门禁
+fail_under = 84
 show_missing = true
