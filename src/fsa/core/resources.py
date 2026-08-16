@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -33,3 +34,21 @@ def resource_path(relative: str) -> Path:
         if candidate.exists():
             return candidate
     return candidates[0]
+
+
+def sha256_file(path: str | Path) -> str:
+    """流式计算文件 SHA256 十六进制摘要 (审计证据链用)。
+
+    文件不存在或读取失败时返回空字符串, 不中断主流程。
+    """
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return ""

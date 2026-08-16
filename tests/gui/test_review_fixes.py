@@ -9,16 +9,25 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QTableWidget
+from pathlib import Path
 
+from PySide6.QtCore import QPoint, QSettings, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget
+
+from fsa.core.models.detail import DetailDataset
 from fsa.core.models.result import ValidationSummary
 from fsa.core.models.rule import Severity
+from fsa.core.resources import sha256_file
 from fsa.gui.main_window import MainWindow
+from fsa.gui.pages.import_page import ImportPage
+from fsa.gui.pages.settings_page import SettingsPage
 from fsa.gui.theme import get_qss
 from fsa.gui.widgets.agent_fab import AgentFAB
-from tests.gui.helpers import make_result
+from tests.gui.helpers import make_report, make_result
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_REALISTIC_REPORT = _PROJECT_ROOT / "tests" / "fixtures" / "realistic_report.xlsx"
 
 
 def _icon_dominant_color(icon) -> tuple[int, int, int] | None:
@@ -192,3 +201,233 @@ class TestDrawerBubbleFitsViewport:
             assert left + bubble.width() <= viewport_width + 1, (
                 f"气泡右缘 {left + bubble.width()} 超出视口 {viewport_width}"
             )
+
+
+class TestAuditEvidenceChain:
+    def test_period_and_source_metadata_persisted(self, qapp, qtbot, app_state) -> None:
+        """报告期间、源文件、哈希与规则版本写入校验结果和历史记录。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+        app_state.load_registry()
+
+        window._import_page._period_input.setText("2024-12")
+        window._import_page._on_file(str(_REALISTIC_REPORT))
+        qtbot.wait(100)
+
+        assert app_state.period == "2024-12"
+
+        window._import_page.trigger_validate()
+        qtbot.waitUntil(
+            lambda: app_state.history_repo.count() >= 1, timeout=5000  # type: ignore[union-attr]
+        )
+
+        summary = app_state.results
+        assert summary is not None
+        assert summary.period == "2024-12"
+        assert summary.source_files == [str(_REALISTIC_REPORT)]
+        assert summary.source_hashes == [sha256_file(_REALISTIC_REPORT)]
+        assert summary.rule_version == "1.3.0"
+
+        record = app_state.history_repo.get_recent(limit=1)[0]  # type: ignore[union-attr]
+        assert record["period"] == "2024-12"
+        assert record["source_files"] == [str(_REALISTIC_REPORT)]
+        assert record["source_hashes"] == [sha256_file(_REALISTIC_REPORT)]
+        assert record["rule_version"] == "1.3.0"
+
+    def test_history_view_locks_period_input(self, qapp, qtbot, app_state) -> None:
+        """历史回看时期间输入框只读, 退出回看后恢复可编辑。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+
+        summary = ValidationSummary(
+            period="2024-11",
+            total=1,
+            passed=1,
+            results=[make_result("A-001", passed=True)],
+        )
+        app_state.set_history_view(summary, 42)
+        qtbot.wait(20)
+
+        assert not window._import_page._period_input.isEnabled()
+        assert window._import_page._period_input.text() == "2024-11"
+
+        app_state.clear_all()
+        qtbot.wait(20)
+        assert window._import_page._period_input.isEnabled()
+
+
+class TestBackgroundImport:
+    def test_background_import_does_not_block_gui(self, qapp, qtbot, app_state, monkeypatch) -> None:
+        """拖放导入走后台线程, 调用后立即返回且最终写入状态。"""
+        import time
+
+        import fsa.gui.pages.import_page as import_page_module
+
+        page = ImportPage(app_state)
+        qtbot.addWidget(page)
+
+        def slow_read(path: str, use_com: bool = False) -> dict:
+            time.sleep(0.3)
+            return {}
+
+        monkeypatch.setattr(import_page_module, "read_excel", slow_read)
+        page._importer.import_data = (
+            lambda data, source_file, suffix: [make_report()]
+        )
+        page._detail_importer.import_data = lambda data: DetailDataset()
+
+        started = time.monotonic()
+        page._on_files_async(["a.xlsx"])
+        assert time.monotonic() - started < 0.1
+        assert page._import_cancel_event is not None
+
+        qtbot.waitUntil(lambda: len(app_state.reports) == 1, timeout=3000)
+        assert page._progress.isHidden()
+
+    def test_background_validation_does_not_block_gui(self, qapp, qtbot, app_state, monkeypatch) -> None:
+        """顶栏校验走后台线程, 慢哈希不阻塞界面。"""
+        import time
+
+        import fsa.gui.pages.import_page as import_page_module
+
+        page = ImportPage(app_state)
+        qtbot.addWidget(page)
+        app_state.load_registry()
+        page._on_file(str(_REALISTIC_REPORT))
+        qtbot.wait(100)
+
+        def slow_hash(path: str) -> str:
+            time.sleep(0.3)
+            return sha256_file(path)
+
+        monkeypatch.setattr(import_page_module, "sha256_file", slow_hash)
+        started = time.monotonic()
+        page.trigger_validate_async()
+        assert time.monotonic() - started < 0.1
+        assert page._validation_running is True
+
+        qtbot.waitUntil(lambda: app_state.results is not None, timeout=3000)
+        assert page._validation_running is False
+
+
+class TestAgentPageAwareSuggestions:
+    def test_page_switch_changes_suggestions(self, qapp, qtbot, app_state) -> None:
+        """不同页面显示不同的 AI 建议问题。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+
+        window._on_nav("navImport")
+        import_texts = [
+            window._agent_drawer._suggestions_layout.itemAt(i).widget().text()
+            for i in range(window._agent_drawer._suggestions_layout.count())
+            if window._agent_drawer._suggestions_layout.itemAt(i).widget() is not None
+        ]
+        window._on_nav("navSettings")
+        settings_texts = [
+            window._agent_drawer._suggestions_layout.itemAt(i).widget().text()
+            for i in range(window._agent_drawer._suggestions_layout.count())
+            if window._agent_drawer._suggestions_layout.itemAt(i).widget() is not None
+        ]
+        assert import_texts != settings_texts
+        assert any("配置" in text for text in settings_texts)
+
+    def test_typing_previews_related_questions(self, qapp, qtbot, app_state) -> None:
+        """输入内容变化时预览本地问题库中的相关问题。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+        window._open_drawer()
+
+        window._agent_drawer._input.setPlainText("勾稽")
+        qtbot.wait(30)
+        texts = [
+            window._agent_drawer._suggestions_layout.itemAt(i).widget().text()
+            for i in range(window._agent_drawer._suggestions_layout.count())
+            if window._agent_drawer._suggestions_layout.itemAt(i).widget() is not None
+        ]
+        assert any("勾稽" in text for text in texts)
+
+
+class TestMultiEntityGui:
+    def test_run_multi_entity_produces_combined_result(
+        self, qapp, qtbot, app_state, tmp_path
+    ) -> None:
+        """多主体批量校验入口可按子文件夹生成合并结果。"""
+        from tests.importer.conftest import make_multi_sheet_excel
+
+        page = ImportPage(app_state)
+        qtbot.addWidget(page)
+        app_state.load_registry()
+
+        folder_a = tmp_path / "主体A"
+        folder_b = tmp_path / "主体B"
+        folder_a.mkdir()
+        folder_b.mkdir()
+        make_multi_sheet_excel(folder_a)
+        make_multi_sheet_excel(folder_b)
+
+        result = page._run_multi_entity([str(folder_a), str(folder_b)])
+        assert len(result.outcomes) == 2
+        assert result.combined is not None
+        assert result.combined.total > 0
+
+
+class TestDeepSeekTemplate:
+    def test_deepseek_template_fills_settings(self, qapp, qtbot, app_state) -> None:
+        """设置页一键填入 DeepSeek 模板, 不自动填密钥。"""
+        page = SettingsPage(app_state)
+        qtbot.addWidget(page)
+        btn = next(
+            b for b in page.findChildren(QPushButton) if b.text() == "填入 DeepSeek 模板"
+        )
+        btn.click()
+        qtbot.wait(20)
+
+        settings = QSettings("FSA", "FinancialAudit")
+        assert settings.value("llm_provider") == "openai"
+        assert settings.value("llm_base_url") == "https://api.deepseek.com"
+        assert settings.value("llm_model") == "deepseek-chat"
+        assert settings.value("llm_api_key") in ("", None)
+
+
+class TestHistorySearchAndCompare:
+    def test_history_search_filters_records(self, qapp, qtbot, app_state) -> None:
+        """历史页可按期间/源文件搜索。"""
+        from fsa.gui.pages.history_page import HistoryPage
+
+        repo = app_state.history_repo
+        conn = repo._db.connection  # type: ignore[union-attr]
+        conn.execute("DELETE FROM validation_history")
+        conn.commit()
+        repo.save(  # type: ignore[union-attr]
+            ValidationSummary(period="2024-12", total=1, passed=1, source_files=["a.xlsx"])
+        )
+        repo.save(  # type: ignore[union-attr]
+            ValidationSummary(period="2025-01", total=1, passed=1, source_files=["b.xlsx"])
+        )
+
+        page = HistoryPage(app_state)
+        qtbot.addWidget(page)
+        page._load_history()
+        assert len(page._cards) == 2
+        assert page._compare_btn.isEnabled()
+
+        page._search_input.setText("2024-12")
+        qtbot.wait(20)
+        assert len(page._cards) == 1
+
+        page._search_input.setText("b.xlsx")
+        qtbot.wait(20)
+        assert len(page._cards) == 1
+        card_texts = [
+            label.text()
+            for label in page._cards[0].findChildren(QLabel)
+        ]
+        assert any("2025-01" in text for text in card_texts)
+
+        page._search_input.clear()
+        qtbot.wait(20)
+        assert len(page._cards) == 2

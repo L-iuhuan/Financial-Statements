@@ -128,10 +128,14 @@ class AuditPage(QWidget):
             self._history_banner.setVisible(False)
             return
         period = summary.period if summary is not None else ""
-        self._history_banner_text.setText(
-            f"历史回看 #{history_id} · 期间 {period or '未设置'} · "
-            "以下为历史校验结果，导出内容为历史数据"
-        )
+        meta_parts = [f"历史回看 #{history_id}", f"期间 {period or '未设置'}"]
+        if summary is not None:
+            if summary.source_files:
+                meta_parts.append(f"源文件 {len(summary.source_files)} 个")
+            if summary.rule_version:
+                meta_parts.append(f"规则 CAS v{summary.rule_version}")
+        meta_parts.append("以下为历史校验结果，导出内容为历史数据")
+        self._history_banner_text.setText(" · ".join(meta_parts))
         self._history_banner.setVisible(True)
 
     def _update_table(self) -> None:

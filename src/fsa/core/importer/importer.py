@@ -89,8 +89,15 @@ class ImportService:
         for sheet_name, report_type in identified:
             raw = data[sheet_name]
             unmapped: list[str] = []
-            items = self._extract_for_type(raw, report_type, suffix, unmapped)
-            report = self._build_report(report_type, items, source_file, unmapped)
+            unit_info: dict[str, str] = {}
+            items = self._extract_for_type(
+                raw, report_type, suffix, unmapped, unit_info
+            )
+            report = self._build_report(
+                report_type, items, source_file, unmapped,
+                unit_info.get("unit", "元"),
+                unit_info.get("warning", ""),
+            )
             reports.append(report)
             logger.info(f"  导入报表: {report_type.value}，共 {len(items)} 个项目")
 
@@ -130,8 +137,14 @@ class ImportService:
         _, report_type = identified[0]
         raw = raw_data[sheet_name]
         unmapped: list[str] = []
-        items = self._extract_for_type(raw, report_type, suffix, unmapped)
-        return self._build_report(report_type, items, file_path, unmapped)
+        unit_info: dict[str, str] = {}
+        items = self._extract_for_type(
+            raw, report_type, suffix, unmapped, unit_info
+        )
+        return self._build_report(
+            report_type, items, file_path, unmapped,
+            unit_info.get("unit", "元"), unit_info.get("warning", ""),
+        )
 
     def _extract_for_type(
         self,
@@ -139,6 +152,7 @@ class ImportService:
         report_type: ReportType,
         suffix: str,
         unmapped: list[str] | None = None,
+        unit_info: dict[str, str] | None = None,
     ) -> list[ReportItem]:
         """按报表类型选择提取器。
 
@@ -151,7 +165,7 @@ class ImportService:
                 logger.warning("PDF 格式的所有者权益变动表矩阵提取暂不支持, 跳过")
                 return []
             return extract_sce_items(raw)
-        return extract_items(raw, report_type, unmapped)
+        return extract_items(raw, report_type, unmapped, unit_info)
 
     def _build_report(
         self,
@@ -159,6 +173,8 @@ class ImportService:
         items: list[ReportItem],
         source_file: str,
         unmapped_names: list[str] | None = None,
+        amount_unit: str = "元",
+        unit_warning: str = "",
     ) -> Report:
         """构建 Report 对象。
 
@@ -177,4 +193,6 @@ class ImportService:
             source_file=source_file,
             items=items,
             unmapped_names=unmapped_names or [],
+            amount_unit=amount_unit,
+            unit_warning=unit_warning,
         )

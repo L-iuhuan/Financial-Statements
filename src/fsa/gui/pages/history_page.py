@@ -11,12 +11,17 @@ import sqlite3
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -24,6 +29,7 @@ from qfluentwidgets import FluentIcon, IconWidget
 
 from fsa.gui.app_state import AppState
 from fsa.gui.theme import get_mono_font
+from fsa.storage.history_repo import HistoryRecord
 
 
 class HistoryCard(QFrame):
@@ -47,6 +53,8 @@ class HistoryCard(QFrame):
         passed: int,
         failed: int,
         errored: int,
+        source_files: list[str] | None = None,
+        rule_version: str = "",
     ) -> None:
         super().__init__()
         self._history_id = history_id
@@ -75,9 +83,17 @@ class HistoryCard(QFrame):
         date_label.setMinimumWidth(0)
         info.addWidget(date_label)
 
-        period_label = QLabel(f"报告期间: {period}")
+        files = source_files or []
+        meta_parts = [f"报告期间: {period}"]
+        if files:
+            meta_parts.append(f"源文件: {len(files)} 个")
+        if rule_version:
+            meta_parts.append(f"规则 CAS v{rule_version}")
+        period_label = QLabel(" · ".join(meta_parts))
         period_label.setObjectName("MetaLabel")
         period_label.setMinimumWidth(0)
+        if files:
+            period_label.setToolTip("\n".join(files))
         info.addWidget(period_label)
         layout.addLayout(info, stretch=1)
 
@@ -138,6 +154,8 @@ class HistoryPage(QWidget):
         self.setObjectName("HistoryPage")
         self._state = state
         self._cards: list[HistoryCard] = []
+        self._all_records: list[HistoryRecord] = []
+        self._search_text = ""
         self._history_loaded = False
         self._setup_ui()
         self._connect_signals()
@@ -151,6 +169,7 @@ class HistoryPage(QWidget):
 
     def _connect_signals(self) -> None:
         self._state.history_changed.connect(self._load_history)
+        self._search_input.textChanged.connect(self._on_search_changed)
 
     def _setup_ui(self) -> None:
         scroll = QScrollArea()
@@ -163,10 +182,25 @@ class HistoryPage(QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        # 标题
+        # 标题 + 搜索 + 对比
+        title_row = QHBoxLayout()
         title = QLabel("校验历史")
         title.setObjectName("PageTitle")
-        layout.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch()
+        self._search_input = QLineEdit()
+        self._search_input.setObjectName("SearchInput")
+        self._search_input.setPlaceholderText("搜索期间 / 源文件 / 规则版本")
+        self._search_input.setFixedWidth(260)
+        self._search_input.setClearButtonEnabled(True)
+        title_row.addWidget(self._search_input)
+        self._compare_btn = QPushButton("对比最近两次")
+        self._compare_btn.setObjectName("BtnSecondary")
+        self._compare_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._compare_btn.clicked.connect(self._compare_recent_two)
+        self._compare_btn.setEnabled(False)
+        title_row.addWidget(self._compare_btn)
+        layout.addLayout(title_row)
 
         # 空状态
         self._empty_container = QFrame()
@@ -226,33 +260,138 @@ class HistoryPage(QWidget):
             self._show_empty()
             return
 
-        # 清空旧卡片 (先隐藏再删除, 避免闪现为独立窗口)
+        self._all_records = records
+        self._compare_btn.setEnabled(len(records) >= 2)
+        self._rebuild_cards(records)
+
+    def _on_search_changed(self, text: str) -> None:
+        """搜索历史记录 (期间/日期/源文件/规则版本)。"""
+        self._search_text = text.strip().lower()
+        self._rebuild_cards(self._all_records)
+
+    def _record_matches_search(self, record: HistoryRecord) -> bool:
+        """判断历史记录是否匹配当前搜索文本。"""
+        if not self._search_text:
+            return True
+        haystack_parts: list[str] = [
+            str(record.get("period", "")),
+            str(record.get("created_at", "")),
+            str(record.get("rule_version", "")),
+            "、".join(str(r) for r in record.get("report_types", [])),
+        ]
+        source_files = record.get("source_files", [])
+        if isinstance(source_files, list):
+            haystack_parts.extend(str(path) for path in source_files)
+        return self._search_text in "\n".join(haystack_parts).lower()
+
+    def _rebuild_cards(self, records: list[HistoryRecord]) -> None:
+        """按当前搜索条件重建卡片列表。"""
         for card in self._cards:
             card.hide()
             card.deleteLater()
         self._cards.clear()
 
-        if not records:
-            self._show_empty()
+        filtered = [record for record in records if self._record_matches_search(record)]
+        if not filtered:
+            if records:
+                self._show_no_match()
+            else:
+                self._show_empty()
             return
 
-        # 创建新卡片
         self._empty_container.hide()
         self._cards_container.show()
-        for record in records:
+        for record in filtered:
             card = HistoryCard(
-                history_id=record["id"],
-                date=record["created_at"],
-                period=record["period"] or "未设置",
-                total=record["total"],
-                passed=record["passed"],
-                failed=record["failed"],
-                errored=record["errored"],
+                history_id=int(record["id"]),
+                date=str(record["created_at"]),
+                period=str(record["period"] or "未设置"),
+                total=int(record["total"]),
+                passed=int(record["passed"]),
+                failed=int(record["failed"]),
+                errored=int(record["errored"]),
+                source_files=(
+                    list(record["source_files"])
+                    if isinstance(record.get("source_files"), list)
+                    else []
+                ),
+                rule_version=str(record.get("rule_version", "")),
             )
             card.delete_clicked.connect(self._on_delete_history)
             card.view_clicked.connect(self.view_requested.emit)
             self._cards_layout.addWidget(card)
             self._cards.append(card)
+
+    def _show_no_match(self) -> None:
+        """搜索无匹配时显示空态。"""
+        self._empty_container.show()
+        self._cards_container.hide()
+
+    def _compare_recent_two(self) -> None:
+        """对比最近两次校验结果: 展示每条规则的状态变化。"""
+        repo = self._state.history_repo
+        if repo is None:
+            return
+        records = repo.get_recent(limit=2)
+        if len(records) < 2:
+            self._compare_btn.setEnabled(False)
+            return
+
+        older, newer = records[1], records[0]
+        try:
+            older_results = repo.get_detail(older["id"])
+            newer_results = repo.get_detail(newer["id"])
+        except (sqlite3.DatabaseError, RuntimeError):
+            logger.exception("加载对比明细失败")
+            return
+
+        status_of: dict[str, dict[str, str]] = {}
+        for prefix, results in (("前", older_results), ("后", newer_results)):
+            for result in results:
+                if result.errored:
+                    status = "异常"
+                elif result.skipped:
+                    status = "跳过"
+                elif result.passed:
+                    status = "通过"
+                else:
+                    status = "不通过"
+                status_of.setdefault(result.rule_id, {"name": result.rule_name})
+                status_of[result.rule_id][prefix] = status
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("最近两次校验结果对比")
+        layout = QVBoxLayout(dialog)
+        info = QLabel(
+            f"前一次: {older['period'] or '未设置'}  ·  "
+            f"后一次: {newer['period'] or '未设置'}"
+        )
+        info.setObjectName("MetaLabel")
+        layout.addWidget(info)
+
+        table = QTableWidget(len(status_of), 5)
+        table.setHorizontalHeaderLabels(["规则 ID", "规则名称", "前一次", "后一次", "变化"])
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        table.horizontalHeader().setStretchLastSection(True)
+        for row_idx, (rule_id, item) in enumerate(sorted(status_of.items())):
+            before = item.get("前", "—")
+            after = item.get("后", "—")
+            changed = "相同" if before == after else f"{before} → {after}"
+            table.setItem(row_idx, 0, QTableWidgetItem(rule_id))
+            table.setItem(row_idx, 1, QTableWidgetItem(item.get("name", "")))
+            table.setItem(row_idx, 2, QTableWidgetItem(before))
+            table.setItem(row_idx, 3, QTableWidgetItem(after))
+            table.setItem(row_idx, 4, QTableWidgetItem(changed))
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.clicked.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.resize(760, 480)
+        dialog.exec()
 
     def _on_delete_history(self, history_id: int) -> None:
         """删除历史记录 (带二次确认) 并刷新列表。"""

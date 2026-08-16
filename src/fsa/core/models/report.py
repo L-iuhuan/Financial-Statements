@@ -66,6 +66,8 @@ class Report:
         items: 报表项目列表
         unmapped_names: 导入时未能映射为标准科目的项目名称（有金额但无法识别），
             供 Agent 工具与人工排查使用；不参与校验
+        amount_unit: 源报表金额单位 (元/千元/万元/百万元/亿元); items 已统一换算为元
+        unit_warning: 单位识别提示 (如无法确定单位、多列单位不一致)
     """
 
     report_type: ReportType
@@ -73,6 +75,8 @@ class Report:
     source_file: str = ""
     items: list[ReportItem] = field(default_factory=list)
     unmapped_names: list[str] = field(default_factory=list)
+    amount_unit: str = "元"
+    unit_warning: str = ""
 
     def __post_init__(self) -> None:
         self._index: dict[str, ReportItem] = {}

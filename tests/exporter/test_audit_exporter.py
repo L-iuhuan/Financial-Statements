@@ -222,7 +222,7 @@ class TestAuditExporter:
         try:
             exporter.export(summary, tmp_path)
             wb = load_workbook(tmp_path)
-            assert wb.sheetnames == ["校验汇总", "校验明细", "科目追溯"]
+            assert wb.sheetnames == ["校验汇总", "校验明细", "科目追溯", "底稿说明"]
             wb.close()
         finally:
             os.unlink(tmp_path)

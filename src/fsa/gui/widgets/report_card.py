@@ -93,8 +93,10 @@ class ReportCard(QFrame):
         items_icon.setPixmap(FluentIcon.LAYOUT.icon().pixmap(14, 14))
         meta1.addWidget(items_icon)
 
-        items = QLabel(f"{len(self._report.items)} 项")
+        items = QLabel(f"{len(self._report.items)} 项 · 单位 {self._report.amount_unit}")
         items.setObjectName("MetaLabel")
+        if self._report.unit_warning:
+            items.setToolTip(self._report.unit_warning)
         meta1.addWidget(items)
 
         meta1.addStretch()

@@ -76,6 +76,7 @@ class AgentLoop:
         user_message: str,
         history: Sequence[ChatMessage | dict[str, Any]] | None = None,
         cancel_event: threading.Event | None = None,
+        context_notes: str = "",
     ) -> str:
         """处理一轮用户提问, 返回助手回答。
 
@@ -84,12 +85,13 @@ class AgentLoop:
             history: 历史对话消息 (ChatMessage 或 dict, 多轮上下文)
             cancel_event: 取消事件, 透传给每次 LLM 调用并在工具循环每轮检查,
                 已取消时抛 LLMError("已取消")
+            context_notes: 当前页面/校验结果的软件上下文注记, 注入系统提示
 
         Returns:
             助手的最终回答文本 (末尾含 DISCLAIMER_TEXT 免责标注)；
             LLM 调用失败/超时时返回中文提示
         """
-        messages = self._build_messages(user_message, history)
+        messages = self._build_messages(user_message, history, context_notes)
         return self._run(messages, stream=False, cancel_event=cancel_event)
 
     def ask_stream(
@@ -99,13 +101,14 @@ class AgentLoop:
         on_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        context_notes: str = "",
     ) -> str:
         """流式版本: 内容分块经 on_chunk 回调, 推理分块经 on_reasoning_chunk 回调。
 
         仅当客户端支持流式 (chat_stream) 时生效, 否则自动回退到非流式。
         正常结束时最后一个分块为 DISCLAIMER_TEXT 免责标注 (异常/取消路径不追加)。
         """
-        messages = self._build_messages(user_message, history)
+        messages = self._build_messages(user_message, history, context_notes)
         return self._run(
             messages,
             stream=True,
@@ -115,15 +118,23 @@ class AgentLoop:
         )
 
     def _build_messages(
-        self, user_message: str, history: Sequence[ChatMessage | dict[str, Any]] | None
+        self,
+        user_message: str,
+        history: Sequence[ChatMessage | dict[str, Any]] | None,
+        context_notes: str = "",
     ) -> list[ChatMessage]:
-        """组装完整对话消息: 系统提示 + 规范化历史 + 当前用户问题。"""
-        messages: list[ChatMessage] = [ChatMessage(role="system", content=_SYSTEM_PROMPT)]
+        """组装完整对话消息: 系统提示 + 页面上下文 + 规范化历史 + 当前用户问题。"""
+        system_prompt = _SYSTEM_PROMPT
+        clean_notes = sanitize_llm_input(context_notes, max_len=1200).strip()
+        if clean_notes:
+            system_prompt += "\n\n[当前软件上下文]\n" + clean_notes
+        messages: list[ChatMessage] = [ChatMessage(role="system", content=system_prompt)]
         if history:
             messages.extend(_normalize_history(history))
-        messages.append(
-            ChatMessage(role="user", content=sanitize_llm_input(user_message, max_len=4000))
-        )
+        user_content = sanitize_llm_input(user_message, max_len=4000)
+        if clean_notes:
+            user_content = f"[当前软件上下文]\n{clean_notes}\n\n用户问题: {user_content}"
+        messages.append(ChatMessage(role="user", content=user_content))
         return messages
 
     @staticmethod

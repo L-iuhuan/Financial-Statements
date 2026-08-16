@@ -10,15 +10,24 @@
 from __future__ import annotations
 
 import math
+from decimal import Decimal, InvalidOperation
 
 from loguru import logger
 
 from fsa.core.exceptions import EvaluationError, InvalidToleranceError
 from fsa.core.models.rule import ToleranceType
 
-# 金额超过该量级时 float 尾数精度开始受限（1e14 附近 ULP ≈ 0.016），
-# 触发仅提示不改变判断结果（P2 确定性）。
+# 金额超过该量级时 float 尾数精度开始受限（1e14 附近 ULP ≈ 0.016）。
+# 比较器内部已改用 Decimal 计算, 此阈值仅用于保留提示。
 _PRECISION_WARN_MAGNITUDE: float = 1e14
+
+
+def _to_decimal(value: float) -> Decimal:
+    """将 float 金额转为 Decimal (经 str 转换, 避免二进制尾数污染)。"""
+    try:
+        return Decimal(str(value))
+    except InvalidOperation:
+        return Decimal(repr(value))
 
 
 class RelativeBaseZeroError(EvaluationError):
@@ -74,21 +83,25 @@ class ToleranceComparator:
                 f"|右值|={abs(right):.2f})，float 尾数精度有限，结果请结合业务复核"
             )
 
-        diff = left - right
+        d_left = _to_decimal(left)
+        d_right = _to_decimal(right)
+        d_tolerance = _to_decimal(tolerance)
+        d_diff = d_left - d_right
+        diff = float(d_diff)
 
         if tolerance_type in (ToleranceType.EXACT, ToleranceType.ABSOLUTE):
-            return abs(diff) <= tolerance, diff
+            return abs(d_diff) <= d_tolerance, diff
 
         if tolerance_type == ToleranceType.RELATIVE:
-            if right == 0:
-                if left == 0:
+            if d_right == 0:
+                if d_left == 0:
                     return True, 0.0
                 raise RelativeBaseZeroError()
-            relative_diff = abs(diff) / abs(right)
-            return relative_diff <= tolerance, diff
+            relative_diff = abs(d_diff) / abs(d_right)
+            return relative_diff <= d_tolerance, diff
 
         if tolerance_type == ToleranceType.THRESHOLD:
-            return abs(diff) <= tolerance, diff
+            return abs(d_diff) <= d_tolerance, diff
 
         # 理论上不会到达 (枚举已穷尽)
         raise ValueError(f"未知的容差类型: {tolerance_type}")

@@ -176,6 +176,8 @@ class DetailDataset:
     related_party_purchases: list[RelatedPartyPurchaseRow] = field(default_factory=list)
     sales_details: list[SalesDetailRow] = field(default_factory=list)
     internal_cash_flows: list[InternalCashFlowRow] = field(default_factory=list)
+    amount_unit: str = "元"
+    unit_warnings: list[str] = field(default_factory=list)
 
     def merge(self, other: DetailDataset) -> None:
         """合并另一个数据集（多文件导入同一期间时使用）。"""
@@ -183,6 +185,9 @@ class DetailDataset:
             self.period = other.period
         if not self.source_file:
             self.source_file = other.source_file
+        if self.amount_unit == "元" and other.amount_unit != "元":
+            self.amount_unit = other.amount_unit
+        self.unit_warnings.extend(other.unit_warnings)
         self.trial_balance.extend(other.trial_balance)
         self.trial_balance_current.extend(other.trial_balance_current)
         self.journal.extend(other.journal)

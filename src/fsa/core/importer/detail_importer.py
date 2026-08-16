@@ -11,6 +11,7 @@ import re
 
 from loguru import logger
 
+from fsa.core.importer.amount_parser import detect_amount_unit
 from fsa.core.importer.detail_parsers import (
     parse_cash_flow_row,
     parse_internal_cash_flow_row,
@@ -61,20 +62,25 @@ class DetailImporter:
         dataset = DetailDataset(period=self.period)
 
         for sheet_name, raw in data.items():
+            unit = _detect_detail_unit(raw)
+            if unit != "元":
+                dataset.unit_warnings.append(
+                    f"明细表「{sheet_name}」金额单位「{unit}」，已换算为元"
+                )
             if _is_trial_balance(raw.headers):
-                self._collect_trial_balance(dataset, sheet_name, raw)
+                self._collect_trial_balance(dataset, sheet_name, raw, unit)
             elif _is_journal(raw.headers):
-                self._collect_journal(dataset, sheet_name, raw)
+                self._collect_journal(dataset, sheet_name, raw, unit)
             elif _is_cash_flow_detail(raw.headers):
-                self._collect_cash_flow_detail(dataset, sheet_name, raw)
+                self._collect_cash_flow_detail(dataset, sheet_name, raw, unit)
             elif _is_reclassification(raw.headers):
-                self._collect_reclassification(dataset, raw)
+                self._collect_reclassification(dataset, raw, unit)
             elif _is_related_party_purchase(raw.headers):
-                self._collect_related_party_purchase(dataset, raw)
+                self._collect_related_party_purchase(dataset, raw, unit)
             elif _is_sales_detail(raw.headers):
-                self._collect_sales_detail(dataset, raw)
+                self._collect_sales_detail(dataset, raw, unit)
             elif _is_internal_cash_flow(raw.headers):
-                self._collect_internal_cash_flow(dataset, raw)
+                self._collect_internal_cash_flow(dataset, raw, unit)
 
         logger.info(
             f"明细导入完成: 余额表 {len(dataset.trial_balance)} 行, "
@@ -84,13 +90,13 @@ class DetailImporter:
         return dataset
 
     def _collect_trial_balance(
-        self, dataset: DetailDataset, sheet_name: str, raw: RawSheetData
+        self, dataset: DetailDataset, sheet_name: str, raw: RawSheetData, unit: str
     ) -> None:
         """解析科目余额表工作表。"""
         rows = [
             r
             for row in raw.rows
-            if (r := parse_trial_balance_row(raw.headers, row)) is not None
+            if (r := parse_trial_balance_row(raw.headers, row, unit)) is not None
         ]
         target = (
             dataset.trial_balance
@@ -100,13 +106,13 @@ class DetailImporter:
         target.extend(rows)
 
     def _collect_journal(
-        self, dataset: DetailDataset, sheet_name: str, raw: RawSheetData
+        self, dataset: DetailDataset, sheet_name: str, raw: RawSheetData, unit: str
     ) -> None:
         """解析序时账工作表，按口径分流入累计/本月数据集。"""
         rows = [
             r
             for row in raw.rows
-            if (r := parse_journal_row(raw.headers, row)) is not None
+            if (r := parse_journal_row(raw.headers, row, unit)) is not None
         ]
         if _is_cumulative(sheet_name):
             dataset.journal.extend(rows)
@@ -119,13 +125,13 @@ class DetailImporter:
                 dataset.journal_current.extend(rows)
 
     def _collect_cash_flow_detail(
-        self, dataset: DetailDataset, sheet_name: str, raw: RawSheetData
+        self, dataset: DetailDataset, sheet_name: str, raw: RawSheetData, unit: str
     ) -> None:
         """解析现金流量明细工作表，按口径分流入累计/本月数据集。"""
         rows = [
             r
             for row in raw.rows
-            if (r := parse_cash_flow_row(raw.headers, row)) is not None
+            if (r := parse_cash_flow_row(raw.headers, row, unit)) is not None
         ]
         if _is_cumulative(sheet_name):
             dataset.cash_flow_detail.extend(rows)
@@ -138,31 +144,31 @@ class DetailImporter:
                 dataset.cash_flow_detail_current.extend(rows)
 
     def _collect_reclassification(
-        self, dataset: DetailDataset, raw: RawSheetData
+        self, dataset: DetailDataset, raw: RawSheetData, unit: str
     ) -> None:
         """解析往来重分类明细工作表。"""
-        rows = [parse_reclassification_row(raw.headers, row) for row in raw.rows]
+        rows = [parse_reclassification_row(raw.headers, row, unit) for row in raw.rows]
         dataset.reclassifications.extend([r for r in rows if r is not None])
 
     def _collect_related_party_purchase(
-        self, dataset: DetailDataset, raw: RawSheetData
+        self, dataset: DetailDataset, raw: RawSheetData, unit: str
     ) -> None:
         """解析关联方采购明细工作表。"""
-        rows = [parse_purchase_row(raw.headers, row) for row in raw.rows]
+        rows = [parse_purchase_row(raw.headers, row, unit) for row in raw.rows]
         dataset.related_party_purchases.extend([r for r in rows if r is not None])
 
     def _collect_sales_detail(
-        self, dataset: DetailDataset, raw: RawSheetData
+        self, dataset: DetailDataset, raw: RawSheetData, unit: str
     ) -> None:
         """解析销售收入成本明细工作表。"""
-        rows = [parse_sales_row(raw.headers, row) for row in raw.rows]
+        rows = [parse_sales_row(raw.headers, row, unit) for row in raw.rows]
         dataset.sales_details.extend([r for r in rows if r is not None])
 
     def _collect_internal_cash_flow(
-        self, dataset: DetailDataset, raw: RawSheetData
+        self, dataset: DetailDataset, raw: RawSheetData, unit: str
     ) -> None:
         """解析内部交易现金流量明细工作表。"""
-        rows = [parse_internal_cash_flow_row(raw.headers, row) for row in raw.rows]
+        rows = [parse_internal_cash_flow_row(raw.headers, row, unit) for row in raw.rows]
         dataset.internal_cash_flows.extend([r for r in rows if r is not None])
 
 
@@ -235,6 +241,16 @@ def _is_internal_cash_flow(headers: list[str]) -> bool:
 def _is_cumulative(sheet_name: str) -> bool:
     """判断工作表是否为累计口径（1-本月）。"""
     return any(keyword in sheet_name for keyword in _CUMULATIVE_KEYWORDS)
+
+
+def _detect_detail_unit(raw: RawSheetData) -> str:
+    """从工作表名/表头识别明细金额单位, 未识别按元处理。"""
+    candidates = [raw.name, *raw.headers]
+    for candidate in candidates:
+        unit = detect_amount_unit(candidate)
+        if unit is not None:
+            return unit
+    return "元"
 
 
 def _normalize(value: str) -> str:

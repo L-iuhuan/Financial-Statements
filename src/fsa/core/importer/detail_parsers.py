@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from fsa.core.importer.amount_parser import parse_amount
+from fsa.core.importer.amount_parser import parse_amount, to_yuan
 from fsa.core.models.detail import (
     CashFlowDetailRow,
     InternalCashFlowRow,
@@ -23,7 +23,7 @@ from fsa.core.models.detail import (
 
 
 def parse_trial_balance_row(
-    headers: list[str], row: dict[str, object]
+    headers: list[str], row: dict[str, object], unit: str = "元"
 ) -> TrialBalanceRow | None:
     """解析科目余额表的一行。"""
     code = _text(row, _find_col(headers, "科目编码"))
@@ -33,17 +33,19 @@ def parse_trial_balance_row(
     return TrialBalanceRow(
         account_code=code,
         account_name=name,
-        beginning_debit=_number(row, _find_col(headers, "期初余额借方")) or 0.0,
-        beginning_credit=_number(row, _find_col(headers, "期初余额贷方")) or 0.0,
-        period_debit=_number(row, _find_col(headers, "本期发生借方")) or 0.0,
-        period_credit=_number(row, _find_col(headers, "本期发生贷方")) or 0.0,
-        ending_debit=_number(row, _find_col(headers, "期末余额借方")) or 0.0,
-        ending_credit=_number(row, _find_col(headers, "期末余额贷方")) or 0.0,
+        beginning_debit=_number_yuan(row, _find_col(headers, "期初余额借方"), unit) or 0.0,
+        beginning_credit=_number_yuan(row, _find_col(headers, "期初余额贷方"), unit) or 0.0,
+        period_debit=_number_yuan(row, _find_col(headers, "本期发生借方"), unit) or 0.0,
+        period_credit=_number_yuan(row, _find_col(headers, "本期发生贷方"), unit) or 0.0,
+        ending_debit=_number_yuan(row, _find_col(headers, "期末余额借方"), unit) or 0.0,
+        ending_credit=_number_yuan(row, _find_col(headers, "期末余额贷方"), unit) or 0.0,
         row=_to_int(row.get("_row")),
     )
 
 
-def parse_journal_row(headers: list[str], row: dict[str, object]) -> JournalRow | None:
+def parse_journal_row(
+    headers: list[str], row: dict[str, object], unit: str = "元"
+) -> JournalRow | None:
     """解析序时账的一行。"""
     voucher = _text(row, _find_col(headers, "凭证号"))
     direction = _text(row, _find_col(headers, "方向"))
@@ -57,13 +59,13 @@ def parse_journal_row(headers: list[str], row: dict[str, object]) -> JournalRow 
         account_name=_text(row, _find_col(headers, "科目名称")),
         summary=_text(row, _find_col(headers, "摘要")),
         direction=direction,
-        amount=_number(row, _find_amount_col(headers)) or 0.0,
+        amount=_number_yuan(row, _find_amount_col(headers), unit) or 0.0,
         row=_to_int(row.get("_row")),
     )
 
 
 def parse_cash_flow_row(
-    headers: list[str], row: dict[str, object]
+    headers: list[str], row: dict[str, object], unit: str = "元"
 ) -> CashFlowDetailRow | None:
     """解析现金流量明细的一行。"""
     project = _text(row, _find_col(headers, "现金流量项目"))
@@ -76,7 +78,7 @@ def parse_cash_flow_row(
             direction = "流出"
     if not project or direction not in ("流入", "流出"):
         return None
-    amount = _number(row, _find_amount_col(headers))
+    amount = _number_yuan(row, _find_amount_col(headers), unit)
     if amount is None:
         # P1: 金额解析失败不伪造 0.0, 整行跳过
         return None
@@ -93,14 +95,14 @@ def parse_cash_flow_row(
 
 
 def parse_reclassification_row(
-    headers: list[str], row: dict[str, object]
+    headers: list[str], row: dict[str, object], unit: str = "元"
 ) -> ReclassificationRow | None:
     """解析往来重分类明细的一行。"""
     original = _text(row, _find_col(headers, "账面对应往来科目"))
     if not original:
         return None
-    book_amount = _number(row, _find_col(headers, "账面余额"))
-    reclassified_amount = _number(row, _find_col(headers, "重分类后金额"))
+    book_amount = _number_yuan(row, _find_col(headers, "账面余额"), unit)
+    reclassified_amount = _number_yuan(row, _find_col(headers, "重分类后金额"), unit)
     if book_amount is None or reclassified_amount is None:
         # P1: 关键金额解析失败不伪造 0.0, 整行跳过
         return None
@@ -110,8 +112,8 @@ def parse_reclassification_row(
         book_amount=book_amount,
         reclassified_account=_text(row, _find_col(headers, "重分类后科目")),
         reclassified_amount=reclassified_amount,
-        invoiced_amount=_number(row, _find_col(headers, "开票金额")) or 0.0,
-        accrued_amount=_number(row, _find_col(headers, "暂估金额")) or 0.0,
+        invoiced_amount=_number_yuan(row, _find_col(headers, "开票金额"), unit) or 0.0,
+        accrued_amount=_number_yuan(row, _find_col(headers, "暂估金额"), unit) or 0.0,
         is_related_party=_text(row, _find_col(headers, "是否合并范围内关联方")),
         note=_text(row, _find_col(headers, "备注")),
         row=_to_int(row.get("_row")),
@@ -119,14 +121,14 @@ def parse_reclassification_row(
 
 
 def parse_purchase_row(
-    headers: list[str], row: dict[str, object]
+    headers: list[str], row: dict[str, object], unit: str = "元"
 ) -> RelatedPartyPurchaseRow | None:
     """解析关联方采购明细的一行。"""
     buyer = _text(row, _find_col(headers, "填表单位-购买方"))
     counterparty = _text(row, _find_col(headers, "对方单位名称"))
     if not buyer and not counterparty:
         return None
-    total_amount = _number(row, _find_exact_col(headers, "总采购金额"))
+    total_amount = _number_yuan(row, _find_exact_col(headers, "总采购金额"), unit)
     if total_amount is None:
         # P1: 总采购金额解析失败则无法做分类合计核对, 整行跳过
         return None
@@ -135,26 +137,26 @@ def parse_purchase_row(
         counterparty=counterparty,
         payment_nature=_text(row, _find_col(headers, "款项性质")),
         total_amount=total_amount,
-        supply_chain=_number(row, _find_col(headers, "供应链采购")) or 0.0,
-        mold=_number(row, _find_col(headers, "模具采购")) or 0.0,
-        inventory=_number(row, _find_col(headers, "结存存货")) or 0.0,
-        main_cost=_number(row, _find_col(headers, "主营业务成本")) or 0.0,
-        other_cost=_number(row, _find_col(headers, "其他业务成本")) or 0.0,
-        rnd_expense=_number(row, _find_col(headers, "研发费用")) or 0.0,
-        admin_expense=_number(row, _find_col(headers, "管理费用")) or 0.0,
-        selling_expense=_number(row, _find_col(headers, "销售费用")) or 0.0,
-        other=_number(row, _find_exact_col(headers, "其他")) or 0.0,
+        supply_chain=_number_yuan(row, _find_col(headers, "供应链采购"), unit) or 0.0,
+        mold=_number_yuan(row, _find_col(headers, "模具采购"), unit) or 0.0,
+        inventory=_number_yuan(row, _find_col(headers, "结存存货"), unit) or 0.0,
+        main_cost=_number_yuan(row, _find_col(headers, "主营业务成本"), unit) or 0.0,
+        other_cost=_number_yuan(row, _find_col(headers, "其他业务成本"), unit) or 0.0,
+        rnd_expense=_number_yuan(row, _find_col(headers, "研发费用"), unit) or 0.0,
+        admin_expense=_number_yuan(row, _find_col(headers, "管理费用"), unit) or 0.0,
+        selling_expense=_number_yuan(row, _find_col(headers, "销售费用"), unit) or 0.0,
+        other=_number_yuan(row, _find_exact_col(headers, "其他"), unit) or 0.0,
         difference_reason=_text(row, _find_exact_col(headers, "差异原因")),
         row=_to_int(row.get("_row")),
     )
 
 
 def parse_sales_row(
-    headers: list[str], row: dict[str, object]
+    headers: list[str], row: dict[str, object], unit: str = "元"
 ) -> SalesDetailRow | None:
     """解析销售收入成本明细的一行。"""
-    revenue = _number(row, _find_col(headers, "销售收入金额"))
-    cost = _number(row, _find_col(headers, "销售成本金额"))
+    revenue = _number_yuan(row, _find_col(headers, "销售收入金额"), unit)
+    cost = _number_yuan(row, _find_col(headers, "销售成本金额"), unit)
     if revenue is None or cost is None or (revenue == 0.0 and cost == 0.0):
         return None
     margin_value = row.get(_find_col(headers, "销售毛利率") or "")
@@ -167,21 +169,21 @@ def parse_sales_row(
         revenue_type=_text(row, _find_col(headers, "收入类型")),
         revenue_amount=revenue,
         cost_amount=cost,
-        direct_material=_number(row, _find_exact_col(headers, "直接材料")) or 0.0,
-        processing=_number(row, _find_exact_col(headers, "加工费")) or 0.0,
-        direct_labor=_number(row, _find_exact_col(headers, "直接人工")) or 0.0,
-        manufacturing=_number(row, _find_exact_col(headers, "制造费")) or 0.0,
+        direct_material=_number_yuan(row, _find_exact_col(headers, "直接材料"), unit) or 0.0,
+        processing=_number_yuan(row, _find_exact_col(headers, "加工费"), unit) or 0.0,
+        direct_labor=_number_yuan(row, _find_exact_col(headers, "直接人工"), unit) or 0.0,
+        manufacturing=_number_yuan(row, _find_exact_col(headers, "制造费"), unit) or 0.0,
         gross_margin=margin,
         row=_to_int(row.get("_row")),
     )
 
 
 def parse_internal_cash_flow_row(
-    headers: list[str], row: dict[str, object]
+    headers: list[str], row: dict[str, object], unit: str = "元"
 ) -> InternalCashFlowRow | None:
     """解析内部交易现金流量明细的一行。"""
     project = _text(row, _find_col(headers, "现金流量项目"))
-    amount = _number(row, _find_exact_col(headers, "发生额"))
+    amount = _number_yuan(row, _find_exact_col(headers, "发生额"), unit)
     if not project or amount is None or amount == 0.0:
         # P1: 发生额解析失败不伪造 0.0, 整行跳过
         return None
@@ -220,6 +222,14 @@ def _find_amount_col(headers: list[str]) -> str | None:
         if _normalize(header) == "金额":
             return header
     return _find_col(headers, "金额")
+
+
+def _number_yuan(
+    row: dict[str, object], column: str | None, unit: str
+) -> float | None:
+    """读取金额并按明细表单位换算为元。"""
+    value = _number(row, column)
+    return to_yuan(value, unit) if value is not None else None
 
 
 def _text(row: dict[str, object], column: str | None) -> str:

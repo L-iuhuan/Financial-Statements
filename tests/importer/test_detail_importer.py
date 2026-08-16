@@ -301,3 +301,28 @@ class TestImportData:
         importer = DetailImporter(period="2026-06")
         dataset = importer.import_data(raw_data)
         assert dataset.period == "2026-06"
+
+
+class TestDetailAmountUnit:
+    """明细表金额单位识别与换算。"""
+
+    def test_wan_yuan_trial_balance_is_converted(self) -> None:
+        from fsa.core.importer.excel_reader import RawSheetData
+
+        raw = RawSheetData(
+            name="科目余额表（1-本月）（单位:万元）",
+            headers=["科目编码", "科目名称", "期末余额借方"],
+            rows=[
+                {
+                    "_row": 2,
+                    "科目编码": "1002",
+                    "科目名称": "银行存款",
+                    "期末余额借方": 200.0,
+                }
+            ],
+        )
+        dataset = DetailImporter().import_data({"科目余额表（1-本月）": raw})
+
+        assert len(dataset.trial_balance) == 1
+        assert dataset.trial_balance[0].ending_debit == 2_000_000.0
+        assert any("万元" in warning for warning in dataset.unit_warnings)

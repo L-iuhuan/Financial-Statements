@@ -402,3 +402,28 @@ class TestKnowledge:
     def test_search_empty(self) -> None:
         result = search_knowledge("")
         assert "关键词" in result
+
+
+class TestContextAwarePrompt:
+    def test_build_messages_includes_page_context(self, app_state) -> None:
+        """页面上下文注记注入系统提示, 供模型按当前页面作答。"""
+        loop = AgentLoop(FakeLLM([ChatMessage(role="assistant", content="ok")]), app_state)
+        messages = loop._build_messages(
+            "我现在在哪里？", None, "用户当前页面: 规则管理 (查看与维护勾稽规则)"
+        )
+        assert messages[0].role == "system"
+        assert "规则管理" in messages[0].content
+        assert "用户当前页面" in messages[0].content
+
+
+class TestKnowledgeSources:
+    def test_search_rule_library_cas(self, app_state) -> None:
+        """规则库 CAS 引用可被检索。"""
+        result = search_knowledge("BS-BAL-001")
+        assert "规则 BS-BAL-001" in result
+        assert "CAS" in result
+
+    def test_search_external_cas_document(self, app_state) -> None:
+        """内置 CAS 文档目录可被检索。"""
+        result = search_knowledge("财务报表列报")
+        assert "企业会计准则第 30 号" in result or "CAS" in result

@@ -26,7 +26,10 @@ CREATE TABLE IF NOT EXISTS validation_history (
     failed      INTEGER NOT NULL DEFAULT 0,
     errored     INTEGER NOT NULL DEFAULT 0,
     skipped     INTEGER NOT NULL DEFAULT 0,
-    report_types TEXT NOT NULL DEFAULT '[]'
+    report_types TEXT NOT NULL DEFAULT '[]',
+    source_files TEXT NOT NULL DEFAULT '[]',
+    source_hashes TEXT NOT NULL DEFAULT '[]',
+    rule_version TEXT NOT NULL DEFAULT ''
 );
 
 -- 校验结果明细表
@@ -80,10 +83,17 @@ CREATE TABLE IF NOT EXISTS rule_overrides (
 
 # validation_results 表 v1.3.0 新增列迁移配置
 # 按列名 -> (列定义, 中文日志名)
-_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
+_RESULT_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
     "skipped": ("skipped INTEGER NOT NULL DEFAULT 0", "跳过"),
     "category": ("category TEXT NOT NULL DEFAULT ''", "分类"),
     "trace": ("trace TEXT NOT NULL DEFAULT '[]'", "追溯"),
+}
+
+# validation_history 表 v0.4.1 新增审计证据链列迁移配置
+_HISTORY_MIGRATION_COLUMNS: dict[str, tuple[str, str]] = {
+    "source_files": ("source_files TEXT NOT NULL DEFAULT '[]'", "源文件"),
+    "source_hashes": ("source_hashes TEXT NOT NULL DEFAULT '[]'", "源文件哈希"),
+    "rule_version": ("rule_version TEXT NOT NULL DEFAULT ''", "规则版本"),
 }
 
 
@@ -153,23 +163,26 @@ class Database:
         logger.info("数据库 schema 初始化完成")
 
         # 迁移: 为旧数据库补齐新增列
-        self._migrate_validation_results()
+        self._migrate_columns("validation_results", _RESULT_MIGRATION_COLUMNS)
+        self._migrate_columns("validation_history", _HISTORY_MIGRATION_COLUMNS)
 
-    def _migrate_validation_results(self) -> None:
-        """检测并迁移 validation_results 表的新增列 (幂等)。"""
+    def _migrate_columns(
+        self, table_name: str, columns: dict[str, tuple[str, str]]
+    ) -> None:
+        """检测并迁移指定表的新增列 (幂等)。"""
         if self._conn is None:
             return
         existing = {
             row[1] for row in
-            self._conn.execute("PRAGMA table_info(validation_results)").fetchall()
+            self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
         }
-        for col_name, (col_def, label) in _MIGRATION_COLUMNS.items():
+        for col_name, (col_def, label) in columns.items():
             if col_name not in existing:
                 self._conn.execute(
-                    f"ALTER TABLE validation_results ADD COLUMN {col_def}"
+                    f"ALTER TABLE {table_name} ADD COLUMN {col_def}"
                 )
                 self._conn.commit()
-                logger.info(f"数据库迁移: validation_results 表新增「{label}」列")
+                logger.info(f"数据库迁移: {table_name} 表新增「{label}」列")
 
     def close(self) -> None:
         """关闭数据库连接。"""

@@ -922,3 +922,37 @@ class TestFormattedNumbers:
         )
         items = extract_items(raw, ReportType.BALANCE_SHEET)
         assert len(items) == 0
+
+
+class TestAmountUnitNormalization:
+    """金额单位识别: 主表提取时统一换算为元。"""
+
+    def test_wan_yuan_header_converts_to_yuan(self) -> None:
+        raw = RawSheetData(
+            name="资产负债表(单位:万元)",
+            headers=["项目", "期末余额(万元)"],
+            rows=[
+                {"_row": 2, "项目": "资产总计", "期末余额(万元)": 200.0},
+            ],
+        )
+        unit_info: dict[str, str] = {}
+        items = extract_items(raw, ReportType.BALANCE_SHEET, unit_info=unit_info)
+
+        assert len(items) == 1
+        assert items[0].amount == 2_000_000.0
+        assert unit_info["unit"] == "万元"
+        assert "已自动换算为元" in unit_info["warning"]
+
+
+class TestNotesExtraction:
+    def test_notes_items_use_note_keys(self) -> None:
+        raw = RawSheetData(
+            name="报表附注",
+            headers=["项目", "金额"],
+            rows=[{"_row": 2, "项目": "应收账款账龄", "金额": 100.0}],
+        )
+        items = extract_items(raw, ReportType.NOTES)
+        assert len(items) == 1
+        assert items[0].key.startswith("note_")
+        assert items[0].name == "应收账款账龄"
+        assert items[0].amount == 100.0

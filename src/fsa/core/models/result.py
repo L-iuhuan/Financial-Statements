@@ -191,6 +191,9 @@ class ValidationSummary:
         skipped: 跳过数（所需报表未导入）
         results: 所有校验结果明细
         report_types: 本次校验涉及的报表类型
+        source_files: 本次校验使用的源文件路径 (审计证据链)
+        source_hashes: 与 source_files 一一对应的 SHA256 哈希
+        rule_version: 执行校验时使用的内置规则库版本
     """
 
     period: str = ""
@@ -201,6 +204,9 @@ class ValidationSummary:
     skipped: int = 0
     results: list[ValidationResult] = field(default_factory=list)
     report_types: list[ReportType] = field(default_factory=list)
+    source_files: list[str] = field(default_factory=list)
+    source_hashes: list[str] = field(default_factory=list)
+    rule_version: str = ""
 
     @property
     def all_passed(self) -> bool:

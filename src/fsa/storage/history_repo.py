@@ -30,6 +30,9 @@ class HistoryRecord(TypedDict):
         errored: 异常数
         skipped: 跳过数
         report_types: 涉及的报表类型
+        source_files: 源文件路径列表 (审计证据链)
+        source_hashes: 源文件 SHA256 列表
+        rule_version: 内置规则库版本
     """
 
     id: int
@@ -41,6 +44,9 @@ class HistoryRecord(TypedDict):
     errored: int
     skipped: int
     report_types: list[str]
+    source_files: list[str]
+    source_hashes: list[str]
+    rule_version: str
 
 
 class HistoryRepo:
@@ -73,16 +79,20 @@ class HistoryRepo:
         report_types_json = json.dumps(
             [rt.value for rt in summary.report_types], ensure_ascii=False
         )
+        source_files_json = json.dumps(summary.source_files, ensure_ascii=False)
+        source_hashes_json = json.dumps(summary.source_hashes, ensure_ascii=False)
 
         conn.execute("BEGIN")
         try:
             cursor = conn.execute(
                 """INSERT INTO validation_history
-                   (period, total, passed, failed, errored, skipped, report_types)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   (period, total, passed, failed, errored, skipped,
+                    report_types, source_files, source_hashes, rule_version)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (summary.period, summary.total, summary.passed,
                  summary.failed, summary.errored, summary.skipped,
-                 report_types_json),
+                 report_types_json, source_files_json, source_hashes_json,
+                 summary.rule_version),
             )
             history_id = cursor.lastrowid
             if history_id is None:
@@ -146,7 +156,8 @@ class HistoryRepo:
         conn = self._db.connection
         rows = conn.execute(
             """SELECT id, created_at, period, total, passed,
-                      failed, errored, skipped, report_types
+                      failed, errored, skipped, report_types,
+                      source_files, source_hashes, rule_version
                FROM validation_history
                ORDER BY id DESC
                LIMIT ?""",
@@ -155,17 +166,7 @@ class HistoryRepo:
 
         result: list[HistoryRecord] = []
         for row in rows:
-            result.append({
-                "id": row["id"],
-                "created_at": row["created_at"],
-                "period": row["period"],
-                "total": row["total"],
-                "passed": row["passed"],
-                "failed": row["failed"],
-                "errored": row["errored"],
-                "skipped": row["skipped"],
-                "report_types": json.loads(row["report_types"]),
-            })
+            result.append(self._row_to_record(row))
         return result
 
     def get_by_id(self, history_id: int) -> HistoryRecord | None:
@@ -180,13 +181,20 @@ class HistoryRepo:
         conn = self._db.connection
         row = conn.execute(
             """SELECT id, created_at, period, total, passed,
-                      failed, errored, skipped, report_types
+                      failed, errored, skipped, report_types,
+                      source_files, source_hashes, rule_version
                FROM validation_history
                WHERE id = ?""",
             (history_id,),
         ).fetchone()
         if row is None:
             return None
+        return self._row_to_record(row)
+
+    @staticmethod
+    def _row_to_record(row: sqlite3.Row) -> HistoryRecord:
+        """将 validation_history 行转换为 HistoryRecord (兼容旧库缺失列)。"""
+        keys = row.keys()
         return {
             "id": row["id"],
             "created_at": row["created_at"],
@@ -196,8 +204,26 @@ class HistoryRepo:
             "failed": row["failed"],
             "errored": row["errored"],
             "skipped": row["skipped"],
-            "report_types": json.loads(row["report_types"]),
+            "report_types": HistoryRepo._parse_json_list(row["report_types"]),
+            "source_files": HistoryRepo._parse_json_list(
+                row["source_files"] if "source_files" in keys else "[]"
+            ),
+            "source_hashes": HistoryRepo._parse_json_list(
+                row["source_hashes"] if "source_hashes" in keys else "[]"
+            ),
+            "rule_version": row["rule_version"] if "rule_version" in keys else "",
         }
+
+    @staticmethod
+    def _parse_json_list(raw: object) -> list[str]:
+        """安全解析 JSON 字符串列表, 损坏时返回空列表。"""
+        if raw is None:
+            return []
+        try:
+            parsed = json.loads(str(raw))
+        except (json.JSONDecodeError, TypeError):
+            return []
+        return [str(item) for item in parsed] if isinstance(parsed, list) else []
 
     def get_detail(self, history_id: int) -> list[ValidationResult]:
         """获取指定历史记录的校验结果明细。

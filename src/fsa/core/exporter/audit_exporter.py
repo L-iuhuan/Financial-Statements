@@ -154,7 +154,46 @@ class AuditExporter:
         ws_trace = wb.create_sheet("科目追溯")
         self._write_trace_sheet(ws_trace, summary)
 
+        # Sheet 4: 底稿说明 (源文件/哈希/规则版本/复核留痕)
+        ws_info = wb.create_sheet("底稿说明")
+        self._write_workpaper_info_sheet(ws_info, summary)
+
         wb.save(file_path)
+
+    def _write_workpaper_info_sheet(
+        self, ws: Worksheet, summary: ValidationSummary
+    ) -> None:
+        """写入底稿说明: 审计证据链与编制/复核留痕区。"""
+        ws.merge_cells("A1:B1")
+        title = ws.cell(row=1, column=1, value="审计底稿说明")
+        title.font = FONT_TITLE
+        title.alignment = ALIGN_CENTER
+
+        rows: list[tuple[str, str]] = [
+            ("报告期间", summary.period or "未设置"),
+            ("编制时间", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            ("规则库版本", summary.rule_version or _get_rule_library_version()),
+            ("源文件", "\n".join(summary.source_files) if summary.source_files else "未记录"),
+            (
+                "源文件 SHA256",
+                "\n".join(summary.source_hashes) if summary.source_hashes else "未记录",
+            ),
+            ("说明", "本底稿由勾稽规则引擎自动生成，公式列为规则公式文本，金额单位已统一为元。"),
+            ("编制人", ""),
+            ("复核人", ""),
+            ("复核意见", ""),
+        ]
+        for i, (label, value) in enumerate(rows, start=2):
+            label_cell = ws.cell(row=i, column=1, value=label)
+            label_cell.font = Font(name="微软雅黑", size=10, bold=True)
+            label_cell.alignment = ALIGN_LEFT
+            label_cell.border = THIN_BORDER
+            value_cell = ws.cell(row=i, column=2, value=value)
+            value_cell.font = FONT_NORMAL
+            value_cell.alignment = ALIGN_LEFT
+            value_cell.border = THIN_BORDER
+        ws.column_dimensions["A"].width = 20
+        ws.column_dimensions["B"].width = 80
 
     # ── 校验汇总 sheet ──
 

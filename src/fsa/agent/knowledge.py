@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import json
+
+from fsa.core.resources import resource_path
+
 # 知识条目: (主题关键词, 内容)
 _KNOWLEDGE: list[tuple[str, str]] = [
     (
@@ -106,6 +110,52 @@ _KNOWLEDGE: list[tuple[str, str]] = [
 ]
 
 
+_CACHED_RULE_KNOWLEDGE: list[tuple[str, str]] | None = None
+
+
+def _rule_knowledge() -> list[tuple[str, str]]:
+    """从规则库读取 CAS 准则引用与规则说明, 作为可检索知识源。"""
+    global _CACHED_RULE_KNOWLEDGE
+    if _CACHED_RULE_KNOWLEDGE is not None:
+        return _CACHED_RULE_KNOWLEDGE
+    entries: list[tuple[str, str]] = []
+    path = resource_path("cas_gouji_rule_library.json")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rules = payload["ruleLibrary"]["rules"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    for rule in rules:
+        topic = f"{rule['id']} {rule['name']}"
+        content = (
+            f"规则 {rule['id']}: {rule['name']}\n"
+            f"公式: {rule.get('formula', '')}\n"
+            f"CAS 依据: {rule.get('cas_ref', '')}\n"
+            f"说明: {rule.get('notes', '')}"
+        )
+        entries.append((topic, content))
+    _CACHED_RULE_KNOWLEDGE = entries
+    return entries
+
+
+def _external_knowledge() -> list[tuple[str, str]]:
+    """读取用户放置的 CAS 准则文档 (resources/knowledge/*.md|txt)。"""
+    entries: list[tuple[str, str]] = []
+    base = resource_path("resources/knowledge")
+    if not base.exists() or not base.is_dir():
+        return entries
+    for path in sorted(base.iterdir()):
+        if path.suffix.lower() not in (".md", ".txt"):
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if content.strip():
+            entries.append((path.stem, content[:6000]))
+    return entries
+
+
 def search_knowledge(query: str) -> str:
     """按关键词检索知识库, 返回匹配的知识条目。
 
@@ -124,12 +174,16 @@ def search_knowledge(query: str) -> str:
 
     keywords = [w for w in query.split() if w]
     scored: list[tuple[int, str]] = []
-    for topic, content in _KNOWLEDGE:
-        score = sum(
-            1 for kw in keywords if kw in topic or kw in content
-        )
+
+    sources = (
+        [(topic, content, "内置知识") for topic, content in _KNOWLEDGE]
+        + [(topic, content, "规则库 CAS") for topic, content in _rule_knowledge()]
+        + [(topic, content, "外部文档") for topic, content in _external_knowledge()]
+    )
+    for topic, content, source in sources:
+        score = sum(1 for kw in keywords if kw in topic or kw in content)
         if score > 0:
-            scored.append((score, f"【{topic}】\n{content}"))
+            scored.append((score, f"【{source} · {topic}】\n{content}"))
 
     if not scored:
         return (

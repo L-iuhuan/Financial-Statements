@@ -135,11 +135,12 @@ def _read_native(path: str) -> dict[str, RawSheetData]:
 
 
 def _sheet_to_matrix(worksheet: Worksheet) -> list[list[object]]:
-    """将 openpyxl 工作表转换为二维矩阵（行优先）。"""
-    return [
-        [worksheet.cell(row=r, column=c).value for c in range(1, worksheet.max_column + 1)]
-        for r in range(1, worksheet.max_row + 1)
-    ]
+    """将 openpyxl 工作表转换为二维矩阵（行优先）。
+
+    使用 iter_rows(values_only=True) 批量读取, 避免逐单元格 cell() 调用;
+    大工作表下性能可提升一个数量级。
+    """
+    return [list(row) for row in worksheet.iter_rows(values_only=True)]
 
 
 def _read_xls(path: str) -> dict[str, RawSheetData]:
@@ -168,6 +169,8 @@ def _read_xls(path: str) -> dict[str, RawSheetData]:
 
 def _matrix_to_raw(name: str, matrix: list[list[object]]) -> RawSheetData:
     """从二维矩阵构建 RawSheetData（openpyxl 与 pandas 路径共用）。"""
+    if not matrix:
+        return RawSheetData(name=name, headers=[], header_rows=[], rows=[])
     header_idx = _find_header_row(matrix)
     header_rows = _capture_header_rows(matrix, header_idx)
     headers = _uniquify(_to_header_list(header_rows[0], fill_empty=True))

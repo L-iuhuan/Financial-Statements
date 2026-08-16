@@ -54,6 +54,9 @@ class MainWindowDrawerMixin(QFrame):
         self._agent_fab.set_badge(False)
         # 抽屉打开时隐藏 FAB, 避免遮盖抽屉底部的建议气泡/输入区
         self._agent_fab.hide()
+        update = getattr(self, "_update_suggestions", None)
+        if callable(update):
+            update()
 
     def _close_drawer(self) -> None:
         self._fade_drawer(fade_in=False)

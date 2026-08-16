@@ -31,6 +31,15 @@ def load_rules_from_json(file_path: str | Path) -> list[ReconciliationRule]:
     return [_parse_rule(raw) for raw in rules_data]
 
 
+def load_rule_library_version(file_path: str | Path) -> str:
+    """读取规则库版本号 (缺失或损坏时返回空字符串)。"""
+    try:
+        data = json.loads(Path(file_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError):
+        return ""
+    return str(data.get("ruleLibrary", {}).get("version", "")).strip()
+
+
 def _parse_rule(raw: dict[str, Any]) -> ReconciliationRule:
     """将单条 JSON 规则数据转换为 ReconciliationRule。"""
     return ReconciliationRule(

@@ -27,11 +27,15 @@ _PDF_ROW_BASE = 10_000_000
 class _FakePage:
     """模拟 pdfplumber 页面, 仅提供 extract_tables。"""
 
-    def __init__(self, table: list[list[str | None]]) -> None:
-        self._table = table
+    def __init__(
+        self,
+        table: list[list[str | None]],
+        tables: list[list[list[str | None]]] | None = None,
+    ) -> None:
+        self._tables = tables if tables is not None else [table]
 
     def extract_tables(self) -> list[list[list[str | None]]]:
-        return [self._table]
+        return self._tables
 
 
 class _FakePdf:
@@ -404,6 +408,47 @@ class TestParseCellValue:
 
 class TestPdfRowSemantics:
     """D-01: PDF 行号应为「页码+表内行」可定位语义。"""
+
+    def test_same_page_multiple_tables_are_all_extracted(self, monkeypatch) -> None:
+        """一页内多个报表表格都应被提取, 不再只取第一张表。"""
+        from fsa.core.importer import pdf_reader
+
+        monkeypatch.setattr(
+            pdf_reader,
+            "pdfplumber",
+            _FakePdfModule(
+                [_FakePage(_BS_TABLE, tables=[_BS_TABLE, _IS_TABLE])]
+            ),
+        )
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
+        assert "资产负债表" in data
+        assert "利润表" in data
+
+    def test_cross_page_table_without_title_is_merged(self, monkeypatch) -> None:
+        """次页无标题的续表通过表头唯一匹配合并到已有报表。"""
+        from fsa.core.importer import pdf_reader
+
+        continuation = [
+            ["项目", "期末余额", "年初余额"],
+            ["固定资产", "500", "480"],
+            ["", "", ""],
+            ["非流动资产合计", "600", "550"],
+        ]
+        monkeypatch.setattr(
+            pdf_reader,
+            "pdfplumber",
+            _FakePdfModule([_FakePage(_BS_TABLE), _FakePage(continuation)]),
+        )
+        data = pdf_reader.read_pdf(str(THREE_REPORTS_PDF))
+        bs = data["资产负债表"]
+        items = [str(r.get("项目", "")) for r in bs.rows]
+        assert "固定资产" in items
+        assert "非流动资产合计" in items
+        # 次页行号按第 2 页编码
+        fixed_assets = next(
+            r for r in bs.rows if str(r.get("项目", "")) == "固定资产"
+        )
+        assert fixed_assets["_row"] == 2 * _PDF_ROW_BASE + 2
 
     def test_read_pdf_encodes_page_and_table_row(self, monkeypatch) -> None:
         """数据行 _row = 页码 * 基数 + 表内 1-based 行号。"""

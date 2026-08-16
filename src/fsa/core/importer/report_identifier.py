@@ -27,6 +27,8 @@ _SHEET_NAME_PATTERNS: dict[str, ReportType] = {
     "所有者权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
     "合并股东权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
     "股东权益变动表": ReportType.STATEMENT_OF_CHANGES_IN_EQUITY,
+    "附注": ReportType.NOTES,
+    "报表附注": ReportType.NOTES,
 }
 
 # M-a: SCE 名称匹配需排除"股东大会"等误匹配

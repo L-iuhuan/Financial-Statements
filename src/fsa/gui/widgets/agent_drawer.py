@@ -37,6 +37,7 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
     close_requested = Signal()
     send_requested = Signal(str)
     context_cleared = Signal()
+    typing_changed = Signal(str)
     # P1 取消机制: 忙碌条"■ 停止"按钮触发, main_window_agent 经 getattr 防御接线
     cancelRequested = Signal()
 
@@ -242,7 +243,7 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         self._input.setPlaceholderText("输入您的问题...")
         # 初始高度 36, 文字增多时自动增高 (上限 120px)
         self._input.setFixedHeight(36)
-        self._input.textChanged.connect(self._auto_resize_input)
+        self._input.textChanged.connect(self._on_input_text_changed)
         self._input.keyPressEvent = self._on_key_press  # type: ignore[method-assign]
         row.addWidget(self._input, stretch=1)
 
@@ -268,6 +269,11 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         a.addWidget(self._disclaimer_label)
 
         return area
+
+    def _on_input_text_changed(self) -> None:
+        """输入变化时自动调整高度, 并通知宿主做智能问题预览。"""
+        self._auto_resize_input()
+        self.typing_changed.emit(self._input.toPlainText())
 
     def _auto_resize_input(self) -> None:
         """根据输入内容自动调整输入框高度 (36px 起步, 上限 120px)。

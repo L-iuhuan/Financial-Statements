@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from fsa.core.importer.amount_parser import parse_amount
+from fsa.core.importer.amount_parser import detect_amount_unit, parse_amount, to_yuan
 
 
 class TestParseAmountThousandSeparator:
@@ -97,3 +97,25 @@ class TestParseAmountPlainNumber:
     def test_parse_zero(self) -> None:
         assert parse_amount(0) == 0.0
         assert parse_amount("0") == 0.0
+
+
+class TestAmountUnitDetection:
+    """金额单位识别与换算测试。"""
+
+    def test_detect_wan_yuan(self) -> None:
+        assert detect_amount_unit("期末余额(万元)") == "万元"
+
+    def test_detect_qian_yuan(self) -> None:
+        assert detect_amount_unit("本期金额（千元）") == "千元"
+
+    def test_detect_yuan_with_context(self) -> None:
+        assert detect_amount_unit("金额单位：元") == "元"
+
+    def test_plain_header_has_no_unit(self) -> None:
+        assert detect_amount_unit("期末余额") is None
+
+    def test_to_yuan_conversions(self) -> None:
+        assert to_yuan(1.0, "万元") == 10000.0
+        assert to_yuan(1.0, "千元") == 1000.0
+        assert to_yuan(1.0, "亿元") == 100000000.0
+        assert to_yuan(1.0, None) == 1.0

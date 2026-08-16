@@ -31,6 +31,42 @@ _PAREN_RE = re.compile(r"^[（(](.+)[)）]$")
 # 行尾"元"后缀 (如 "1,000.50元")
 _TRAILING_YUAN_RE = re.compile(r"元$")
 
+# 金额单位 -> 换算为元的乘数 (长单位优先匹配, 避免"万元"被拆成"元")
+_AMOUNT_UNITS: dict[str, float] = {
+    "百万元": 1_000_000.0,
+    "亿元": 100_000_000.0,
+    "万元": 10_000.0,
+    "千元": 1_000.0,
+    "元": 1.0,
+}
+_UNIT_RE = re.compile(r"(百万元|亿元|万元|千元|元)")
+
+
+def detect_amount_unit(text: object) -> str | None:
+    """从表头/标题/单元格文本中识别金额单位。
+
+    支持: 元 / 千元 / 万元 / 百万元 / 亿元。
+    未识别到明确单位时返回 None。
+    """
+    if text is None:
+        return None
+    value = str(text)
+    # 避免把"单元"、"人民币元"以外的普通"元"字误判? 仅识别数量级词或独立"元"
+    match = _UNIT_RE.search(value)
+    if match is None:
+        return None
+    token = match.group(1)
+    if token == "元" and not re.search(r"(金额单位|单位[:：]|人民币元|[(（]元[)）])", value):
+        return None
+    return token
+
+
+def to_yuan(amount: float, unit: str | None) -> float:
+    """将金额按单位换算为元; 未知单位按元处理 (保守不放大差异)。"""
+    if unit is None:
+        return amount
+    return amount * _AMOUNT_UNITS.get(unit, 1.0)
+
 
 def parse_amount(value: object) -> float | None:
     """将单元格值解析为金额。

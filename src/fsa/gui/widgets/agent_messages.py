@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import isValid
 
+from fsa.agent.llm_client import DISCLAIMER_TEXT
 from fsa.gui.theme import current_palette
 
 _SUGGESTIONS: list[str] = [
@@ -960,6 +961,9 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         handle.layout.addLayout(time_row)
 
         content = handle.raw_text
+        # 免责标注只用于界面展示, 不写入会话历史 (否则下轮上下文会重复生成免责语)
+        if content.endswith(DISCLAIMER_TEXT):
+            content = content[: -len(DISCLAIMER_TEXT)].rstrip()
         if content:
             self._persist_message("assistant", content)
 

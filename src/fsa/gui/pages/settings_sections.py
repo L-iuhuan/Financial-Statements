@@ -356,6 +356,22 @@ def _on_llm_remote_toggled(
     settings.sync()
 
 
+def _apply_deepseek_template(
+    provider_combo: QComboBox,
+    base_url_input: QLineEdit,
+    model_input: QLineEdit,
+    key_input: QLineEdit,
+    page: SettingsPage,
+) -> None:
+    """填入 DeepSeek OpenAI 兼容配置模板 (密钥留空由用户粘贴)。"""
+    provider_combo.setCurrentIndex(2)  # OpenAI 兼容 API
+    base_url_input.setText("https://api.deepseek.com")
+    model_input.setText("deepseek-chat")
+    page._save_llm_provider()
+    page._save_llm_config()
+    key_input.setFocus()
+
+
 def build_llm_section(
     page: SettingsPage,
     settings: QSettings,
@@ -411,6 +427,21 @@ def build_llm_section(
     key_input.editingFinished.connect(page._save_llm_config)
     row4.addWidget(key_input)
     layout.addLayout(row4)
+
+    # DeepSeek 快速模板 (只填地址/模型, 密钥与远程风险确认由用户完成)
+    template_row = QHBoxLayout()
+    template_row.addStretch()
+    deepseek_btn = QPushButton("填入 DeepSeek 模板")
+    deepseek_btn.setObjectName("TextBtn")
+    deepseek_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    deepseek_btn.setToolTip("将模型类型/服务地址/模型名填为 DeepSeek，API 密钥请自行粘贴")
+    deepseek_btn.clicked.connect(
+        lambda: _apply_deepseek_template(
+            provider_combo, base_url_input, model_input, key_input, page
+        )
+    )
+    template_row.addWidget(deepseek_btn)
+    layout.addLayout(template_row)
 
     # 远程大模型开关 (P0 离线守卫: 财务数据不允许离开本机, 远程需显式确认)
     row5, _ = _row(

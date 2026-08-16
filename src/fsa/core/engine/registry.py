@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from fsa.core.engine.rule_loader import load_rules_from_json
+from fsa.core.engine.rule_loader import load_rule_library_version, load_rules_from_json
 from fsa.core.models.report import ReportType
 from fsa.core.models.rule import ReconciliationRule, Severity
 
@@ -19,15 +19,24 @@ _REPORT_TYPE_NAMES: dict[ReportType, str] = {
 class RuleRegistry:
     """管理一组规则，支持启用/禁用、按分类/报表类型/严重级别过滤。"""
 
-    def __init__(self, rules: list[ReconciliationRule]) -> None:
+    def __init__(self, rules: list[ReconciliationRule], rule_library_version: str = "") -> None:
         self._rules: dict[str, ReconciliationRule] = {r.rule_id: r for r in rules}
         self._disabled: set[str] = set()
         self._custom_ids: set[str] = set()
+        self._rule_library_version = rule_library_version
 
     @classmethod
     def from_json(cls, file_path: str | Path) -> RuleRegistry:
         """从 JSON 规则库文件创建注册表。"""
-        return cls(load_rules_from_json(file_path))
+        return cls(
+            load_rules_from_json(file_path),
+            rule_library_version=load_rule_library_version(file_path),
+        )
+
+    @property
+    def rule_library_version(self) -> str:
+        """内置规则库版本号 (如 "1.3.0")。"""
+        return self._rule_library_version
 
     def get_all(self) -> list[ReconciliationRule]:
         """返回所有规则（含已禁用的）。"""

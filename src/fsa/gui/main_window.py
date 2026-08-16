@@ -172,7 +172,7 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         # 顶栏按钮
         self._topbar.theme_clicked.connect(self._toggle_theme)
         self._topbar.reset_clicked.connect(self._on_reset)
-        self._topbar.validate_clicked.connect(self._import_page.trigger_validate)
+        self._topbar.validate_clicked.connect(self._import_page.trigger_validate_async)
         self._topbar.export_clicked.connect(self._on_export)
 
         # 校验完成后启用导出按钮
@@ -182,6 +182,7 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         self._agent_fab.clicked_fab.connect(self._toggle_drawer)
         self._agent_drawer.close_requested.connect(self._close_drawer)
         self._agent_drawer.send_requested.connect(self._on_agent_send)
+        self._agent_drawer.typing_changed.connect(self._on_agent_typing)
 
         # 导入页面状态
         self._import_page.validate_enabled_changed.connect(
@@ -242,6 +243,9 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         # 历史页面首次展示时触发数据加载
         if nav_id == "navHistory" and self._history_page is not None:
             self._history_page._show_hook()
+
+        # 页面变化后刷新 AI 助手建议问题 (各页面提示不同)
+        self._update_suggestions()
 
     def _get_current_nav(self) -> str:
         """返回当前导航页 ID。"""
@@ -358,6 +362,9 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
             skipped=record["skipped"],
             results=results,
             report_types=report_types,
+            source_files=record["source_files"],
+            source_hashes=record["source_hashes"],
+            rule_version=record["rule_version"],
         )
         # 历史结果用轻量表格页展示, 不触发导入页 31+ 张结果卡片的同步重建;
         # 先回填数据, 再切页一次完成, 避免先闪后显

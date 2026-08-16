@@ -27,6 +27,37 @@ from fsa.gui.widgets.agent_drawer import AgentDrawer
 # LLM 可用性探测结果的缓存 TTL (秒): 服务恢复后 60 秒内会重新探测
 _LLM_AVAILABILITY_TTL_SECONDS = 60.0
 
+# 各页面默认建议问题
+_PAGE_SUGGESTIONS: dict[str, list[str]] = {
+    "navImport": ["如何导入财务报表", "什么是勾稽关系", "差额超容差怎么办"],
+    "navAudit": ["如何导出 Excel 底稿", "表格里的差额怎么看", "打印预览如何使用"],
+    "navRules": ["什么是容差", "如何新增自定义规则", "BS-BAL-001 规则是什么"],
+    "navHistory": ["如何查看历史记录", "历史记录可以删除吗", "如何对比两次校验结果"],
+    "navSettings": ["如何配置本地 Ollama", "检查更新怎么用", "深浅色主题如何切换"],
+}
+
+# 本地问题库: 输入时按包含关系做智能预览
+_QUESTION_BANK: list[str] = [
+    "什么是勾稽关系",
+    "如何导入财务报表",
+    "差额超过容差怎么办",
+    "如何导出 Excel 底稿",
+    "如何新增自定义规则",
+    "为什么规则显示跳过",
+    "如何理解校验结果",
+    "如何配置本地 Ollama",
+    "如何查看历史记录",
+    "如何删除历史记录",
+    "如何切换深浅色主题",
+    "如何检查软件更新",
+    "BS-BAL-001 规则是什么",
+    "资产负债表不平怎么排查",
+    "利润表和资产负债表如何勾稽",
+    "现金流量表如何校验",
+    "如何修正不通过的规则",
+    "如何打印校验结果",
+]
+
 
 class _MainWindowAgentContracts(QFrame):
     """跨 mixin 契约 (仅类型声明/桩方法, 运行时由实现方提供; 位于 MRO 末端)。
@@ -40,6 +71,10 @@ class _MainWindowAgentContracts(QFrame):
     _agent_drawer: AgentDrawer
     _active_worker: AgentWorker | None
     _llm_block_reason: str
+
+    def _get_current_nav(self) -> str:
+        """由宿主 MainWindow 提供: 当前导航页 ID。"""
+        raise NotImplementedError
 
     def _get_llm_client(self) -> LLMClient | None:
         """由 MainWindowAgentMixin 提供。"""
@@ -95,24 +130,164 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
     _drawer_connected_to: AgentDrawer | None = None
     # LLM 客户端缓存: (provider, base_url, model, api_key, allow_remote_ack) -> client
     _llm_client_cache: tuple[tuple[str, str, str, str, str], LLMClient | None] | None = None
+    _followup_worker: AgentWorker | None = None
 
     def _update_suggestions(self) -> None:
-        """根据校验结果动态更新 AI 助手的建议气泡。"""
+        """根据当前页面与校验结果更新建议问题。"""
+        input_widget = getattr(self._agent_drawer, "_input", None)
+        current_text = (
+            input_widget.toPlainText() if input_widget is not None else ""
+        )
+        self._on_agent_typing(current_text)
+
+    def _on_agent_typing(self, text: str) -> None:
+        """输入内容变化时做智能问题预览。
+
+        空输入: 当前页面 + 结果上下文建议;
+        非空输入: 本地问题库匹配 + 快捷补全问句。
+        """
+        stripped = text.strip()
+        if stripped:
+            suggestions: list[str] = []
+            for question in _QUESTION_BANK:
+                if stripped in question and question not in suggestions:
+                    suggestions.append(question)
+                if len(suggestions) >= 3:
+                    break
+            prefix = stripped[:20]
+            suggestions.append(f"请解释：{prefix}")
+            suggestions.append(f"诊断与「{prefix}」相关的规则")
+            self._agent_drawer.set_suggestions(suggestions[:3])
+            return
+
+        self._agent_drawer.set_suggestions(self._current_page_suggestions())
+
+    def _current_page_suggestions(self) -> list[str]:
+        """按当前导航页、规则上下文和校验结果生成建议。"""
+        nav = self._get_current_nav()
+        rule_id = getattr(self._agent_drawer, "context_rule_id", None)
         summary = self._state.results
-        suggestions: list[str] = []
+
+        if rule_id is not None:
+            return [
+                f"诊断 {rule_id}",
+                "这条差异可能的原因",
+                "如何修正该科目差额",
+            ]
+
+        suggestions = list(_PAGE_SUGGESTIONS.get(nav, _PAGE_SUGGESTIONS["navImport"]))
         if summary is not None and summary.failed > 0:
-            # 有不通过规则 -> 推荐诊断前 2 条失败规则
             failed = [r for r in summary.results if not r.passed and not r.errored]
             for r in failed[:2]:
-                suggestions.append(f"诊断 {r.rule_id}")
-            suggestions.append("为什么有规则不通过")
+                suggestions.insert(0, f"诊断 {r.rule_id}")
+            suggestions.insert(0, "为什么有规则不通过")
         elif summary is not None:
-            # 全部通过
-            suggestions = ["校验全部通过意味着什么", "如何导出审计底稿", "什么是勾稽关系"]
+            suggestions = [
+                "校验全部通过意味着什么",
+                "如何导出 Excel 底稿",
+                "什么是勾稽关系",
+            ]
+        return suggestions[:3]
+
+    def _update_suggestions_after_answer(self, question: str, answer: str) -> None:
+        """回答完成后给出可追问的后续问题。"""
+        if not answer:
+            return
+        if "已停止" in answer:
+            return
+        if "不通过" in answer or "差额" in answer or "差异" in answer:
+            followups = [
+                "这条差异的可能原因",
+                "如何修正该科目差额",
+                "如何导出 Excel 底稿",
+            ]
+        elif "勾稽关系" in question or "什么是" in question:
+            followups = ["能举个实例吗", "相关 CAS 准则是什么", "这会影响哪些报表"]
+        elif "导出" in question:
+            followups = ["导出文件包含哪些内容", "如何打印校验结果", "如何查看历史导出"]
         else:
-            # 默认
-            suggestions = ["什么是勾稽关系", "BS-BAL-001 规则", "差额超容差怎么办"]
-        self._agent_drawer.set_suggestions(suggestions[:3])
+            followups = ["能举个实例吗", "我该如何在软件中操作", "还有哪些相关规则"]
+        self._agent_drawer.set_suggestions(followups[:3])
+
+    def _generate_followups_with_llm(
+        self, client: LLMClient, question: str, answer: str
+    ) -> None:
+        """回答完成后用 LLM 生成更自然的追问问题 (后台, 失败静默)。
+
+        本地启发式追问已在 _update_suggestions_after_answer 即时给出;
+        本方法在后台补充模型生成的追问, 成功后再替换建议区。
+        """
+        if not client or not answer:
+            return
+
+        from fsa.agent.llm_client import ChatMessage
+        from fsa.agent.sanitize import sanitize_llm_input
+
+        def target() -> str:
+            prompt = (
+                "根据下面用户问题与助手回答，生成 3 个最值得继续追问的中文问题。"
+                "要求：每行一个；每个问题不超过 18 个字；不要编号；"
+                "只输出问题本身。\n\n"
+                f"用户问题: {sanitize_llm_input(question, max_len=500)}\n"
+                f"助手回答: {sanitize_llm_input(answer[-1200:], max_len=1200)}"
+            )
+            response = client.chat(
+                [ChatMessage(role="user", content=prompt)], timeout=20.0
+            )
+            return response.content.strip()
+
+        def on_success(text: str) -> None:
+            if self._followup_worker is worker:
+                self._followup_worker = None
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            clean = [line.lstrip("0123456789.、- ").strip() for line in lines]
+            clean = [line for line in clean if line][:3]
+            if clean and not self._agent_drawer._input.toPlainText().strip():
+                self._agent_drawer.set_suggestions(clean)
+
+        def on_error(message: str) -> None:
+            if self._followup_worker is worker:
+                self._followup_worker = None
+            logger.debug(f"LLM 追问问题生成失败 (保持本地建议): {message}")
+
+        worker = AgentWorker(target, on_success, on_error)
+        self._followup_worker = worker
+        worker.start()
+
+    def _build_agent_context(self) -> str:
+        """构建随页面/数据变化的上下文注记, 注入系统提示词。"""
+        nav = self._get_current_nav()
+        title, subtitle = {
+            "navImport": ("数据导入与校验", "导入报表并执行勾稽校验"),
+            "navAudit": ("校验结果", "查看校验结果并导出底稿"),
+            "navRules": ("规则管理", "查看与维护勾稽规则"),
+            "navHistory": ("历史记录", "回溯历史校验"),
+            "navSettings": ("系统设置", "配置外观/校验参数/AI 服务/更新"),
+        }.get(nav, ("", ""))
+        lines = [f"用户当前页面: {title} ({subtitle})"]
+        rule_id = getattr(self._agent_drawer, "context_rule_id", None)
+        if rule_id is not None:
+            lines.append(f"用户当前上下文规则: {rule_id}")
+        summary = self._state.results
+        if summary is not None:
+            lines.append(
+                f"最近校验: 期间 {summary.period or '未设置'}, "
+                f"通过 {summary.passed}, 不通过 {summary.failed}, "
+                f"异常 {summary.errored}, 跳过 {summary.skipped}"
+            )
+            failed_ids = [
+                r.rule_id for r in summary.results if not r.passed and not r.errored
+            ][:5]
+            if failed_ids:
+                lines.append("不通过规则: " + ", ".join(failed_ids))
+        else:
+            lines.append("当前还没有校验结果")
+        reports = self._state.reports
+        if reports:
+            lines.append(
+                "已导入报表: " + "、".join(r.report_type.value for r in reports)
+            )
+        return "\n".join(lines)
 
     def _on_agent_send(self, text: str) -> None:
         """处理用户发送的消息: 优先 AgentLoop (多轮+工具), 无 LLM 回退规则化。
@@ -123,7 +298,9 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
         """
         logger.info(f"AI 助手收到消息: {text}")
         from fsa.agent.fallback import fallback_answer
-        rule_id = self._agent_drawer.context_rule_id
+
+        context_notes = self._build_agent_context()
+        rule_id = getattr(self._agent_drawer, "context_rule_id", None)
 
         if rule_id is not None:
             self._diagnose_rule(rule_id)
@@ -133,12 +310,14 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
         client = self._get_llm_client()
         if client is not None:
             if self._llm_available(client):
-                self._run_agent_loop(client, text)
+                self._run_agent_loop(client, text, context_notes)
                 return
-            self._agent_drawer.add_assistant_message(
+            answer = (
                 "检测到已配置大模型，但服务暂时不可用。以下先给出规则化答复：\n\n"
                 + fallback_answer(text, self._state)
             )
+            self._agent_drawer.add_assistant_message(answer)
+            self._update_suggestions_after_answer(text, answer)
             return
 
         # 远程地址被离线守卫拦截 -> 提示用户到设置中显式开启
@@ -146,9 +325,9 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
             self._show_remote_blocked_infobar()
 
         # 无 LLM: 智能规则化回退 (规则查询/知识库, 而非固定文本)
-        self._agent_drawer.add_assistant_message(
-            fallback_answer(text, self._state)
-        )
+        answer = fallback_answer(text, self._state)
+        self._agent_drawer.add_assistant_message(answer)
+        self._update_suggestions_after_answer(text, answer)
 
     def _llm_available(self, client: LLMClient) -> bool:
         """检查 LLM 可用性 (按地址/模型键控缓存 + TTL, 60 秒后重新探测)。
@@ -172,7 +351,7 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
         self._llm_availability[key] = (available, time.monotonic())
         return available
 
-    def _run_agent_loop(self, client: LLMClient, text: str) -> None:
+    def _run_agent_loop(self, client: LLMClient, text: str, context_notes: str = "") -> None:
         """在后台线程流式运行 AgentLoop, 分块经 QMetaObject 回传主线程逐字渲染。
 
         reasoning 分块先显示在"思考过程"弱化区, 正式内容随后流入气泡;
@@ -187,6 +366,7 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
             return loop.ask_stream(
                 text,
                 history=history,
+                context_notes=context_notes,
                 on_chunk=lambda chunk: worker.emit_chunk(chunk),
                 on_reasoning_chunk=lambda chunk: worker.emit_reasoning_chunk(chunk),
             )
@@ -202,6 +382,8 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
             if not handle.bubble.text() and answer:
                 self._agent_drawer.append_stream_chunk(handle, answer)
             self._agent_drawer.finish_stream_message(handle)
+            self._update_suggestions_after_answer(text, answer)
+            self._generate_followups_with_llm(client, text, answer)
 
         def on_error(message: str) -> None:
             logger.error(f"AgentLoop 失败: {message}")

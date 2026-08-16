@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pdfplumber
@@ -77,22 +78,28 @@ def read_pdf(file_path: str) -> dict[str, RawSheetData]:
                 logger.debug(f"  第 {page_num} 页: 未检测到表格，跳过")
                 continue
 
-            raw = _extract_sheet_from_page(tables[0], page_num)
-            if raw is None:
-                logger.debug(f"  第 {page_num} 页: 表格未识别为财务报表，跳过")
-                continue
+            for table in tables:
+                raw = _extract_sheet_from_page(table, page_num)
+                if raw is None:
+                    # 跨页续表: 次页可能没有报表标题, 用表头匹配已有报表
+                    raw = _extract_continuation_sheet(table, page_num, result)
+                if raw is None:
+                    continue
 
-            # C6: 同标题跨页续表 — 合并数据行而非覆盖
-            if raw.name in result:
-                existing = result[raw.name]
-                existing.rows.extend(raw.rows)
-                logger.info(
-                    f"  第 {page_num} 页: 合并到报表「{raw.name}」，"
-                    f"新增 {len(raw.rows)} 行，现有 {len(existing.rows)} 行"
-                )
-            else:
-                result[raw.name] = raw
-                logger.info(f"  第 {page_num} 页: 识别报表「{raw.name}」，{len(raw.rows)} 行数据")
+                # C6: 同标题跨页续表/同页多表 — 合并数据行而非覆盖
+                if raw.name in result:
+                    existing = result[raw.name]
+                    existing.rows.extend(raw.rows)
+                    logger.info(
+                        f"  第 {page_num} 页: 合并到报表「{raw.name}」，"
+                        f"新增 {len(raw.rows)} 行，现有 {len(existing.rows)} 行"
+                    )
+                else:
+                    result[raw.name] = raw
+                    logger.info(
+                        f"  第 {page_num} 页: 识别报表「{raw.name}」，"
+                        f"{len(raw.rows)} 行数据"
+                    )
 
     logger.info(f"PDF 读取完成，共识别 {len(result)} 张报表")
     return result
@@ -143,6 +150,54 @@ def _extract_sheet_from_page(
         return None
 
     return RawSheetData(name=title, headers=headers, rows=rows)
+
+
+def _extract_continuation_sheet(
+    table: list[list[str | None]],
+    page_num: int,
+    existing: dict[str, RawSheetData],
+) -> RawSheetData | None:
+    """识别无标题行的跨页续表。
+
+    策略:
+    1. 在表格前 5 行查找表头行 ("项目"列)
+    2. 与已识别报表的 headers 精确匹配 (非空列集合一致)
+    3. 仅当匹配唯一一张报表时, 按已有 headers 解析并返回该报表名
+
+    无法唯一匹配时返回 None (宁可漏报, 不把数据错并到其他报表)。
+    """
+    header_row_idx = _find_header_row(table, start=0)
+    if header_row_idx is None:
+        return None
+    headers = _normalize_headers(table[header_row_idx])
+    if "项目" not in headers:
+        return None
+
+    header_key = _header_signature(headers)
+    matches = [
+        name for name, raw in existing.items()
+        if _header_signature(raw.headers) == header_key
+    ]
+    if len(matches) != 1:
+        return None
+
+    matched = existing[matches[0]]
+    rows = _parse_data_rows(table, matched.headers, header_row_idx + 1, page_num)
+    if not rows:
+        return None
+    return RawSheetData(name=matched.name, headers=matched.headers, rows=rows)
+
+
+def _header_signature(headers: list[str]) -> tuple[str, ...]:
+    """表头签名: 去空白后的非空列名序列, 用于跨页续表匹配。"""
+    return tuple(_normalize_cell_text(header) for header in headers if _normalize_cell_text(header))
+
+
+def _normalize_cell_text(value: object) -> str:
+    """去除单元格文本全部空白, 用于表头签名比较。"""
+    if value is None:
+        return ""
+    return re.sub(r"\s+", "", str(value))
 
 
 def _detect_title(cell_text: str) -> str | None:
