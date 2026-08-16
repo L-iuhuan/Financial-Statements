@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSettings, Qt
+from PySide6.QtCore import QDate, QPoint, QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget
 
@@ -211,7 +211,7 @@ class TestAuditEvidenceChain:
         window.show()
         app_state.load_registry()
 
-        window._import_page._period_input.setText("2024-12")
+        window._import_page._period_input.setDate(QDate(2024, 12, 1))
         window._import_page._on_file(str(_REALISTIC_REPORT))
         qtbot.wait(100)
 
@@ -251,7 +251,7 @@ class TestAuditEvidenceChain:
         qtbot.wait(20)
 
         assert not window._import_page._period_input.isEnabled()
-        assert window._import_page._period_input.text() == "2024-11"
+        assert window._import_page._period_input.date().toString("yyyy-MM") == "2024-11"
 
         app_state.clear_all()
         qtbot.wait(20)

@@ -14,13 +14,13 @@ import threading
 from pathlib import Path
 
 from loguru import logger
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QDate, QObject, Qt, Signal
 from PySide6.QtWidgets import (
+    QDateEdit,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -114,16 +114,16 @@ class ImportPage(ImportPageResultsMixin):
         period_label.setObjectName("PageTitle")
         period_label.setStyleSheet("font-size: 13px;")
         period_row.addWidget(period_label)
-        self._period_input = QLineEdit(self._state.period)
-        self._period_input.setObjectName("StyledInput")
-        self._period_input.setPlaceholderText("如 2024-12 或 2024年12月")
-        self._period_input.setFixedWidth(200)
-        self._period_input.setClearButtonEnabled(True)
+        self._period_input = QDateEdit(QDate.currentDate())
+        self._period_input.setDisplayFormat("yyyy-MM")
+        self._period_input.setCalendarPopup(True)
+        self._period_input.setFixedWidth(130)
         self._period_input.setToolTip(
-            "该期间将写入导入报表、校验历史与导出底稿；历史回看时只读"
+            "选择报告期间；该期间将写入导入报表、校验历史与导出底稿，历史回看时只读"
         )
-        self._period_input.textChanged.connect(self._on_period_changed)
+        self._period_input.dateChanged.connect(self._on_period_changed)
         period_row.addWidget(self._period_input)
+        self._on_period_changed(self._period_input.date())
         self._multi_entity_btn = QPushButton("多主体批量校验")
         self._multi_entity_btn.setObjectName("TextBtn")
         self._multi_entity_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -307,9 +307,9 @@ class ImportPage(ImportPageResultsMixin):
         """将页面滚动位置重置到顶部 (查看历史时确保拖放区可见)。"""
         self._scroll.verticalScrollBar().setValue(0)
 
-    def _on_period_changed(self, text: str) -> None:
+    def _on_period_changed(self, date: QDate) -> None:
         """报告期间变化时写入 AppState, 供导入/校验/历史持久化使用。"""
-        self._state.set_period(text.strip())
+        self._state.set_period(date.toString("yyyy-MM"))
 
     def _sync_history_banner(self) -> None:
         """按 AppState.history_view_id 刷新历史回看横幅。"""
@@ -321,8 +321,12 @@ class ImportPage(ImportPageResultsMixin):
             return
         # 历史回看时期间跟随历史记录, 不允许修改
         self._period_input.setEnabled(False)
+        period_text = summary.period if summary is not None else ""
+        parsed = QDate.fromString(period_text, "yyyy-MM")
+        if not parsed.isValid():
+            parsed = QDate.currentDate()
         self._period_input.blockSignals(True)
-        self._period_input.setText(summary.period if summary is not None else "")
+        self._period_input.setDate(parsed)
         self._period_input.blockSignals(False)
         period = summary.period if summary is not None else ""
         self._history_banner_text.setText(
