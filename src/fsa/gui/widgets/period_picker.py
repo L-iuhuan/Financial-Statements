@@ -29,6 +29,9 @@ class PeriodPicker(QWidget):
     def __init__(self, date: QDate, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._date = date
+        # 弹窗与日历引用 (供测试确定性交互, 不依赖定时器/可见性探测)
+        self._popup: QDialog | None = None
+        self._calendar: QCalendarWidget | None = None
         self._line = QLineEdit(date.toString("yyyy-MM"))
         self._line.setObjectName("PeriodInput")
         self._line.editingFinished.connect(self._on_edit_finished)
@@ -81,6 +84,8 @@ class PeriodPicker(QWidget):
         calendar.setSelectedDate(self._date)
         calendar.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
         layout.addWidget(calendar)
+        self._popup = popup
+        self._calendar = calendar
 
         def _on_picked(picked: QDate) -> None:
             self._date = picked
@@ -93,3 +98,5 @@ class PeriodPicker(QWidget):
         pos = self._btn.mapToGlobal(QPoint(0, self._btn.height() + 4))
         popup.move(pos)
         popup.exec()
+        self._popup = None
+        self._calendar = None

@@ -265,14 +265,19 @@ class TestDropdownArrowRendering:
             qapp.setStyleSheet(old_qss)
 
     def test_period_picker_click_opens_calendar_popup(self, qapp, qtbot) -> None:
-        """点击 PeriodPicker 箭头按钮打开日历弹窗。"""
-        from PySide6.QtCore import QDate
+        """点击 PeriodPicker 箭头按钮打开日历弹窗并可回填日期。
+
+        交互全部经 QTimer 排队, 不在 Qt 回调内断言/抛异常
+        (回调内异常会导致 Qt 进程级 abort, CI 上表现为 exit 3)。
+        """
+        from PySide6.QtCore import QDate, QTimer
         from PySide6.QtWidgets import QVBoxLayout, QWidget
 
         from fsa.gui.widgets.period_picker import PeriodPicker
 
         old_qss = qapp.styleSheet()
         try:
+            apply_theme(dark=False)
             qapp.setStyleSheet(get_qss(False))
             picker = PeriodPicker(QDate(2026, 8, 16))
             picker.setFixedWidth(130)
@@ -282,23 +287,25 @@ class TestDropdownArrowRendering:
             qtbot.addWidget(host)
             host.show()
             qapp.processEvents()
-            # 用定时器在弹窗 exec 期间点选日历并关闭
-            from PySide6.QtCore import QTimer
 
-            def _pick() -> None:
-                from PySide6.QtWidgets import QCalendarWidget
+            picked: list[bool] = []
 
-                cals = [w for w in qapp.allWidgets() if isinstance(w, QCalendarWidget) and w.isVisible()]
-                assert cals, "日历弹窗未打开"
-                cals[0].clicked.emit(QDate(2026, 7, 1))
-                cals[0].window().close()
+            def _interact() -> None:
+                calendar = picker._calendar
+                popup = picker._popup
+                if calendar is not None and popup is not None and popup.isVisible():
+                    calendar.clicked.emit(QDate(2026, 7, 1))
+                    picked.append(True)
 
-            QTimer.singleShot(150, _pick)
-            picker._show_calendar()
-            qapp.processEvents()
+            # exec 经事件循环启动, 不阻塞测试线程
+            QTimer.singleShot(0, picker._show_calendar)
+            QTimer.singleShot(300, _interact)
+            qtbot.wait(800)
+            assert picked, "日历弹窗未打开或未能交互"
             assert picker.date() == QDate(2026, 7, 1), "选中的日期应回填"
             host.close()
         finally:
+            apply_theme(dark=False)
             qapp.setStyleSheet(old_qss)
 
     def test_dropdown_combo_arrow_renders_in_both_themes(self, qapp, qtbot) -> None:

@@ -310,10 +310,10 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
             wrapped = max(1, -(-text_width // int(viewport_width)))
             visual_lines += wrapped
 
-        # +8 余量 (仅多行时): 覆盖边框 2px 与块布局行高(≈字体高度)相对
+        # +12 余量 (仅多行时): 覆盖边框与不同平台/字体下块布局行高相对
         # fontMetrics().lineSpacing() 的估算偏差, 确保到 120px 上限前不出现滚动条;
         # 单行/空态保持 36px 基准高度不加余量
-        slack = 8 if visual_lines > 1 else 2
+        slack = 12 if visual_lines > 1 else 2
         content_height = visual_lines * line_height + margin * 2 + slack
         new_height = int(max(36, min(120, content_height)))
         if new_height != self._input.height():
