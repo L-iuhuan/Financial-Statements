@@ -127,3 +127,43 @@ class TestTopbarExportButton:
         window._topbar.validate_clicked.emit()
         qtbot.wait(100)
         assert window._topbar._export_btn.isEnabled() is True
+
+
+class TestTopbarUpdateBadge:
+    """测试顶栏更新角标 (TB-06): 默认隐藏 / 显示带版本 tooltip / 隐藏 / 点击发信号。"""
+
+    def test_update_badge_hidden_by_default(self, qapp, qtbot, app_state) -> None:
+        """未发现新版本时角标按钮默认隐藏 (TB-06)。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        assert window._topbar._update_badge_btn.isHidden()
+
+    def test_show_update_badge_shows_with_version_tooltip(self, qapp, qtbot, app_state) -> None:
+        """show_update_badge 显示按钮并带版本 tooltip (TB-06)。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+        window._topbar.show_update_badge("0.5.0")
+        assert window._topbar._update_badge_btn.isVisible()
+        assert "0.5.0" in window._topbar._update_badge_btn.toolTip()
+
+    def test_hide_update_badge_hides(self, qapp, qtbot, app_state) -> None:
+        """hide_update_badge 隐藏角标 (TB-06)。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+        window._topbar.show_update_badge("0.5.0")
+        assert window._topbar._update_badge_btn.isVisible()
+        window._topbar.hide_update_badge()
+        assert window._topbar._update_badge_btn.isHidden()
+
+    def test_update_badge_click_emits_signal(self, qapp, qtbot, app_state) -> None:
+        """点击角标发出 update_badge_clicked 信号 (TB-06)。"""
+        window = MainWindow(app_state, initial_dark=False, theme_mode="light")
+        qtbot.addWidget(window)
+        window.show()
+        fired: list[bool] = []
+        window._topbar.update_badge_clicked.connect(lambda: fired.append(True))
+        window._topbar._update_badge_btn.show()
+        window._topbar._update_badge_btn.click()
+        assert fired == [True]

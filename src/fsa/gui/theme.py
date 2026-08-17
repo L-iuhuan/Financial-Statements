@@ -210,6 +210,49 @@ def _generate_qss(p: dict[str, str]) -> str:
         color: {p["text_tertiary"]};
     }}
 
+    /* ── 顶栏更新角标 (发现新版本常驻红点) ── */
+    QPushButton#UpdateBadgeBtn {{
+        background-color: {p["bg_surface"]};
+        color: {p["text_secondary"]};
+        border: 1px solid {p["border"]};
+        border-radius: 6px;
+        padding: 6px;
+    }}
+    QPushButton#UpdateBadgeBtn:hover {{
+        background-color: {p["bg_surface_hover"]};
+        color: {p["text_primary"]};
+        border-color: {p["border_strong"]};
+    }}
+    QPushButton#UpdateBadgeBtn:pressed {{
+        background-color: {p["bg_surface_active"]};
+    }}
+    QLabel#UpdateBadgeDot {{
+        background-color: {p["error"]};
+        border-radius: 4px;
+    }}
+
+    /* ── 更新对话框 ── */
+    QTextBrowser#UpdateNotes {{
+        background-color: {p["bg_app"]};
+        color: {p["text_primary"]};
+        border: 1px solid {p["border"]};
+        border-radius: 6px;
+        padding: 8px;
+        font-size: 13px;
+    }}
+    QProgressBar#UpdateProgress {{
+        background-color: {p["bg_surface_hover"]};
+        border: 1px solid {p["border"]};
+        border-radius: 4px;
+        text-align: center;
+        color: {p["text_secondary"]};
+        font-size: 11px;
+    }}
+    QProgressBar#UpdateProgress::chunk {{
+        background-color: {p["brand_500"]};
+        border-radius: 4px;
+    }}
+
     /* ── 按钮 ── */
     QPushButton#BtnPrimary {{
         background-color: {p["brand_600"]};

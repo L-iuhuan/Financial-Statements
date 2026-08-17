@@ -1,10 +1,10 @@
 ; Inno Setup 安装脚本: 财务报表勾稽校验系统
 ; 编译: 需要 Inno Setup 6 (https://jrsoftware.org/isdl.php)
 ;        ISCC.exe installer.iss
-; 产物: installer_output\财务报表勾稽校验系统_Setup_0.4.1.exe
+; 产物: installer_output\财务报表勾稽校验系统_Setup_0.4.2.exe
 
 #define MyAppName "财务报表勾稽校验系统"
-#define MyAppVersion "0.4.1"
+#define MyAppVersion "0.4.2"
 #define MyAppPublisher "FSA"
 #define MyAppExeName "fsa.exe"
 #define MyAppId "{{8F3A2B1C-4D5E-4F6A-9B8C-1D2E3F4A5B6C}"

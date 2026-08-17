@@ -23,7 +23,7 @@ from fsa.core.version import APP_VERSION
 from fsa.gui.app_state import AppState
 from fsa.gui.main_window import MainWindow
 from fsa.gui.theme import apply_theme, get_qss
-from fsa.updater.updater import UpdateError, Updater
+from fsa.updater.updater import UpdateError, UpdateInfo, Updater
 
 
 def _is_system_dark() -> bool:
@@ -50,9 +50,13 @@ def _get_startup_theme() -> tuple[bool, str]:
 
 
 class _UpdateCheckBridge(QObject):
-    """后台更新检查结果回传桥 (worker 线程 -> GUI 线程)。"""
+    """后台更新检查结果回传桥 (worker 线程 -> GUI 线程)。
 
-    finished = Signal(str, str)  # (status, detail); status: update / error / latest
+    finished(status, info): status 为 update / error / latest;
+    info 为完整 UpdateInfo (update 时提供, 其余为 None)。
+    """
+
+    finished = Signal(str, object)
 
 
 def _schedule_startup_update_check(window: MainWindow, settings: QSettings) -> None:
@@ -78,25 +82,25 @@ def _schedule_startup_update_check(window: MainWindow, settings: QSettings) -> N
             ).check_for_update()
         except UpdateError as e:
             logger.warning(f"启动更新检查失败: {e}")
-            bridge.finished.emit("error", str(e))
+            bridge.finished.emit("error", None)
             return
         except Exception:
             logger.exception("启动更新检查出现未预期异常")
-            bridge.finished.emit("error", "更新检查未完成")
+            bridge.finished.emit("error", None)
             return
         if info.has_update:
-            bridge.finished.emit(
-                "update",
-                f"发现新版本 {info.latest_version}，请前往「系统设置 → 软件更新」下载。",
-            )
+            bridge.finished.emit("update", info)
         else:
-            bridge.finished.emit("latest", "已是最新版本")
+            bridge.finished.emit("latest", info)
 
-    def on_finished(status: str, detail: str) -> None:
-        if status == "update":
+    def on_finished(status: str, info: object) -> None:
+        if status == "update" and isinstance(info, UpdateInfo):
+            # 缓存完整更新信息供更新对话框使用, 并显示顶栏常驻角标
+            window._pending_update_info = info
+            window.show_update_badge(info.latest_version)
             InfoBar.info(
                 "发现新版本",
-                detail,
+                f"发现新版本 {info.latest_version}，请点击右上角图标查看并更新。",
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
@@ -104,7 +108,7 @@ def _schedule_startup_update_check(window: MainWindow, settings: QSettings) -> N
                 parent=window,
             )
         elif status == "error":
-            logger.debug(f"启动更新检查未完成: {detail}")
+            logger.debug("启动更新检查未完成")
 
     bridge.finished.connect(on_finished)
 

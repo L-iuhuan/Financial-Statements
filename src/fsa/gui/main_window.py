@@ -31,6 +31,7 @@ from fsa.gui.export_helper import export_audit_workbook
 from fsa.gui.main_window_agent import MainWindowAgentMixin
 from fsa.gui.main_window_debate import MainWindowDebateMixin, _format_trace_loc
 from fsa.gui.main_window_drawer import MainWindowDrawerMixin
+from fsa.gui.main_window_update import MainWindowUpdateMixin
 from fsa.gui.pages.audit_page import AuditPage
 from fsa.gui.pages.history_page import HistoryPage
 from fsa.gui.pages.import_page import ImportPage
@@ -55,7 +56,13 @@ _PAGE_TITLES: dict[str, tuple[str, str]] = {
 }
 
 
-class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainWindowDebateMixin):
+class MainWindow(
+    QMainWindow,
+    MainWindowDrawerMixin,
+    MainWindowAgentMixin,
+    MainWindowDebateMixin,
+    MainWindowUpdateMixin,
+):
     """主窗口: 侧边栏 + 顶栏 + 内容区 + AI 抽屉。
 
     快捷键:
@@ -174,6 +181,8 @@ class MainWindow(QMainWindow, MainWindowDrawerMixin, MainWindowAgentMixin, MainW
         self._topbar.reset_clicked.connect(self._on_reset)
         self._topbar.validate_clicked.connect(self._import_page.trigger_validate_async)
         self._topbar.export_clicked.connect(self._on_export)
+        # 更新角标 -> 更新对话框
+        self._topbar.update_badge_clicked.connect(self._open_update_dialog)
 
         # 校验完成后启用导出按钮
         self._state.results_changed.connect(self._on_results_ready)
