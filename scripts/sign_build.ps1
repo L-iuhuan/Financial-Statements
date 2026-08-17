@@ -86,7 +86,9 @@ foreach ($file in $targetFiles) {
         }
     }
     if (-not $signed) {
-        Write-Error "文件签名失败 (时间戳服务不可达): $file"
+        # 内网环境在线时间戳不可达时, 无时间戳签名 (签名在证书有效期内有效)
+        Write-Warning "在线时间戳均不可达, 改用无时间戳签名 (内网场景可用)"
+        Set-AuthenticodeSignature -FilePath $file -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     }
     $sig = Get-AuthenticodeSignature $file
     Write-Host ("  已签名: {0} -> {1}" -f (Split-Path $file -Leaf), $sig.Status) -ForegroundColor Green

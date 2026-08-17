@@ -29,6 +29,30 @@ powershell -ExecutionPolicy Bypass -File scriptsuild_installer.ps1 `
 
 ## 2. 内部版域控制
 
+### 2.0 生产环境固化参数（2026-08-17 实测确认）
+
+本企业内部版构建以以下域信息为准（首次入域实测于构建机 910373@toll.cn）：
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| DNS 域名 | `toll.cn` | 主判定依据（`USERDNSDOMAIN`） |
+| NetBIOS 域名 | `TOLL` | 兜底（旧客户端/工作组场景 `USERDOMAIN`） |
+| 域控服务器 | `\\XAGC` | 参考信息 |
+
+**标准内部版构建命令（后续构建以此为准）**：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 `
+  -Edition internal `
+  -DomainWhitelist "toll.cn,TOLL"
+```
+
+白名单同时包含 DNS 名与 NetBIOS 名（大小写不敏感），覆盖：
+- 正常入域机器：`USERDNSDOMAIN=toll.cn` 命中；
+- 旧客户端/异常环境仅暴露 NetBIOS 名时：`USERDOMAIN=TOLL` 兜底命中。
+
+### 2.1 域判定逻辑
+
 - 启动时读取 `USERDNSDOMAIN`（首选）与 `USERDOMAIN`（白名单显式接受时回退）。
 - `USERDNSDOMAIN` 为空即视为未加入域，弹出中文错误并拒绝启动。
 - 白名单为空表示“允许任何域环境运行”；建议构建时通过 `-DomainWhitelist`
@@ -37,6 +61,38 @@ powershell -ExecutionPolicy Bypass -File scriptsuild_installer.ps1 `
   (Computer Configuration → Policies → Software Settings → Assigned Applications)。
 
 ## 3. 更新通道
+
+### 3.0 生产环境共享盘配置（2026-08-17 实测联通）
+
+更新清单与安装包统一发布到内网共享盘：
+
+```
+\\192.168.8.3\财务部\办公软件\SoftwareUpdate\财务报表校验\
+├── version.json          # 更新清单 (发布脚本自动生成, 含 sha256)
+└── 财务报表勾稽校验系统_内部版_Setup_<版本>.exe
+```
+
+**标准发布命令（一条完成构建+校验+发布）**：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\publish_update.ps1 `
+  -Version 0.4.2 -ReleaseNotes "更新说明"
+# 已有安装包时跳过构建: 加 -SkipBuild
+```
+
+**客户端更新闭环**（内部版构建时经 `-UpdateUrl` 固化清单地址，无需用户配置）：
+
+1. 客户端启动 → 后台读共享盘 `version.json`（失败仅记日志不打扰）
+2. 发现新版本 → 设置页提示更新（版本号 + 更新说明）
+3. 用户确认 → 自动下载安装包 → SHA256 校验（不匹配即删除并报中文错误）
+4. 静默安装（`/SILENT /NOCANCEL`，覆盖旧版程序文件）→ 自动重启应用
+5. **数据保留**：SQLite 历史/会话/覆写在 `~/.fsa/data.db`，QSettings 在注册表
+   `HKCU\Software\FSA`——均在安装目录之外，覆盖安装/卸载均不触碰
+
+已实测（2026-08-17）：发布脚本推送 v0.4.1 到共享盘成功；客户端以 0.4.0 身份
+读取清单正确返回 has_update=True、UNC 下载地址与中文更新说明。
+
+### 3.1 清单格式
 
 更新清单 JSON（HTTPS 或共享盘 UNC 均可）示例：
 
@@ -58,9 +114,52 @@ powershell -ExecutionPolicy Bypass -File scriptsuild_installer.ps1 `
 
 ## 4. 数字签名
 
-### 4.1 内部版（推荐：AD CS 或自签名 + 域策略信任，零费用）
+### 4.0 本企业环境现状（2026-08-17 实测）
 
-自签名代码签名证书（在受控构建机上执行一次）：
+- 构建机（910373@toll.cn）当前**无代码签名证书**（Cert:\CurrentUser\My 与
+  LocalMachine\My 均无）。
+- 域内企业 CA 在线：`xadc.toll.cn\toll-XADC-CA`（certutil ping 500ms 连通）。
+  证书模板枚举需企业管理员权限，**需向 IT 申请一张代码签名证书**
+  （Code Signing 模板，导出私钥可选项建议允许，便于构建机签名）。
+- 拿到证书前：内部版可无签名分发（共享盘运行未签名安装器会触发
+  SmartScreen 蓝色提示，用户点"仍要运行"即可；签名后该提示消失）。
+- 本地构建的 exe 直接运行无 Windows 提示属正常——SmartScreen 只拦截
+  带"网络下载标记"(MOTW) 的文件，本地构建产物没有该标记。
+
+### 4.1 内部版（自签名 + 域策略信任，已落地 2026-08-17）
+
+**生产证书（已创建并启用）**：
+
+| 项 | 值 |
+|---|---|
+| 主题 | `CN=TOLL FSA Internal Release, O=TOLL Finance` |
+| 指纹 | `1511AB0EDEF9B262D50F4B7C50F93A1D4BD17A6C` |
+| 存储 | 构建机 `Cert:\CurrentUser\My`（私钥可导出，有效期 5 年） |
+| 公钥分发文件 | 共享盘 `\\192.168.8.3\财务部\办公软件\SoftwareUpdate\财务报表校验\TOLL-FSA-CodeSign.cer` |
+
+**签名命令（标准发布流程，publish_update.ps1 构建后执行）**：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\sign_build.ps1 `
+  -CertThumbprint "1511AB0EDEF9B262D50F4B7C50F93A1D4BD17A6C"
+```
+
+> 注意：内网机器访问不了在线时间戳服务器时，脚本自动降级为无时间戳签名
+> （2026-08-17 修复，签名在证书 5 年有效期内有效）。
+
+**域内信任分发（域管理员在域控执行一次，全域生效）**：
+
+1. 从共享盘取 `TOLL-FSA-CodeSign.cer`；
+2. 域控打开「组策略管理」→ 编辑默认域策略（或新建"FSA 证书信任"GPO）：
+   `计算机配置 → 策略 → Windows 设置 → 安全设置 → 公钥策略 →
+   受信任的根证书颁发机构` → 右键「导入」→ 选择该 .cer；
+3. 客户端执行 `gpupdate /force` 或次日自动刷新后，
+   签名状态从 UnknownError 转为 **Valid**，SmartScreen 不再拦截。
+
+> 已实测（2026-08-17 构建机）：证书导入受信根前 `Get-AuthenticodeSignature` 状态为
+> UnknownError（签名本身已写入），导入后 fsa.exe 与安装器均为 **Valid**。
+
+自签名代码签名证书（重新创建时参考）：
 
 ```powershell
 $cert = New-SelfSignedCertificate -Type CodeSigningCert `
