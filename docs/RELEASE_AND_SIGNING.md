@@ -114,52 +114,33 @@ powershell -ExecutionPolicy Bypass -File scripts\publish_update.ps1 `
 
 ## 4. 数字签名
 
-### 4.0 本企业环境现状（2026-08-17 实测）
+### 4.0 决策：不签名（2026-08-17 定）
 
-- 构建机（910373@toll.cn）当前**无代码签名证书**（Cert:\CurrentUser\My 与
-  LocalMachine\My 均无）。
-- 域内企业 CA 在线：`xadc.toll.cn\toll-XADC-CA`（certutil ping 500ms 连通）。
-  证书模板枚举需企业管理员权限，**需向 IT 申请一张代码签名证书**
-  （Code Signing 模板，导出私钥可选项建议允许，便于构建机签名）。
-- 拿到证书前：内部版可无签名分发（共享盘运行未签名安装器会触发
-  SmartScreen 蓝色提示，用户点"仍要运行"即可；签名后该提示消失）。
-- 本地构建的 exe 直接运行无 Windows 提示属正常——SmartScreen 只拦截
-  带"网络下载标记"(MOTW) 的文件，本地构建产物没有该标记。
+**当前决策：内部版不做代码签名。** 原因：
+- 域 CA（toll-XADC-CA）虽在线，但 IT 推信任证书的流程不可行；
+- 让每台电脑手工装证书成本过高；
+- 内网共享盘分发场景下，SmartScreen 蓝色提示用户点「更多信息 → 仍要运行」即可，
+  财务用户可接受。
 
-### 4.1 内部版（自签名 + 域策略信任，已落地 2026-08-17）
+**副作用与缓解**：
+- 他人从共享盘运行安装器时会有 SmartScreen 提示（一次性，装完不再出现）；
+- 更新包的防篡改由共享盘 `version.json` 中的 SHA256 校验承担（updater 内置）；
+- 若未来 IT 流程打通或采购公共证书，按 §4.2 随时启用（脚本已就绪，
+  `sign_build.ps1` 支持内网无时间戳降级）。
 
-**生产证书（已创建并启用）**：
+~~### 4.1 内部版自签名方案~~（已废弃，保留备查）
 
-| 项 | 值 |
-|---|---|
-| 主题 | `CN=TOLL FSA Internal Release, O=TOLL Finance` |
-| 指纹 | `1511AB0EDEF9B262D50F4B7C50F93A1D4BD17A6C` |
-| 存储 | 构建机 `Cert:\CurrentUser\My`（私钥可导出，有效期 5 年） |
-| 公钥分发文件 | 共享盘 `\\192.168.8.3\财务部\办公软件\SoftwareUpdate\财务报表校验\TOLL-FSA-CodeSign.cer` |
+<details>
+<summary>历史记录：自签名证书方案（2026-08-17 曾创建 TOLL FSA Internal Release 证书并实测签名 Valid，后决策废弃）</summary>
 
-**签名命令（标准发布流程，publish_update.ps1 构建后执行）**：
+曾创建自签名代码签名证书（指纹 1511AB0EDEF9B262D50F4B7C50F93A1D4BD17A6C，
+存于构建机 Cert:\CurrentUser\My），公钥曾导出至共享盘。因无法通过域策略/手工
+方式让全员信任该证书，方案废弃。构建机上的证书可保留无害，不影响构建产物
+（构建脚本不自动签名）。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\sign_build.ps1 `
-  -CertThumbprint "1511AB0EDEF9B262D50F4B7C50F93A1D4BD17A6C"
-```
+</details>
 
-> 注意：内网机器访问不了在线时间戳服务器时，脚本自动降级为无时间戳签名
-> （2026-08-17 修复，签名在证书 5 年有效期内有效）。
-
-**域内信任分发（域管理员在域控执行一次，全域生效）**：
-
-1. 从共享盘取 `TOLL-FSA-CodeSign.cer`；
-2. 域控打开「组策略管理」→ 编辑默认域策略（或新建"FSA 证书信任"GPO）：
-   `计算机配置 → 策略 → Windows 设置 → 安全设置 → 公钥策略 →
-   受信任的根证书颁发机构` → 右键「导入」→ 选择该 .cer；
-3. 客户端执行 `gpupdate /force` 或次日自动刷新后，
-   签名状态从 UnknownError 转为 **Valid**，SmartScreen 不再拦截。
-
-> 已实测（2026-08-17 构建机）：证书导入受信根前 `Get-AuthenticodeSignature` 状态为
-> UnknownError（签名本身已写入），导入后 fsa.exe 与安装器均为 **Valid**。
-
-自签名代码签名证书（重新创建时参考）：
+### 4.2 启用签名（备用，未来需要时）
 
 ```powershell
 $cert = New-SelfSignedCertificate -Type CodeSigningCert `
