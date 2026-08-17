@@ -29,11 +29,14 @@ function Write-EditionOverride {
         $domainList = @($DomainWhitelist.Split(",;；") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     }
     $domainTuple = ($domainList | ForEach-Object { '"' + $_.ToLower() + '"' }) -join ", "
+    # Python 字符串字面量需转义反斜杠: UNC 路径 "\\server\share\version.json"
+    # 若直接写入, "\\" 会被解释为单个 "\", "\v" 会被解释为垂直制表符 (2026-08-17 修复)
+    $escapedUpdateUrl = $UpdateUrl -replace '\\', '\\'
     $content = @"
 # 构建期生成的版本通道配置 (由 build_installer.ps1 写入, 不要手工编辑/提交)
 EDITION = "$Edition"
 DOMAIN_WHITELIST = ($domainTuple)
-DEFAULT_UPDATE_URL = "$UpdateUrl"
+DEFAULT_UPDATE_URL = "$escapedUpdateUrl"
 "@
     Set-Content -Path $EditionFile -Value $content -Encoding UTF8
     Write-Host "  版本通道: $Edition  (白名单: $($domainList -join ', '), 更新地址: $UpdateUrl)" -ForegroundColor Green
