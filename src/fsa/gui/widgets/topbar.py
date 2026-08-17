@@ -25,6 +25,7 @@ class Topbar(QFrame):
     reset_clicked = Signal()
     validate_clicked = Signal()
     export_clicked = Signal()
+    update_badge_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,6 +47,22 @@ class Topbar(QFrame):
         layout.addWidget(self._subtitle)
 
         layout.addStretch()
+
+        # 更新角标按钮 (默认隐藏; 启动检查发现新版本时显示, 点击打开更新对话框)
+        self._update_badge_btn = QPushButton()
+        self._update_badge_btn.setObjectName("UpdateBadgeBtn")
+        self._update_badge_btn.setFixedSize(36, 36)
+        self._update_badge_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_badge_btn.setToolTip("发现新版本")
+        self._update_badge_btn.setIcon(FluentIcon.MEGAPHONE.qicon())
+        self._update_badge_btn.clicked.connect(self.update_badge_clicked.emit)
+        # 红点小圆标 (语义色 error, 样式走 theme.py QSS)
+        self._update_badge_dot = QLabel(self._update_badge_btn)
+        self._update_badge_dot.setObjectName("UpdateBadgeDot")
+        self._update_badge_dot.setFixedSize(8, 8)
+        self._update_badge_dot.move(self._update_badge_btn.width() - 10, 4)
+        self._update_badge_btn.hide()
+        layout.addWidget(self._update_badge_btn)
 
         # 主题切换按钮 (图标)
         self._theme_btn = QPushButton()
@@ -99,3 +116,12 @@ class Topbar(QFrame):
         icon = FluentIcon.QUIET_HOURS if dark else FluentIcon.BRIGHTNESS
         # qicon(): 随主题自动重绘, 无需在每次切换时重建
         self._theme_btn.setIcon(icon.qicon())
+
+    def show_update_badge(self, version: str) -> None:
+        """显示更新角标并附带版本提示 (默认隐藏)。"""
+        self._update_badge_btn.setToolTip(f"发现新版本 {version}，点击查看")
+        self._update_badge_btn.show()
+
+    def hide_update_badge(self) -> None:
+        """隐藏更新角标。"""
+        self._update_badge_btn.hide()
