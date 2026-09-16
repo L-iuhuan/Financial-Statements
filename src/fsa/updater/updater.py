@@ -103,6 +103,17 @@ def _to_file_url(url: str) -> str:
     return url
 
 
+def _is_local_or_unc(url: str) -> bool:
+    """是否为本地绝对路径或 UNC 共享盘路径 (Windows 可直接 open)。
+
+    urllib 的 file:// 协议仅支持 localhost, 远程主机名会被静默丢弃导致
+    打开错误的本地路径 (2026-08-17 下载失败根因), 故此类路径必须走文件 IO。
+    """
+    if url.startswith("\\\\"):
+        return True
+    return "://" not in url and os.path.isabs(url)
+
+
 class Updater:
     """内网更新检查器。
 
@@ -197,6 +208,12 @@ class Updater:
             UpdateError: 网络错误、写入失败或哈希校验失败时抛出。
         """
         expected_sha256 = self._fetch_expected_sha256()
+        # UNC/本地路径直接文件 IO: urllib file:// 不支持远程主机 (WinError 3)
+        if _is_local_or_unc(url):
+            self._copy_local(url, dest_path, progress_cb)
+            if expected_sha256 is not None:
+                self._verify_sha256(dest_path, expected_sha256)
+            return dest_path
         try:
             response = self._open_url(url)
         except urllib.error.URLError as e:
@@ -259,6 +276,35 @@ class Updater:
             )
         except OSError as e:
             raise UpdateError(f"无法启动安装程序 ({e})，请手动运行安装包") from e
+
+    def _copy_local(
+        self,
+        src_url: str,
+        dest_path: str,
+        progress_cb: Callable[[int, int], None] | None,
+    ) -> None:
+        """本地/UNC 路径流式复制 (与 download() 网络路径相同的进度与异常语义)。
+
+        urllib 的 file:// 协议仅支持 localhost, 远程 UNC 会被静默丢主机名,
+        故共享盘安装包必须走文件 IO (2026-08-17 下载失败根因)。
+        """
+        try:
+            total = os.path.getsize(src_url)
+            copied = 0
+            os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+            with open(src_url, "rb") as src, open(dest_path, "wb") as dst:
+                while True:
+                    chunk = src.read(self._CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    copied += len(chunk)
+                    if progress_cb is not None:
+                        progress_cb(copied, total)
+        except FileNotFoundError as e:
+            raise UpdateError(f"下载失败: 安装包不存在 ({src_url})") from e
+        except OSError as e:
+            raise UpdateError(f"下载失败: 磁盘或网络错误 ({e})") from e
 
     def _fetch_expected_sha256(self) -> str | None:
         """从更新清单读取期望的 sha256 哈希值。

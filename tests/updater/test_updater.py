@@ -660,6 +660,92 @@ class TestUpdaterDownloadSha256:
         assert "sha256" in sink.getvalue()
 
 
+class TestUpdaterDownloadLocalPath:
+    """download 对本地/UNC 路径直接文件 IO (urllib file:// 不支持远程主机)。"""
+
+    def test_download_absolute_local_path_copies_file(self, tmp_path) -> None:
+        """绝对路径下载走文件复制, 不经 urllib。"""
+        content = b"local installer binary"
+        src = tmp_path / "src_installer.exe"
+        src.write_bytes(content)
+        manifest = tmp_path / "version.json"
+        manifest.write_text('{"version": "0.2.0"}', encoding="utf-8")
+        dest = tmp_path / "out" / "update.exe"
+
+        with patch("urllib.request.urlopen") as mock_open:
+            updater = Updater(
+                manifest_url=str(manifest),
+                current_version="0.1.0",
+            )
+            result = updater.download(str(src), str(dest))
+
+        assert result == str(dest)
+        assert dest.read_bytes() == content
+        mock_open.assert_not_called()
+
+    def test_download_unc_path_uses_file_io(self, tmp_path, monkeypatch) -> None:
+        """UNC 路径 (\\\\server\\share) 走文件 IO, 不转 file:// URI。"""
+        content = b"unc installer binary"
+        src = tmp_path / "installer.exe"
+        src.write_bytes(content)
+        manifest = tmp_path / "version.json"
+        manifest.write_text('{"version": "0.2.0"}', encoding="utf-8")
+        # 构造假 UNC 路径, monkeypatch os.path 使其可 open
+        fake_unc = "\\\\192.168.8.3\\share\\fsa\\installer.exe"
+        real_open = open
+
+        def fake_open(path, mode="r", *args, **kwargs):
+            if path == fake_unc:
+                return real_open(str(src), mode, *args, **kwargs)
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", fake_open)
+        monkeypatch.setattr(
+            "os.path.getsize", lambda p: len(content) if p == fake_unc else 0
+        )
+        dest = tmp_path / "update.exe"
+
+        with patch("urllib.request.urlopen") as mock_open:
+            updater = Updater(
+                manifest_url=str(manifest),
+                current_version="0.1.0",
+            )
+            result = updater.download(fake_unc, str(dest))
+
+        assert result == str(dest)
+        assert dest.read_bytes() == content
+        mock_open.assert_not_called()
+
+    def test_download_local_path_progress_reports_total(self, tmp_path) -> None:
+        """本地路径下载进度回调 total 为真实文件大小。"""
+        content = b"x" * 10000
+        src = tmp_path / "installer.exe"
+        src.write_bytes(content)
+        dest = tmp_path / "update.exe"
+        progress: list[tuple[int, int]] = []
+
+        def on_progress(done: int, total: int) -> None:
+            progress.append((done, total))
+
+        updater = Updater(
+            manifest_url=str(tmp_path / "no_manifest.json"),
+            current_version="0.1.0",
+        )
+        updater.download(str(src), str(dest), progress_cb=on_progress)
+
+        assert progress
+        assert progress[-1] == (len(content), len(content))
+
+    def test_download_local_path_missing_raises_chinese_error(self, tmp_path) -> None:
+        """本地路径不存在时抛出中文"安装包不存在"错误。"""
+        updater = Updater(
+            manifest_url=str(tmp_path / "no_manifest.json"),
+            current_version="0.1.0",
+        )
+        with pytest.raises(UpdateError, match="安装包不存在"):
+            updater.download(str(tmp_path / "missing.exe"), str(tmp_path / "out.exe"))
+
+
 class TestUpdaterDownloadProgress:
     """download 进度回调的 total 参数测试。"""
 
