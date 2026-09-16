@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import cast
+from typing import Protocol, cast
 from zipfile import BadZipFile
 
 import openpyxl
@@ -83,12 +83,19 @@ class RawSheetData:
     rows: list[dict[str, object]] = field(default_factory=list)
 
 
-def read_excel(file_path: str, use_com: bool = False) -> dict[str, RawSheetData]:
+def read_excel(
+    file_path: str,
+    use_com: bool = False,
+    com_session: ExcelComSession | None = None,
+) -> dict[str, RawSheetData]:
     """读取 Excel 文件，返回所有工作表的原始数据。
 
     Args:
         file_path: Excel 文件路径（.xlsx 或 .xls）
         use_com: 强制使用 Excel COM 读取（默认为 False，常规读取失败时自动回退）
+        com_session: 批量导入时复用的 Excel COM 会话 (延迟启动);
+            传入后 COM 回退经会话共享单个 Excel 进程, 避免每文件 5-40s 启动开销。
+            会话必须在调用线程内创建/使用/关闭 (COM 线程亲和性)。
 
     Returns:
         字典，键为工作表名称，值为 RawSheetData
@@ -99,6 +106,8 @@ def read_excel(file_path: str, use_com: bool = False) -> dict[str, RawSheetData]
     """
     path = str(file_path)
     if use_com:
+        if com_session is not None:
+            return com_session.read_file(path)
         return read_excel_com(path)
 
     try:
@@ -108,9 +117,130 @@ def read_excel(file_path: str, use_com: bool = False) -> dict[str, RawSheetData]
     except _NATIVE_READ_ERRORS as error:
         logger.warning(f"常规方式读取失败（{error}），尝试用 Excel COM 打开: {path}")
         try:
+            if com_session is not None:
+                return com_session.read_file(path)
             return read_excel_com(path)
         except FSAError as com_error:
             raise FSAError(f"文件「{path}」常规解析失败（{error}），Excel COM 打开也失败: {com_error}") from error
+
+
+class _ExcelAppProtocol(Protocol):
+    """Excel COM 应用对象的最小类型表面 (仅本项目用到的成员)。"""
+
+    Visible: bool
+    DisplayAlerts: bool
+    AskToUpdateLinks: bool
+    Workbooks: object
+
+    def Quit(self) -> None: ...
+
+
+class ExcelComSession:
+    """延迟启动的 Excel COM 批量读取会话 (DLP 加密环境批量导入提速)。
+
+    单文件 COM 回退每文件都 DispatchEx 新建 Excel 进程 (5-40s/个);
+    会话在首个需要 COM 的文件时才启动 Excel, 之后所有文件复用同一进程,
+    批量导入 N 个加密文件的总开销从 N 次启动降为 1 次。
+
+    线程亲和性: COM 单元线程模型要求在同一线程创建/使用/销毁,
+    调用方必须在同一 (worker) 线程内使用 with 块。
+    """
+
+    def __init__(self) -> None:
+        self._excel: _ExcelAppProtocol | None = None
+        self._pythoncom: ModuleType | None = None
+        self._co_initialized = False
+
+    def __enter__(self) -> ExcelComSession:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def _ensure_started(self) -> _ExcelAppProtocol:
+        """首次需要时启动 Excel 进程 (延迟启动, 无 COM 需求的批次零开销)。"""
+        if self._excel is None:
+            try:
+                import win32com.client
+            except ImportError as error:
+                raise FSAError("未安装 pywin32，无法使用 Excel COM 读取加密文件") from error
+            # 与 _read_excel_com_sync 相同的 pythoncom 初始化模式 (异常收窄为
+            # com_error/OSError, 禁止宽 catch)
+            try:
+                import pythoncom as _pythoncom
+            except ImportError:
+                _pythoncom = None
+            self._pythoncom = _pythoncom
+            self._co_initialized = False
+            if _pythoncom is not None:
+                com_error = getattr(_pythoncom, "com_error", OSError)
+                try:
+                    _pythoncom.CoInitialize()
+                    self._co_initialized = True
+                except (com_error, OSError):
+                    self._co_initialized = False
+            try:
+                self._excel = cast("_ExcelAppProtocol", win32com.client.DispatchEx("Excel.Application"))
+            except Exception as error:
+                raise FSAError(f"无法启动 Excel 进程: {error}") from error
+            self._excel.Visible = False
+            self._excel.DisplayAlerts = False
+            self._excel.AskToUpdateLinks = False
+        return self._excel
+
+    def read_file(
+        self,
+        file_path: str,
+        progress_cb: Callable[[int, int], None] | None = None,
+    ) -> dict[str, RawSheetData]:
+        """用共享 Excel 进程读取一个文件。"""
+        excel = self._ensure_started()
+        return _read_workbook_sheets(excel, str(file_path), progress_cb)
+
+    def close(self) -> None:
+        """关闭共享 Excel 进程并回收 COM 线程资源 (幂等, 未启动时为空操作)。"""
+        if self._excel is not None:
+            try:
+                self._excel.Quit()
+            except Exception as error:  # noqa: BLE001 - 关闭阶段异常不掩盖业务结果
+                logger.warning(f"关闭共享 Excel 进程时出现异常 (可忽略): {error}")
+            self._excel = None
+        if self._pythoncom is not None and self._co_initialized:
+            self._pythoncom.CoUninitialize()
+            self._co_initialized = False
+
+
+def _read_workbook_sheets(
+    excel: _ExcelAppProtocol,
+    file_path: str,
+    progress_cb: Callable[[int, int], None] | None,
+) -> dict[str, RawSheetData]:
+    """在已启动的 Excel 实例上打开并读取一个工作簿 (单文件与会话共用)。"""
+    try:
+        workbook = excel.Workbooks.Open(file_path, UpdateLinks=0, ReadOnly=True, AddToMru=False)  # type: ignore[union-attr]
+    except Exception as error:
+        raise FSAError(f"Excel 无法打开文件「{file_path}」: {error}") from error
+
+    result: dict[str, RawSheetData] = {}
+    try:
+        sheet_count = workbook.Worksheets.Count
+        if progress_cb is not None:
+            progress_cb(0, sheet_count)
+        for completed, sheet in enumerate(workbook.Worksheets, 1):
+            used_range = sheet.UsedRange
+            # UsedRange 的左上角不保证是 A1 (工作表顶部可能有空行被裁掉):
+            # UsedRange.Value 返回的矩阵以 UsedRange 首行为第 0 行, 需把
+            # 起始行偏移 (UsedRange.Row - 1) 传回, 否则 _row 源行号整体偏小,
+            # 追溯定位会指向错误的 Excel 行 (P3)。
+            row_offset = int(used_range.Row) - 1
+            matrix = _com_range_to_matrix(used_range.Value)
+            result[sheet.Name] = _matrix_to_raw(sheet.Name, matrix, row_offset=row_offset)
+            if progress_cb is not None:
+                progress_cb(completed, sheet_count)
+    finally:
+        workbook.Close(SaveChanges=False)
+    logger.info(f"Excel COM 读取完成，共 {len(result)} 个工作表")
+    return result
 
 
 def _read_native(path: str) -> dict[str, RawSheetData]:

@@ -68,6 +68,7 @@ class ImportPageTasksMixin(QWidget):
 
     _state: AppState
     _import_status_label: QLabel
+    _received_files_label: QLabel
     _progress: IndeterminateProgressBar
     _cancel_import_btn: QPushButton
     _import_cancel_event: threading.Event | None
@@ -112,12 +113,18 @@ class ImportPageTasksMixin(QWidget):
         def _persist_multi_entity_results(self, result: object) -> int: ...
 
     def _on_files_async(self, file_paths: list[str]) -> None:
-        """后台导入入口: 不阻塞界面, 可取消。"""
+        """后台导入入口: 不阻塞界面, 可取消。拖入后立即显示文件列表反馈。"""
         if self._import_cancel_event is not None:
             self._show_info("已有导入任务正在进行，请先取消或等待完成", "warning")
             return
 
         logger.info(f"导入文件(后台): {file_paths}")
+        # 拖入即显: 用户能立刻看到拖入了哪些文件、共几个
+        names = "、".join(Path(p).name for p in file_paths)
+        self._received_files_label.setText(
+            f"已接收 {len(file_paths)} 个文件：{names}（正在导入…）"
+        )
+        self._received_files_label.setVisible(True)
         self._set_import_running(True)
         cancel_event = threading.Event()
         self._import_cancel_event = cancel_event

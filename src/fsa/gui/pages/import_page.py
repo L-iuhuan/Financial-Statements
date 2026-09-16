@@ -37,7 +37,7 @@ from qfluentwidgets import FluentIcon, IconWidget, IndeterminateProgressBar
 
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
-from fsa.core.importer.excel_reader import read_excel
+from fsa.core.importer.excel_reader import ExcelComSession, read_excel
 from fsa.core.importer.importer import ImportService
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report, ReportType
@@ -131,6 +131,13 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         # 拖放区
         self._drop_zone = DropZone()
         layout.addWidget(self._drop_zone)
+
+        # 已接收文件列表 (拖入即显示文件名与数量, 导入期间持续可见)
+        self._received_files_label = QLabel("")
+        self._received_files_label.setObjectName("MetaLabel")
+        self._received_files_label.setWordWrap(True)
+        self._received_files_label.setVisible(False)
+        layout.addWidget(self._received_files_label)
 
         # 历史回看横幅 (默认隐藏, 仅在查看历史结果时显示)
         self._history_banner = QFrame()
@@ -357,7 +364,11 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         progress_cb: object | None = None,
         cancel_event: threading.Event | None = None,
     ) -> tuple[list[Report], DetailDataset, list[str]]:
-        """纯数据导入管线 (可在后台线程运行, 不触碰任何 Qt 控件)。"""
+        """纯数据导入管线 (可在后台线程运行, 不触碰任何 Qt 控件)。
+
+        DLP 加密文件走 Excel COM 回退; 用 ExcelComSession 在整批文件间
+        复用单个 Excel 进程 (延迟启动), 避免每文件 5-40s 的重复启动开销。
+        """
         self._importer.period = self._state.period
         self._detail_importer.period = self._state.period
 
@@ -365,13 +376,37 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         successful_datasets: list[DetailDataset] = []
         errors: list[str] = []
 
-        for path in file_paths:
+        from fsa.core.importer.excel_reader import ExcelComSession as _Session
+
+        with _Session() as com_session:
+            reports_by_type, successful_datasets, errors = self._read_all_files(
+                file_paths, com_session, progress_cb, cancel_event
+            )
+
+        dataset = DetailDataset(period=self._state.period)
+        for file_dataset in successful_datasets:
+            dataset.merge(file_dataset)
+        return list(reports_by_type.values()), dataset, errors
+
+    def _read_all_files(
+        self,
+        file_paths: list[str],
+        com_session: ExcelComSession,
+        progress_cb: object | None,
+        cancel_event: threading.Event | None,
+    ) -> tuple[dict[ReportType, Report], list[DetailDataset], list[str]]:
+        """逐个读取并解析全部文件 (主表 + 明细共享一次读取)。"""
+        reports_by_type: dict[ReportType, Report] = {}
+        successful_datasets: list[DetailDataset] = []
+        errors: list[str] = []
+
+        for index, path in enumerate(file_paths, 1):
             if cancel_event is not None and cancel_event.is_set():
                 errors.append(f"{path}: 已取消")
                 continue
             emit = progress_cb
             if callable(emit):
-                emit(f"正在读取: {Path(path).name}")
+                emit(f"正在导入第 {index}/{len(file_paths)} 个文件: {Path(path).name}")
             pdf_diagnostics = None
             try:
                 suffix = Path(path).suffix.lower()
@@ -384,7 +419,7 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
                     pdf_diagnostics = PdfReadDiagnostics()
                     raw_data = read_pdf(path, diagnostics=pdf_diagnostics)
                 else:
-                    raw_data = read_excel(path)
+                    raw_data = read_excel(path, com_session=com_session)
             except FileNotFoundError:
                 logger.warning(f"文件「{path}」不存在")
                 errors.append(f"{path}: 文件不存在")
@@ -425,10 +460,7 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
                     reports_by_type[report.report_type] = report
             successful_datasets.append(file_dataset)
 
-        dataset = DetailDataset(period=self._state.period)
-        for file_dataset in successful_datasets:
-            dataset.merge(file_dataset)
-        return list(reports_by_type.values()), dataset, errors
+        return reports_by_type, successful_datasets, errors
 
     def trigger_validate(self) -> None:
         """同步校验入口 (保留给测试与内部调用)。"""

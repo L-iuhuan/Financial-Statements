@@ -53,7 +53,7 @@ class TestBatchImportIsolation:
         # 读取步骤：全部成功，返回空数据（import_data 被 mock 覆盖）
         monkeypatch.setattr(
             "fsa.gui.pages.import_page.read_excel",
-            lambda file_path, use_com=False: {},
+            lambda file_path, use_com=False, com_session=None: {},
         )
 
         def fake_import_main_data(data: dict, source_file: str, suffix: str) -> list[Report]:
@@ -114,7 +114,11 @@ class TestBatchImportIsolation:
         page, state = _make_page()
 
         # 读取步骤：good 成功，bad 失败
-        def fake_read_excel(file_path: str, use_com: bool = False) -> dict:
+        def fake_read_excel(
+            file_path: str,
+            use_com: bool = False,
+            com_session: object | None = None,
+        ) -> dict:
             if file_path == "bad.xlsx":
                 raise TypeError("错误的列类型")
             return {}
@@ -149,7 +153,7 @@ class TestBatchImportIsolation:
 
         monkeypatch.setattr(
             "fsa.gui.pages.import_page.read_excel",
-            lambda file_path, use_com=False: {},
+            lambda file_path, use_com=False, com_session=None: {},
         )
 
         def fake_import_main_data(data: dict, source_file: str, suffix: str) -> list[Report]:
@@ -177,7 +181,7 @@ class TestBatchImportIsolation:
 
         monkeypatch.setattr(
             "fsa.gui.pages.import_page.read_excel",
-            lambda file_path, use_com=False: {},
+            lambda file_path, use_com=False, com_session=None: {},
         )
 
         def fake_import_main_data(data: dict, source_file: str, suffix: str) -> list[Report]:
@@ -208,6 +212,7 @@ class TestBatchImportIsolation:
         def fake_read_excel(
             file_path: str,
             use_com: bool = False,  # noqa: ARG001
+            com_session: object | None = None,  # noqa: ARG001
         ) -> dict:
             raise KeyError("缺失列")
 
@@ -235,10 +240,14 @@ class TestSingleReadPerFile:
         call_count = 0
         original = excel_reader.read_excel
 
-        def counting_read_excel(file_path: str, use_com: bool = False) -> dict:
+        def counting_read_excel(
+            file_path: str,
+            use_com: bool = False,
+            com_session: excel_reader.ExcelComSession | None = None,
+        ) -> dict:
             nonlocal call_count
             call_count += 1
-            return original(file_path, use_com)
+            return original(file_path, use_com, com_session)
 
         # 替换模块级引用——import_page 已通过 from-import 持有引用，
         # 但 monkeypatch 替换模块属性会更新所有通过模块访问的调用方。
@@ -267,10 +276,11 @@ class TestSingleReadPerFile:
         def counting_read_excel(
             file_path: str,
             use_com: bool = False,  # noqa: ARG001
+            com_session: excel_reader.ExcelComSession | None = None,
         ) -> dict:
             nonlocal call_count
             call_count += 1
-            return original(file_path, use_com)
+            return original(file_path, use_com, com_session)
 
         monkeypatch.setattr(excel_reader, "read_excel", counting_read_excel)
         monkeypatch.setattr("fsa.gui.pages.import_page.read_excel", counting_read_excel)

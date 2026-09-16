@@ -264,7 +264,11 @@ class TestBackgroundImport:
         page = ImportPage(app_state)
         qtbot.addWidget(page)
 
-        def slow_read(path: str, use_com: bool = False) -> dict:
+        def slow_read(
+            path: str,
+            use_com: bool = False,
+            com_session: object | None = None,
+        ) -> dict:
             time.sleep(0.3)
             return {}
 

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QPushButton, QWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report
@@ -47,6 +47,7 @@ class ImportPageApplyMixin(QWidget):
     _state: AppState
     _retry_failed_btn: QPushButton
     _retry_failed_paths: list[str]
+    _received_files_label: QLabel
 
     if TYPE_CHECKING:
         # 跨 mixin 方法契约 (仅类型检查可见, 运行时不存在, 不占用 MRO)
@@ -73,6 +74,9 @@ class ImportPageApplyMixin(QWidget):
                 self._show_info(_format_import_failure(errors, failed_paths), "warning")
             else:
                 self._show_info("未识别到任何财务报表或明细数据", "warning")
+            self._received_files_label.setText(
+                f"已接收 {len(file_paths)} 个文件，均未识别到有效数据"
+            )
             self.validate_enabled_changed.emit(False)
             return
 
@@ -80,6 +84,9 @@ class ImportPageApplyMixin(QWidget):
         self._state.set_detail_dataset(dataset)
         # 新批次导入成功后旧校验结果已失效 (B1-2): 清空, 防止旧底稿被误导出
         self._state.set_results(None)
+        # 导入完成: 更新已接收文件标签为最终状态 (去掉"正在导入"进行中态)
+        names = "、".join(Path(p).name for p in file_paths)
+        self._received_files_label.setText(f"已接收 {len(file_paths)} 个文件：{names}")
         detail_rows = (
             len(dataset.trial_balance)
             + len(dataset.trial_balance_current)
