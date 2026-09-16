@@ -10,14 +10,17 @@ _set_agent_busy / _show_llm_error_infobar, MainWindowDrawerMixin 提供的 _open
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from loguru import logger
 
-from fsa.agent.debate import DebateResult
-from fsa.agent.llm_client import LLMClient, LLMError
-from fsa.agent.sanitize import sanitize_llm_input
 from fsa.core.models.result import ValidationResult
 from fsa.gui.agent_worker import AgentWorker
 from fsa.gui.main_window_agent import _MainWindowAgentContracts
+
+if TYPE_CHECKING:  # 仅类型注解使用, 运行时懒加载 (启动提速)
+    from fsa.agent.debate import DebateResult
+    from fsa.agent.llm_client import LLMClient
 
 # PDF 来源行号编码基数 (与 core/importer/pdf_reader.py 的 _PDF_ROW_BASE 一致)
 _PDF_ROW_BASE = 10_000_000
@@ -104,6 +107,9 @@ class MainWindowDebateMixin(_MainWindowAgentContracts):
         self._set_agent_busy(True)
 
         def run_debate() -> str:
+            # 懒加载 LLM 链路: 只在首次辩论时导入, 加快启动
+            from fsa.agent.llm_client import LLMError
+
             # B5-2: 可用性探测挪到后台线程首步, 不可用时抛中文错误走 on_error
             if not self._llm_available(client):
                 raise LLMError("大模型服务不可用，无法进行深度辩论")
@@ -142,6 +148,8 @@ class MainWindowDebateMixin(_MainWindowAgentContracts):
 
         来自报表数据的字段 (科目名/公式/来源定位等) 过 sanitize_llm_input (P1)。
         """
+        from fsa.agent.sanitize import sanitize_llm_input
+
         lines = [
             f"规则: {sanitize_llm_input(result.rule_id)} "
             f"{sanitize_llm_input(result.rule_name)}",

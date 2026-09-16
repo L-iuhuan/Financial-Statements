@@ -40,7 +40,6 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import isValid
 
-from fsa.agent.llm_client import DISCLAIMER_TEXT
 from fsa.gui.theme import current_palette
 
 _SUGGESTIONS: list[str] = [
@@ -973,6 +972,9 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
 
         content = handle.raw_text
         # 免责标注只用于界面展示, 不写入会话历史 (否则下轮上下文会重复生成免责语)
+        # 懒加载: 避免模块级导入触发 fsa.agent.__init__ 的全量链式导入 (启动提速)
+        from fsa.agent.llm_client import DISCLAIMER_TEXT
+
         if content.endswith(DISCLAIMER_TEXT):
             content = content[: -len(DISCLAIMER_TEXT)].rstrip()
         if content:

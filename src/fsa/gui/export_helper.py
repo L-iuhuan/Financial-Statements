@@ -13,8 +13,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog, QWidget
 from qfluentwidgets import InfoBar, InfoBarPosition, StateToolTip
 
-from fsa.core.exporter.audit_exporter import AuditExporter
 from fsa.core.models.result import ValidationSummary
+
+
+def _make_exporter() -> object:
+    """延迟导入导出器: openpyxl 链路 (~0.34s) 只在首次导出时加载, 加快启动。"""
+    from fsa.core.exporter.audit_exporter import AuditExporter
+
+    return AuditExporter()
 
 
 def export_audit_workbook(
@@ -48,8 +54,8 @@ def export_audit_workbook(
 
     progress = _start_progress(parent) if show_progress else None
     try:
-        exporter = AuditExporter()
-        exporter.export(summary, path)
+        exporter = _make_exporter()
+        exporter.export(summary, path)  # type: ignore[attr-defined]
     except PermissionError:
         _stop_progress(progress)
         _show_error(parent, "文件被占用，请关闭已打开的 Excel 文件后重试")

@@ -11,18 +11,20 @@ _active_worker / _llm_availability (均在 __init__ / _setup_ui 中初始化)。
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QFrame, QPushButton
 from qfluentwidgets import InfoBar, InfoBarPosition
 
-from fsa.agent.diagnosis import DiagnosisEngine
-from fsa.agent.llm_client import LLMClient
 from fsa.gui.agent_worker import AgentWorker
 from fsa.gui.app_state import AppState
 from fsa.gui.pages.import_page import ImportPage
 from fsa.gui.widgets.agent_drawer import AgentDrawer
+
+if TYPE_CHECKING:  # 仅类型注解使用, 运行时懒加载 (启动提速)
+    from fsa.agent.llm_client import LLMClient
 
 # LLM 可用性探测结果的缓存 TTL (秒): 服务恢复后 60 秒内会重新探测
 _LLM_AVAILABILITY_TTL_SECONDS = 60.0
@@ -666,6 +668,9 @@ class MainWindowAgentMixin(_MainWindowAgentContracts):
             self._show_remote_blocked_infobar()
 
         def run_diagnose() -> str:
+            # 懒加载诊断引擎: agent 链路只在首次 AI 诊断时导入, 加快启动
+            from fsa.agent.diagnosis import DiagnosisEngine
+
             engine = DiagnosisEngine()
             # 免责标注已由 diagnose_with_client/diagnose 自带, 此处不再拼接
             if client is not None:
