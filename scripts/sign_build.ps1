@@ -28,7 +28,7 @@ function Get-TargetFiles {
         return $Targets | ForEach-Object { (Resolve-Path $_).Path }
     }
     $files = @()
-    if (Test-Path "dist\fsa\fsa.exe") { $files += (Resolve-Path "dist\fsa\fsa.exe").Path }
+    if (Test-Path "dist\fsa\财务报表勾稽校验系统.exe") { $files += (Resolve-Path "dist\fsa\财务报表勾稽校验系统.exe").Path }
     if (Test-Path "installer_output") {
         $files += Get-ChildItem "installer_output" -Filter *.exe | ForEach-Object { $_.FullName }
     }

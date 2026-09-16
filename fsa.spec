@@ -175,7 +175,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="fsa",
+    name="财务报表勾稽校验系统",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

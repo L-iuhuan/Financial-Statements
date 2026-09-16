@@ -7,7 +7,7 @@
 #   - 内部版带域控制, 在未入域机器上会主动退出并弹提示 (预期行为),
 #     因此内部版冒烟必须在已入域且命中白名单的机器上执行。
 param(
-    [string]$Exe = "dist\fsa\fsa.exe",
+    [string]$Exe = "dist\fsa\财务报表勾稽校验系统.exe",
     [int]$StartupSeconds = 8
 )
 

@@ -54,7 +54,7 @@ try {
     if ($LASTEXITCODE -ne 0) { Write-Error "PyInstaller 构建失败"; exit 1 }
 
     $size = (Get-ChildItem dist\fsa -Recurse | Measure-Object Length -Sum).Sum / 1MB
-    Write-Host ("  产物: dist\fsa\fsa.exe  ({0:N0} MB)" -f $size) -ForegroundColor Green
+    Write-Host ("  产物: dist\fsa\财务报表勾稽校验系统.exe  ({0:N0} MB)" -f $size) -ForegroundColor Green
 
     Write-Host "=== 4/4 编译 Inno Setup 安装器 ===" -ForegroundColor Cyan
     $iscc = @(

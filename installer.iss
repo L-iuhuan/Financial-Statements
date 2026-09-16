@@ -6,7 +6,7 @@
 #define MyAppName "财务报表勾稽校验系统"
 #define MyAppVersion "0.4.2"
 #define MyAppPublisher "FSA"
-#define MyAppExeName "fsa.exe"
+#define MyAppExeName "财务报表勾稽校验系统.exe"
 #define MyAppId "{{8F3A2B1C-4D5E-4F6A-9B8C-1D2E3F4A5B6C}"
 
 [Setup]
@@ -31,7 +31,8 @@ ShowLanguageDialog=no
 Name: "chinesesimp"; MessagesFile: "Languages\ChineseSimplified.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; 不带 unchecked: 默认勾选, 静默安装(/SILENT)也会创建桌面快捷方式
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 ; 打包 PyInstaller onedir 产物 (dist\fsa 下全部内容, 含 _internal)
@@ -44,5 +45,6 @@ Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; 静默更新(/SILENT)后也自动重启应用, 实现"一键更新"闭环
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall
+; 不带 postinstall: 静默更新(/SILENT)后也会自动启动应用 (postinstall 在静默模式被 Inno 跳过);
+; runascurrentuser 避免安装器提权时以管理员身份启动应用
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait runascurrentuser
