@@ -337,7 +337,7 @@ class TestImportOne:
         """主表导入失败: 记录一条错误且不再尝试明细导入（避免重复错误）。"""
         folder = tmp_path / "主体A"
         folder.mkdir()
-        (folder / "bad.xlsx").write_text("非报表文件")
+        (folder / "bad.xlsx").write_text("非报表文件", encoding="utf-8")
 
         def _fail_main(self, file_path: str) -> list[Report]:
             raise FSAError(f"无法识别报表: {file_path}")
@@ -365,7 +365,7 @@ class TestImportOne:
         """主表导入成功、明细导入失败: 不记录错误（纯主表文件属预期路径）。"""
         folder = tmp_path / "主体B"
         folder.mkdir()
-        (folder / "main.xlsx").write_text("主表文件占位")
+        (folder / "main.xlsx").write_text("主表文件占位", encoding="utf-8")
 
         def _ok_main(self, file_path: str) -> list[Report]:
             return []
@@ -388,7 +388,7 @@ class TestImportOne:
         """主表导入成功后继续明细导入, 数据均被收集。"""
         folder = tmp_path / "主体C"
         folder.mkdir()
-        (folder / "data.xlsx").write_text("占位")
+        (folder / "data.xlsx").write_text("占位", encoding="utf-8")
 
         captured: dict[str, list[str]] = {}
 
