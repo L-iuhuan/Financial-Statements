@@ -11,7 +11,7 @@ GUI ↔ core 之间的编排层。不读文件、不碰 GUI、不写 SQL。依�
 | `package_service.py` | `PackageValidationService`：主规则 + L2 明细一次执行合并——**GUI 唯一校验入口**（import_page）；`merge_summaries` |
 | `detail_validation_service.py` | `DetailValidationService`：编排 12 组 `core.engine` 明细检查；`DetailCheckConfig`（tolerance / cash_equivalent_codes / tb_to_bs_mappings） |
 | `entity_config.py` | `EntityConfig`（按主体覆盖容差/现金等价物/映射/**industry 行业**——驱动 `engine/thresholds.py` 的 LR-* 阈值覆写）+ `load_entity_configs` |
-| `multi_entity_service.py` | 文件夹级批量校验 + ICF-002 双边核对；**当前无 GUI 消费方**（库式服务，测试使用） |
+| `multi_entity_service.py` | 文件夹级批量校验 + ICF-002 双边核对；GUI 消费方 = import_page「多主体批量校验」按钮（自动加载 `~/.fsa/entity_config.json` 的别名/行业配置）；双边核对按「主体标识 + aliases 别名」归一化匹配明细「对方单位」（公司全称与文件夹名常不一致，2026-09-17 修复） |
 | `problem_package.py` | 问题包导出：收集日志/data.db/环境信息打包 zip 供支持排查——**受控例外**：直读日志目录与 SQLite 文件（不经仓储），不含 API 密钥 |
 
 ## 异常映射阶梯（`_run_rule_safe`，照抄此模式）

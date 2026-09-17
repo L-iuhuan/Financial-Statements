@@ -619,7 +619,10 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         registry = self._state.registry
         if registry is None:
             raise RuntimeError("规则库未加载")
-        service = MultiEntityService(registry)
+        # 加载主体配置 (行业阈值/别名/口径覆写); 无配置文件时零配置运行
+        from fsa.services.entity_config import load_default_entity_configs
+
+        service = MultiEntityService(registry, load_default_entity_configs())
         # 按文件夹逐个校验; 无法中断单个主体内部文件读取, 但在主体间检查取消
         outcomes = []
         for folder in folders:

@@ -194,6 +194,68 @@ class TestBilateralExtension:
         assert result.bilateral[0].passed is True
 
 
+class TestBilateralAliasMatching:
+    """双边核对别名匹配回归: 对方单位=公司全称, 与文件夹名不一致 (2026-09-17)。"""
+
+    def test_alias_matches_company_full_name(self, tmp_path: Path) -> None:
+        """配置别名后, 对方单位填公司全称仍能配对成功。"""
+        folder_a = _make_entity_folder(
+            tmp_path, "10厦门拓尔", "拓尔微电子股份有限公司",
+            "收到的其他与经营活动的现金", 100.0,
+        )
+        folder_b = _make_entity_folder(
+            tmp_path, "1西安拓尔微", "厦门拓尔微电子有限公司",
+            "支付的其他与经营活动的现金", 100.0,
+        )
+        configs = {
+            "10厦门拓尔": EntityConfig(
+                entity_id="10厦门拓尔", aliases=("厦门拓尔微电子有限公司",)
+            ),
+            "1西安拓尔微": EntityConfig(
+                entity_id="1西安拓尔微", aliases=("拓尔微电子股份有限公司",)
+            ),
+        }
+        result = MultiEntityService(_registry(), configs=configs).validate_folders(
+            [str(folder_a), str(folder_b)], period="2026-06"
+        )
+        assert len(result.bilateral) == 1, "别名匹配后应产出双边核对结果"
+        assert result.bilateral[0].passed is True
+        assert result.bilateral[0].rule_id == "ICF-002"
+
+    def test_without_alias_full_name_does_not_match(self, tmp_path: Path) -> None:
+        """无别名配置时公司全称配不上文件夹名 (记录修复前行为, 防回归)。"""
+        folder_a = _make_entity_folder(
+            tmp_path, "10厦门拓尔", "拓尔微电子股份有限公司",
+            "收到的其他与经营活动的现金", 100.0,
+        )
+        folder_b = _make_entity_folder(
+            tmp_path, "1西安拓尔微", "厦门拓尔微电子有限公司",
+            "支付的其他与经营活动的现金", 100.0,
+        )
+        result = MultiEntityService(_registry()).validate_folders(
+            [str(folder_a), str(folder_b)], period="2026-06"
+        )
+        assert len(result.bilateral) == 0
+
+    def test_whitespace_in_counterparty_normalized(self, tmp_path: Path) -> None:
+        """对方单位含多余空白时经归一化仍可匹配。"""
+        folder_a = _make_entity_folder(
+            tmp_path, "甲", "乙 公司", "收到的其他与经营活动的现金", 50.0
+        )
+        folder_b = _make_entity_folder(
+            tmp_path, "乙", "甲公司", "支付的其他与经营活动的现金", 50.0
+        )
+        configs = {
+            "甲": EntityConfig(entity_id="甲", aliases=("甲公司",)),
+            "乙": EntityConfig(entity_id="乙", aliases=("乙公司",)),
+        }
+        result = MultiEntityService(_registry(), configs=configs).validate_folders(
+            [str(folder_a), str(folder_b)], period="2026-06"
+        )
+        assert len(result.bilateral) == 1
+        assert result.bilateral[0].passed is True
+
+
 class TestEntityConfig:
     """主体级口径配置。"""
 

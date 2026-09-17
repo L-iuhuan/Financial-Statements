@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from loguru import logger
 
@@ -37,7 +38,14 @@ class DetailImporter:
         """读取文件并解析为 DetailDataset（含 Excel COM 自动回退）。
 
         读取后委托 import_data 完成解析管线。
+        非 Excel 格式（PDF 无明细表语义）返回空数据集而非报错——此前会抛
+        openpyxl InvalidFileException 逃逸窄捕获, 导致多主体整批中断
+        (2026-09-17 真实语料实测根因)。
         """
+        if Path(file_path).suffix.lower() == ".pdf":
+            dataset = DetailDataset(period=self.period)
+            dataset.source_file = str(file_path)
+            return dataset
         raw_data = read_excel(file_path)
         dataset = self.import_data(raw_data)
         dataset.source_file = str(file_path)

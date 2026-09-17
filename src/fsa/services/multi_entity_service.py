@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +21,11 @@ from fsa.services.entity_config import EntityConfig
 from fsa.services.package_service import PackageValidationService, merge_summaries
 
 _SUPPORTED_SUFFIXES = (".xlsx", ".xls", ".xlsm", ".csv", ".pdf")
+
+
+def _normalize_entity_name(name: str) -> str:
+    """主体/对方单位名称归一化 (去全部空白), 用于别名匹配。"""
+    return re.sub(r"\s+", "", name)
 
 # 内部现金流双边核对: 一方的流入项目 ↔ 对方相应的流出项目（缺省配置，可经
 # entity_config.bilateral_pairs 覆写）。命名与 detail_checks.CF_PROJECT_ALIASES
@@ -147,6 +153,12 @@ class MultiEntityService:
         except (FileNotFoundError, FSAError, ValueError, OSError, ImportError) as error:
             errors.append(f"{path.name}: {error}")
             return
+        except Exception as error:
+            # 兜底: 单文件未预期异常不得中断整批多主体校验 (2026-09-17
+            # 实测: 文件夹内的 PDF 曾致整批中断); 记为该文件失败并继续
+            logger.exception(f"「{path.name}」导入出现未预期异常")
+            errors.append(f"{path.name}: 导入出现未预期错误: {error}")
+            return
         for report in reports:
             if report.report_type not in reports_by_type:
                 reports_by_type[report.report_type] = report
@@ -154,15 +166,23 @@ class MultiEntityService:
             dataset.merge(DetailImporter(period).import_file(str(path)))
         except (FileNotFoundError, FSAError, ValueError, OSError, ImportError) as error:
             logger.debug(f"「{path.name}」明细导入失败，可能为纯主表文件: {error}")
+        except Exception as error:
+            logger.debug(f"「{path.name}」明细导入未预期异常 (忽略继续): {error}")
 
     def check_bilateral(self, outcomes: list[EntityOutcome]) -> list[ValidationResult]:
-        """按主体名核对内部交易现金流双边金额（流入方 vs 流出方）。
+        """按主体标识/别名核对内部交易现金流双边金额（流入方 vs 流出方）。
 
+        匹配规则: 明细行「对方单位」归一化后命中对方主体的「标识 + 别名」集合
+        （对方单位通常填公司全称, 与文件夹名不一致——2026-09-17 实测修复:
+        此前按主体名精确匹配, 真实数据永配不上, 双边核对恒为 0 条）。
         科目对与容差按"流出方主体"的配置解析（其自定义 -> 全局首个自定义 ->
         默认值），避免第一个主体的配置被误用到所有主体对（口径隔离）。
         """
         datasets = {
             outcome.entity_id: outcome.dataset for outcome in outcomes
+        }
+        name_sets = {
+            entity_id: self._name_set(entity_id) for entity_id in datasets
         }
         entities = list(datasets)
         results: list[ValidationResult] = []
@@ -181,9 +201,21 @@ class MultiEntityService:
                             inflow_project,
                             outflow_project,
                             tolerance,
+                            left_names=name_sets[left],
+                            right_names=name_sets[right],
                         )
                     )
         return results
+
+    def _name_set(self, entity_id: str) -> frozenset[str]:
+        """主体的全部可匹配名称 (标识 + 配置别名), 归一化后返回。"""
+        names = {entity_id}
+        config = self._configs.get(entity_id)
+        if config is not None:
+            names.update(config.aliases)
+        return frozenset(
+            _normalize_entity_name(name) for name in names if name
+        )
 
     def _bilateral_settings_for(self, entity_id: str) -> tuple[dict[str, str], float]:
         """按主体解析双边核对配置：该主体自定义 -> 全局兜底。"""
@@ -218,12 +250,18 @@ class MultiEntityService:
         inflow_project: str,
         outflow_project: str,
         tolerance: float,
+        left_names: frozenset[str],
+        right_names: frozenset[str],
     ) -> list[ValidationResult]:
-        """生成一对主体的双向核对结果（跳过双方均为零的组合）。"""
-        left_in = MultiEntityService._sum_flows(left_data, right_name, inflow_project)
-        right_out = MultiEntityService._sum_flows(right_data, left_name, outflow_project)
-        right_in = MultiEntityService._sum_flows(right_data, left_name, inflow_project)
-        left_out = MultiEntityService._sum_flows(left_data, right_name, outflow_project)
+        """生成一对主体的双向核对结果（跳过双方均为零的组合）。
+
+        left_names/right_names: 各主体的「标识+别名」归一化集合, 用于匹配
+        明细行的「对方单位」字段。
+        """
+        left_in = MultiEntityService._sum_flows(left_data, right_names, inflow_project)
+        right_out = MultiEntityService._sum_flows(right_data, left_names, outflow_project)
+        right_in = MultiEntityService._sum_flows(right_data, left_names, inflow_project)
+        left_out = MultiEntityService._sum_flows(left_data, right_names, outflow_project)
 
         results: list[ValidationResult] = []
         if left_in or right_out:
@@ -275,11 +313,14 @@ class MultiEntityService:
 
     @staticmethod
     def _sum_flows(
-        dataset: DetailDataset, counterparty: str, project: str
+        dataset: DetailDataset, counterparties: frozenset[str], project: str
     ) -> float:
-        """汇总某一主体对指定对方的某项目内部现金流发生额。"""
+        """汇总某一主体对指定对方（标识/别名集合）某项目的内部现金流发生额。"""
         total = 0.0
         for row in dataset.internal_cash_flows:
-            if row.counterparty == counterparty and clean_name(row.project) == project:
+            if (
+                _normalize_entity_name(row.counterparty) in counterparties
+                and clean_name(row.project) == project
+            ):
                 total += row.amount
         return total

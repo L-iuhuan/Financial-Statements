@@ -33,6 +33,9 @@ class EntityConfig:
         bilateral_pairs: 内部现金流双边核对科目对（流入项目 -> 流出项目），
             None 时使用默认科目对
         bilateral_tolerance: 内部现金流双边核对容差（元），None 时默认 0.01
+        aliases: 主体别名列表（如公司全称/简称）；跨主体双边核对时用于匹配
+            明细中的"对方单位"字段（对方单位通常填公司全称而非文件夹名）。
+            空 = 仅用主体标识匹配。
     """
 
     entity_id: str = ""
@@ -47,6 +50,7 @@ class EntityConfig:
     margin_tolerance: float | None = None
     bilateral_pairs: dict[str, str] | None = None
     bilateral_tolerance: float | None = None
+    aliases: tuple[str, ...] = ()
 
     def threshold_vars(self) -> dict[str, float]:
         """按行业返回逻辑合理性规则(LR-*)的阈值变量 -> 值映射。
@@ -76,6 +80,18 @@ def _parse_str_tuple(raw: object) -> tuple[str, ...]:
     return ()
 
 
+# 主体配置的标准位置 (GUI 多主体批量校验自动加载; 不存在时零配置运行)
+DEFAULT_ENTITY_CONFIG_PATH: Path = Path.home() / ".fsa" / "entity_config.json"
+
+
+def load_default_entity_configs() -> dict[str, EntityConfig]:
+    """从标准位置 (~/.fsa/entity_config.json) 加载主体配置; 缺失时返回空。
+
+    配置键 = 主体标识 (多主体批量校验场景 = 子文件夹名)。
+    """
+    return load_entity_configs(DEFAULT_ENTITY_CONFIG_PATH)
+
+
 def load_entity_configs(path: str | Path) -> dict[str, EntityConfig]:
     """从 JSON 文件加载主体配置。
 
@@ -93,7 +109,8 @@ def load_entity_configs(path: str | Path) -> dict[str, EntityConfig]:
           "balance_sheet_accounts": {"accounts_receivable": "应收账款"},
           "margin_tolerance": 0.02,
           "bilateral_pairs": {"收到的其他与投资活动的现金": "支付的其他与投资活动的现金"},
-          "bilateral_tolerance": 0.05
+          "bilateral_tolerance": 0.05,
+          "aliases": ["厦门拓尔微电子有限公司", "厦门拓尔"]
         }
       }
     }
@@ -145,6 +162,11 @@ def load_entity_configs(path: str | Path) -> dict[str, EntityConfig]:
             bilateral_tolerance=(
                 None if raw.get("bilateral_tolerance") is None
                 else float(raw["bilateral_tolerance"])
+            ),
+            aliases=tuple(
+                str(item).strip()
+                for item in raw.get("aliases", [])
+                if str(item).strip()
             ),
         )
     return result
