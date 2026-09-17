@@ -402,3 +402,110 @@ class TestZombieExcelCleanup:
         with pytest.raises(reader.FSAError, match="模拟失败"):
             session.read_file("fake.xlsx")
         assert calls["read"] == 2
+
+
+class TestWpsFallback:
+    """WPS 兼容通道回退回归 (Excel 不可用的电脑自动落 WPS 表格)。"""
+
+    @pytest.fixture(autouse=True)
+    def _fake_win32(self, monkeypatch):
+        import sys
+        from types import ModuleType
+
+        parent = ModuleType("win32com")
+        client = ModuleType("win32com.client")
+        parent.client = client
+        monkeypatch.setitem(sys.modules, "win32com", parent)
+        monkeypatch.setitem(sys.modules, "win32com.client", client)
+        self.client = client
+
+    @staticmethod
+    def _make_app(fail_open: bool = False):
+        """构造 Excel/WPS 兼容的简化假应用对象。"""
+
+        class _UsedRange:
+            Row = 1
+            Column = 1
+            Value = (("项目", "期末余额"), ("货币资金", 100.0))
+
+        class _Sheet:
+            Name = "资产负债表"
+            UsedRange = _UsedRange()
+
+        class _Worksheets:
+            Count = 1
+
+            def __iter__(self):
+                return iter([_Sheet()])
+
+        class _Workbook:
+            Worksheets = _Worksheets()
+
+            def Close(self, SaveChanges: bool = False) -> None:
+                pass
+
+        class _Workbooks:
+            def Open(self, *args, **kwargs):
+                if fail_open:
+                    raise RuntimeError("模拟 Excel 通道读取失败")
+                return _Workbook()
+
+        class _Excel:
+            Workbooks = _Workbooks()
+
+            def Quit(self) -> None:
+                pass
+
+        return _Excel()
+
+    def test_dispatch_falls_back_to_wps_when_excel_missing(self, monkeypatch) -> None:
+        """Excel 类未注册 (未安装) 时自动落到 WPS 兼容通道。"""
+        import fsa.core.importer.excel_reader as reader
+
+        called: list[str] = []
+
+        def fake_dispatch(progid: str):
+            called.append(progid)
+            if progid == "Excel.Application":
+                raise OSError("class not registered")
+            return self._make_app()
+
+        monkeypatch.setattr(self.client, "DispatchEx", fake_dispatch, raising=False)
+        session = reader.ExcelComSession()
+        result = session.read_file("fake.xlsx")
+        assert "资产负债表" in result
+        assert called[:2] == ["Excel.Application", "Ket.Application"]
+
+    def test_retry_switches_channel_after_excel_read_failure(self, monkeypatch) -> None:
+        """Excel 通道读取失败时, 重试自动切换 WPS 通道并成功。"""
+        import fsa.core.importer.excel_reader as reader
+
+        called: list[str] = []
+
+        def fake_dispatch(progid: str):
+            called.append(progid)
+            if progid == "Excel.Application":
+                return self._make_app(fail_open=True)
+            return self._make_app()
+
+        monkeypatch.setattr(self.client, "DispatchEx", fake_dispatch, raising=False)
+        monkeypatch.setattr(reader, "cleanup_invisible_excel", lambda: 0)
+        session = reader.ExcelComSession()
+        result = session.read_file("fake.xlsx")
+        assert "资产负债表" in result
+        assert "Excel.Application" in called, "应先尝试 Excel 通道"
+        assert "Ket.Application" in called, "重试应切换到 WPS 通道"
+
+    def test_all_channels_unavailable_raises_chinese_error(self, monkeypatch) -> None:
+        """所有通道都不可用时抛出含安装指引的中文错误。"""
+        import pytest
+
+        import fsa.core.importer.excel_reader as reader
+
+        def fake_dispatch(progid: str):
+            raise OSError(f"{progid} not registered")
+
+        monkeypatch.setattr(self.client, "DispatchEx", fake_dispatch, raising=False)
+        session = reader.ExcelComSession()
+        with pytest.raises(reader.FSAError, match="WPS"):
+            session.read_file("fake.xlsx")

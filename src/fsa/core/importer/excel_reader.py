@@ -223,6 +223,18 @@ def _kill_pids(pids: set[int]) -> int:
     return killed
 
 
+# COM 自动化通道提供方 (按尝试顺序): Excel 优先, WPS 表格兼容通道兜底。
+# WPS 表格 (Ket/KET/ET) 提供 Excel 兼容 COM API 且同为 DLP 受信任应用,
+# 覆盖「没装 MS Office 只装 WPS」的电脑 (2026-09-17 实测: 属性设置与
+# Workbooks/Worksheets/UsedRange 均兼容, 可透明读取加密文件)。
+_COM_PROGIDS: tuple[str, ...] = (
+    "Excel.Application",
+    "Ket.Application",  # WPS 表格 (实测注册名)
+    "KET.Application",  # WPS 表格 (大小写变体)
+    "ET.Application",   # WPS 表格 (旧版本)
+)
+
+
 class ExcelComSession:
     """延迟启动的 Excel COM 批量读取会话 (DLP 加密环境批量导入提速)。
 
@@ -238,9 +250,11 @@ class ExcelComSession:
         self._excel: _ExcelAppProtocol | None = None
         self._pythoncom: ModuleType | None = None
         self._co_initialized = False
-        # 首次 DispatchEx 之前的 EXCEL.EXE 快照 (None = 本会话从未启动过 Excel):
-        # 用于识别并清理本会话自己产生的不可见残留实例, 绝不触碰用户可见 Excel
+        # 首次 DispatchEx 之前的进程快照 (None = 本会话从未启动过):
+        # 用于识别并清理本会话自己产生的不可见残留实例, 绝不触碰用户可见窗口
         self._pid_snapshot: set[int] | None = None
+        # 当前偏好的通道下标 (失败重试时递增, 自然切换到下一通道)
+        self._progid_index = 0
 
     def __enter__(self) -> ExcelComSession:
         return self
@@ -249,10 +263,14 @@ class ExcelComSession:
         self.close()
 
     def _ensure_started(self) -> _ExcelAppProtocol:
-        """首次需要时启动 Excel 进程 (延迟启动, 无 COM 需求的批次零开销)。"""
+        """首次需要时启动自动化进程 (延迟启动; Excel 优先, WPS 兼容通道兜底)。
+
+        按 `_COM_PROGIDS` 从当前偏好下标环形尝试: Excel 不可用 (未安装/
+        类未注册) 时自动落到 WPS 表格兼容通道; 无 COM 需求的批次零开销。
+        """
         if self._excel is None:
             try:
-                import win32com.client
+                import win32com.client  # noqa: F401 - 仅探测依赖是否可用 (实际分发在 _start_provider)
             except ImportError as error:
                 raise FSAError("未安装 pywin32，无法使用 Excel COM 读取加密文件") from error
             # 与 _read_excel_com_sync 相同的 pythoncom 初始化模式 (异常收窄为
@@ -271,27 +289,51 @@ class ExcelComSession:
                 except (com_error, OSError):
                     self._co_initialized = False
             if self._pid_snapshot is None:
-                # 首次启动前的 EXCEL.EXE 快照: 之后用于识别「本会话新增的
-                # 不可见残留实例」并清理 (绝不触碰用户可见 Excel)
+                # 首次启动前的进程快照: 之后用于识别「本会话新增的不可见
+                # 残留实例」并清理 (绝不触碰用户可见窗口)
                 self._pid_snapshot = _snapshot_excel_pids()
-            try:
-                excel_obj = cast(
-                    "_ExcelAppProtocol",
-                    win32com.client.DispatchEx("Excel.Application"),
+            attempts: list[str] = []
+            count = len(_COM_PROGIDS)
+            for offset in range(count):
+                index = (self._progid_index + offset) % count
+                progid = _COM_PROGIDS[index]
+                attempts.append(progid)
+                app = self._start_provider(progid)
+                if app is not None:
+                    self._excel = app
+                    self._progid_index = index
+                    if index > 0:
+                        logger.info(f"Excel 通道不可用, 已切换 WPS 兼容通道: {progid}")
+                    break
+            if self._excel is None:
+                raise FSAError(
+                    "无法启动 Excel/WPS 表格进程 (已尝试: "
+                    + ", ".join(attempts)
+                    + ")——请确认本机已安装 Microsoft Excel 或 WPS Office"
                 )
-            except Exception as error:
-                raise FSAError(f"无法启动 Excel 进程: {error}") from error
-            # 属性配置"先配置后提交 + 尽力而为": Excel 启动繁忙时属性写入会被
-            # dynamic dispatch 拒绝 (AttributeError), 属瞬态噪声而非致命错误;
-            # 此前在此处硬失败会把残缺实例提交进会话, 毒化整批导入
-            # (2026-09-17 "每一个导入都失败"回归根因)
-            for prop in ("Visible", "DisplayAlerts", "AskToUpdateLinks"):
-                try:
-                    setattr(excel_obj, prop, False)
-                except Exception as error:  # noqa: BLE001 - COM 属性写入异常类型不统一, 配置属尽力而为
-                    logger.warning(f"Excel COM 属性 {prop} 设置失败 (忽略继续): {error}")
-            self._excel = excel_obj
         return self._excel
+
+    @staticmethod
+    def _start_provider(progid: str) -> _ExcelAppProtocol | None:
+        """尝试用指定 ProgID 启动自动化进程; 不可用时返回 None (不抛异常)。
+
+        属性配置"先配置后提交 + 尽力而为": 启动繁忙时属性写入会被 dynamic
+        dispatch 拒绝 (AttributeError), 属瞬态噪声而非致命错误; 此前硬失败
+        会把残缺实例提交进会话, 毒化整批导入 (2026-09-17 "全部失败"根因)。
+        """
+        import win32com.client
+
+        try:
+            app = cast("_ExcelAppProtocol", win32com.client.DispatchEx(progid))
+        except Exception as error:  # noqa: BLE001 - 未安装时类未注册, 异常类型不统一
+            logger.debug(f"自动化通道不可用 {progid}: {error}")
+            return None
+        for prop in ("Visible", "DisplayAlerts", "AskToUpdateLinks"):
+            try:
+                setattr(app, prop, False)
+            except Exception as error:  # noqa: BLE001 - COM 属性写入异常类型不统一, 配置属尽力而为
+                logger.warning(f"COM 属性 {prop} 设置失败 (忽略继续): {error}")
+        return app
 
     def read_file(
         self,
@@ -324,15 +366,17 @@ class ExcelComSession:
                 return _read_workbook_sheets(excel, str(file_path), progress_cb)
 
     def _reset_broken(self, cause: str) -> None:
-        """丢弃疑似死亡的共享 Excel 引用, 并清理本会话产生的不可见残留实例。"""
-        logger.warning(f"共享 Excel 进程疑似不可用, 将重启新实例重试: {cause}")
+        """丢弃疑似死亡的共享引用, 清理本会话残留, 并预备切换自动化通道。"""
+        logger.warning(f"共享进程疑似不可用, 将重启新实例重试: {cause}")
         if self._excel is not None:
             try:
                 self._excel.Quit()
             except Exception as error:  # noqa: BLE001 - 坏引用的 Quit 允许失败
-                logger.debug(f"丢弃不可用 Excel 引用时 Quit 失败 (忽略): {error}")
+                logger.debug(f"丢弃不可用引用时 Quit 失败 (忽略): {error}")
                 self._cleanup_own_zombies()
             self._excel = None
+        # 优先换通道重试: Excel 通道受阻时自然落到 WPS 兼容通道 (反之亦然)
+        self._progid_index = (self._progid_index + 1) % len(_COM_PROGIDS)
 
     def _cleanup_own_zombies(self) -> None:
         """结束本会话产生的不可见 Excel 残留实例 (绝不触碰用户可见窗口)。
