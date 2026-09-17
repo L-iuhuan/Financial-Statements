@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSettings, Qt
@@ -34,28 +33,6 @@ if TYPE_CHECKING:
     from fsa.gui.pages.settings_page import SettingsPage
 
 _RULES_FILE = resource_path("cas_gouji_rule_library.json")
-
-
-def _rule_library_label(state: AppState) -> str:
-    """规则库版本与条数动态读取，用于「关于」分区展示。
-
-    版本从规则库 JSON 读取；条数从 AppState.registry 读取
-    (与当前实际加载的规则一致, 含自定义规则)。
-    规则库不可读时版本省略；无 registry 时降级不显示条数 (P6 中文文案)。
-    """
-    version = ""
-    try:
-        data = json.loads(_RULES_FILE.read_text(encoding="utf-8"))
-        version = str(data["ruleLibrary"].get("version", "")).strip()
-    except (OSError, ValueError, KeyError, TypeError):
-        version = ""
-    registry = state.registry
-    count = registry.count() if registry is not None else None
-
-    label = f"CAS v{version}" if version else "CAS 规则库"
-    if count is not None:
-        label += f" ({count} 条规则)"
-    return label
 
 
 def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -217,6 +194,9 @@ def build_storage_section(
 
     page._days_input = days_input
 
+    # 「导出问题包」原在关于区, 关于区移除 (2026-09-17) 后由数据存储区收留
+    _append_problem_package_button(page, layout)
+
     return frame
 
 
@@ -225,24 +205,16 @@ def build_about_section(
     settings: QSettings,
     state: AppState,
 ) -> QFrame:
-    """构建关于分区。"""
-    frame, layout = _section("关于")
+    """已移除「关于」分区 (2026-09-17 用户决策); 保留空实现避免调用方断裂。"""
+    _ = settings, state
+    frame = QFrame()
+    frame.setObjectName("SettingsSection")
+    frame.setVisible(False)
+    return frame
 
-    edition = get_edition_config()
-    version_summary = QLabel(f"版本 {APP_VERSION} · {edition.display_name}")
-    version_summary.setObjectName("AboutVersionSummary")
-    layout.addWidget(version_summary)
 
-    for label_text, value in [
-        ("开源协议", "MIT License"),
-        ("规则版本", _rule_library_label(state)),
-    ]:
-        row, _ = _row(label_text)
-        val = QLabel(value)
-        val.setObjectName("ValueLabel")
-        row.addWidget(val)
-        layout.addLayout(row)
-
+def _append_problem_package_button(page: SettingsPage, layout: QVBoxLayout) -> None:
+    """「导出问题包」按钮 (原在关于区, 关于区移除后由数据存储区收留)。"""
     problem_btn = QPushButton("导出问题包")
     problem_btn.setObjectName("BtnSecondary")
     problem_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -250,11 +222,8 @@ def build_about_section(
     problem_btn.clicked.connect(page._export_problem_package)
     layout.addWidget(problem_btn)
 
-    return frame
 
-
-def build_update_section(
-    page: SettingsPage,
+def build_update_section(    page: SettingsPage,
     settings: QSettings,
     state: AppState,
 ) -> QFrame:

@@ -71,6 +71,8 @@ class _MultiEntityBridge(QObject):
 class ImportPageTasksMixin(QWidget):
     """三条后台任务 (导入/校验/多主体批量) 的启动、取消与代际守卫 (继承 QWidget 以便作为信号桥 parent)。"""
 
+    validate_enabled_changed: Signal
+
     _state: AppState
     _import_status_label: QLabel
     _file_list: ImportFileList
@@ -213,6 +215,14 @@ class ImportPageTasksMixin(QWidget):
         if generation is not None and generation != self._import_generation:
             logger.debug(f"丢弃过期的后台导入失败通知 (代际 {generation} != {self._import_generation})")
             return
+        # 收尾文件列表: 未到终态的行标记失败, 否则永远停在「导入中」
+        self._file_list.fail_all_pending(message)
+        # 恢复顶栏校验按钮 (按既有数据判断), 批次失败不永久禁用入口
+        has_data = bool(self._state.reports) or (
+            self._state.detail_dataset is not None
+            and not self._state.detail_dataset.is_empty
+        )
+        self.validate_enabled_changed.emit(has_data)
         self._show_info(f"导入失败: {message}", "error")
 
     def invalidate_background_tasks(self) -> None:

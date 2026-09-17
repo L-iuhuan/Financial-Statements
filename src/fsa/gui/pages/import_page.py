@@ -408,33 +408,53 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
             if self._is_cancelled(cancel_event, path, event_cb, zero_based, errors):
                 continue
             self._emit_progress(progress_cb, index, len(file_paths), path)
-
-            read_result = self._read_single_file(path, com_session)
-            if isinstance(read_result, str):
-                errors.append(read_result)
-                self._emit_event(event_cb, "failed", zero_based, reason=read_result)
-                continue
-            raw_data, suffix, pdf_diagnostics = read_result
-
-            if self._is_cancelled(cancel_event, path, event_cb, zero_based, errors):
-                continue
-
-            file_reports, file_dataset, file_failures = self._import_file_data(
-                raw_data, path, suffix, pdf_diagnostics
-            )
-            if file_failures:
-                reason = f"{path}: {'；'.join(file_failures)}"
+            try:
+                self._import_one_file(
+                    path, com_session, zero_based, event_cb,
+                    errors, reports_by_type, successful_datasets,
+                )
+            except Exception as e:
+                # 兜底: 单文件未预期异常不得逃逸批次循环 (否则文件行永远停在
+                # 「导入中」且汇总/开始按钮不出现); 记为该文件失败并继续
+                logger.exception(f"文件「{path}」导入出现未预期异常")
+                reason = f"{path}: 导入出现未预期错误: {e}"
                 errors.append(reason)
                 self._emit_event(event_cb, "failed", zero_based, reason=reason)
-            else:
-                self._emit_event(event_cb, "completed", zero_based)
-
-            for report in file_reports:
-                if report.report_type not in reports_by_type:
-                    reports_by_type[report.report_type] = report
-            successful_datasets.append(file_dataset)
 
         return reports_by_type, successful_datasets, errors
+
+    def _import_one_file(
+        self,
+        path: str,
+        com_session: ExcelComSession,
+        index: int,
+        event_cb: Callable[[dict[str, object]], None] | None,
+        errors: list[str],
+        reports_by_type: dict[ReportType, Report],
+        successful_datasets: list[DetailDataset],
+    ) -> None:
+        """读取并解析单个文件, 发出完成/失败事件并累积结果。"""
+        read_result = self._read_single_file(path, com_session)
+        if isinstance(read_result, str):
+            errors.append(read_result)
+            self._emit_event(event_cb, "failed", index, reason=read_result)
+            return
+        raw_data, suffix, pdf_diagnostics = read_result
+
+        file_reports, file_dataset, file_failures = self._import_file_data(
+            raw_data, path, suffix, pdf_diagnostics
+        )
+        if file_failures:
+            reason = f"{path}: {'；'.join(file_failures)}"
+            errors.append(reason)
+            self._emit_event(event_cb, "failed", index, reason=reason)
+        else:
+            self._emit_event(event_cb, "completed", index)
+
+        for report in file_reports:
+            if report.report_type not in reports_by_type:
+                reports_by_type[report.report_type] = report
+        successful_datasets.append(file_dataset)
 
     @staticmethod
     def _is_cancelled(

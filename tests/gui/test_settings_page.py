@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QLabel
 
 from fsa.gui.pages.settings_page import SettingsPage
-from fsa.gui.pages.settings_sections import _rule_library_label
 
 
 class TestResetToDefaultsConfirm:
@@ -174,34 +172,13 @@ class TestSettingsPersistence:
         mock_sync.assert_called_once()
 
 
-class TestAboutSection:
-    """关于分区: 版本摘要与规则库版本串动态读取。"""
+class TestAboutSectionRemoved:
+    """关于分区已按用户决策移除 (2026-09-17): 页面不再包含版本摘要行。"""
 
-    def test_version_summary_shows_version_and_channel(self, qapp, qtbot, app_state) -> None:
-        """关于区顶部显示「版本 0.4.1 · 通用版/内部版」摘要行。"""
-        from fsa.core.edition import get_edition_config
-        from fsa.core.version import APP_VERSION
-
+    def test_about_version_summary_absent(self, qapp, qtbot, app_state) -> None:
         page = SettingsPage(app_state)
         qtbot.addWidget(page)
-
-        summary = page.findChild(QLabel, "AboutVersionSummary")
-        assert summary is not None
-        expected = f"版本 {APP_VERSION} · {get_edition_config().display_name}"
-        assert summary.text() == expected
-
-    def test_rule_library_label_shows_registry_count(self, qapp, app_state) -> None:
-        """有 registry 时显示条数, 条数与注册表一致。"""
-        label = _rule_library_label(app_state)
-        assert "CAS" in label
-        assert f"{app_state.registry.count()} 条规则" in label
-
-    def test_rule_library_label_no_registry_omits_count(self, qapp) -> None:
-        """无 registry 时降级, 不显示条数。"""
-        state = SimpleNamespace(registry=None)
-        label = _rule_library_label(state)  # type: ignore[arg-type]
-        assert "条规则" not in label
-        assert label  # 非空, 仍有可读文案
+        assert page.findChild(QLabel, "AboutVersionSummary") is None
 
 
 class TestLlmQuickTemplates:

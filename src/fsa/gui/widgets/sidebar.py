@@ -16,9 +16,6 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import FluentIcon
 
-from fsa.core.edition import get_edition_config
-from fsa.core.version import APP_VERSION
-
 # 导航项配置: (section, object_name, label, icon)
 _NAV_ITEMS: list[tuple[str, str, str, FluentIcon]] = [
     ("工作区", "navImport", "数据导入", FluentIcon.DOWNLOAD),
@@ -123,24 +120,6 @@ class Sidebar(QFrame):
             layout.addSpacing(2)
 
         layout.addStretch()
-
-        # 底部版本信息
-        footer = QFrame()
-        footer.setObjectName("SidebarFooter")
-        footer_layout = QVBoxLayout(footer)
-        footer_layout.setContentsMargins(12, 8, 12, 8)
-
-        version = QLabel(
-            f"{get_edition_config().display_name} · 版本 {APP_VERSION}"
-        )
-        version.setObjectName("SidebarVersion")
-        footer_layout.addWidget(version)
-
-        license_label = QLabel("MIT 开源 · 内部使用")
-        license_label.setObjectName("SidebarVersion")
-        footer_layout.addWidget(license_label)
-
-        layout.addWidget(footer)
 
     def _on_nav(self, nav_id: str) -> None:
         for nid, btn in self._nav_buttons.items():

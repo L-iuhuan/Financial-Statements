@@ -223,22 +223,30 @@ def _read_workbook_sheets(
 
     result: dict[str, RawSheetData] = {}
     try:
-        sheet_count = workbook.Worksheets.Count
-        if progress_cb is not None:
-            progress_cb(0, sheet_count)
-        for completed, sheet in enumerate(workbook.Worksheets, 1):
-            used_range = sheet.UsedRange
-            # UsedRange 的左上角不保证是 A1 (工作表顶部可能有空行被裁掉):
-            # UsedRange.Value 返回的矩阵以 UsedRange 首行为第 0 行, 需把
-            # 起始行偏移 (UsedRange.Row - 1) 传回, 否则 _row 源行号整体偏小,
-            # 追溯定位会指向错误的 Excel 行 (P3)。
-            row_offset = int(used_range.Row) - 1
-            matrix = _com_range_to_matrix(used_range.Value)
-            result[sheet.Name] = _matrix_to_raw(sheet.Name, matrix, row_offset=row_offset)
+        try:
+            sheet_count = workbook.Worksheets.Count
             if progress_cb is not None:
-                progress_cb(completed, sheet_count)
+                progress_cb(0, sheet_count)
+            for completed, sheet in enumerate(workbook.Worksheets, 1):
+                used_range = sheet.UsedRange
+                # UsedRange 的左上角不保证是 A1 (工作表顶部可能有空行被裁掉):
+                # UsedRange.Value 返回的矩阵以 UsedRange 首行为第 0 行, 需把
+                # 起始行偏移 (UsedRange.Row - 1) 传回, 否则 _row 源行号整体偏小,
+                # 追溯定位会指向错误的 Excel 行 (P3)。
+                row_offset = int(used_range.Row) - 1
+                matrix = _com_range_to_matrix(used_range.Value)
+                result[sheet.Name] = _matrix_to_raw(sheet.Name, matrix, row_offset=row_offset)
+                if progress_cb is not None:
+                    progress_cb(completed, sheet_count)
+        except Exception as error:
+            # COM 异常类型不统一 (pywintypes.com_error 等), 统一转为中文业务异常;
+            # 会话模式下无守护线程兜底, 此处不包装会让裸 com_error 逃逸到 GUI 层
+            raise FSAError(f"Excel COM 读取工作表失败「{file_path}」: {error}") from error
     finally:
-        workbook.Close(SaveChanges=False)
+        try:
+            workbook.Close(SaveChanges=False)
+        except Exception as error:  # noqa: BLE001 - Excel 进程异常后 Close 可能失败, 不掩盖读取结果
+            logger.warning(f"关闭工作簿失败 (可忽略): {file_path}: {error}")
     logger.info(f"Excel COM 读取完成，共 {len(result)} 个工作表")
     return result
 

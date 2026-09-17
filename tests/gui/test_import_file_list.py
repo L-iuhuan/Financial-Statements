@@ -190,3 +190,61 @@ class TestImportPageFileList:
         row = page._file_list.findChildren(ImportFileRow)[0]
         assert row.status() == "failed"
         assert "文件不存在" in row._status_label.text()
+
+    def test_batch_exception_finalizes_all_rows(self, app_state, qtbot, monkeypatch) -> None:
+        """回归: 批量导入整体异常时, 未到终态的行收尾为失败, 不再卡在导入中。"""
+        page = ImportPage(app_state)
+        qtbot.addWidget(page)
+
+        def raising_import(
+            file_paths: list[str],
+            progress_cb: object | None = None,
+            event_cb: object | None = None,
+            cancel_event: object | None = None,
+        ) -> tuple[list, object, list[str]]:
+            if callable(event_cb):
+                # 第一个文件开始了但永远等不到完成事件 (模拟异常逃逸)
+                event_cb({"kind": "started", "index": 0, "name": "a.xlsx"})
+            raise RuntimeError("模拟批量异常")
+
+        monkeypatch.setattr(page, "_import_paths", raising_import)
+        page._on_files_async(["a.xlsx", "b.xlsx"])
+        # 页面未 show 时 isVisible() 恒 False, 用 isHidden() 判断显隐意图
+        qtbot.waitUntil(
+            lambda: not page._file_list._summary_label.isHidden(), timeout=3000
+        )
+        rows = page._file_list.findChildren(ImportFileRow)
+        assert all(row.status() == "failed" for row in rows), \
+            f"存在未收尾的行: {[row.status() for row in rows]}"
+        assert "中止" in page._file_list._summary_label.text()
+        assert not page._file_list._start_btn.isVisible()
+        assert page._import_cancel_event is None, "批次结束后运行态应复位"
+
+
+class TestImportFileListFailureFinalize:
+    """fail_all_pending 收尾逻辑单元测试 (2026-09-17 卡死回归)。"""
+
+    def test_fail_all_pending_marks_stuck_rows(self, qapp, qtbot) -> None:
+        """导入中/等待中的行全部标记失败, 汇总含中止字样, 按钮隐藏。"""
+        widget = ImportFileList()
+        qtbot.addWidget(widget)
+        widget.set_files(["a.xlsx", "b.xlsx", "c.xlsx"])
+        widget.set_importing(0)
+        widget.set_completed(1)  # b 已完成, 收尾不应覆盖
+        widget.fail_all_pending("Excel 进程异常退出")
+        rows = widget.findChildren(ImportFileRow)
+        assert rows[0].status() == "failed"
+        assert rows[1].status() == "completed"
+        assert rows[2].status() == "failed"
+        assert "中止" in widget._summary_label.text()
+        assert "2 个文件未完成" in widget._summary_label.text()
+        assert not widget._start_btn.isVisible()
+
+    def test_fail_all_pending_all_terminal_shows_plain_failure(self, qapp, qtbot) -> None:
+        """全部行已到终态时, 汇总显示普通失败而非中止。"""
+        widget = ImportFileList()
+        qtbot.addWidget(widget)
+        widget.set_files(["a.xlsx"])
+        widget.set_failed(0, "文件不存在")
+        widget.fail_all_pending("批量异常")
+        assert "导入失败" in widget._summary_label.text()

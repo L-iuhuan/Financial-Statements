@@ -225,6 +225,25 @@ class ImportFileList(QFrame):
         self._summary_label.setVisible(True)
         self._start_btn.setVisible(total_reports > 0 or total_detail_rows > 0)
 
+    def fail_all_pending(self, reason: str) -> None:
+        """批量异常收尾: 未到终态的行全部标记失败并显示中止汇总 (无开始按钮)。
+
+        后台导入线程整体异常时, 正在导入/等待中的行不会再收到任何事件,
+        不收尾会永远停在「导入中」且汇总与「开始校验」永不出现。
+        """
+        pending = 0
+        for row in self._rows:
+            if row.status() not in ("completed", "failed"):
+                row.set_status("failed", reason)
+                pending += 1
+        brief = reason if len(reason) <= 80 else reason[:80] + "…"
+        if pending:
+            self._summary_label.setText(f"导入已中止: {pending} 个文件未完成（{brief}）")
+        else:
+            self._summary_label.setText(f"导入失败: {brief}")
+        self._summary_label.setVisible(True)
+        self._start_btn.setVisible(False)
+
     def clear(self) -> None:
         """清空列表并重置状态。"""
         rows_layout = self._rows_container.layout()
