@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -22,6 +23,9 @@ from qfluentwidgets import FluentIcon, IconWidget, IndeterminateProgressRing
 _ANIMATION_DURATION_MS = 250
 _ANIMATION_EASING = QEasingCurve.Type.OutCubic
 _ROW_TARGET_HEIGHT = 40
+# 状态/失败原因列的最大宽度 (超出省略号截断, 完整内容见 tooltip) —— 无约束时
+# 超长失败原因会把行撑破容器 (2026-09-17 实测溢出缺陷)
+_STATUS_MAX_WIDTH = 320
 
 
 def _clean_reason(reason: str, file_path: str) -> str:
@@ -38,6 +42,7 @@ class ImportFileRow(QFrame):
     def __init__(self, file_path: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._file_path = file_path
+        self._full_name = Path(file_path).name
         self._status = "waiting"
         self._status_anim: QPropertyAnimation | None = None
         self._fade_anim: QPropertyAnimation | None = None
@@ -57,8 +62,14 @@ class ImportFileRow(QFrame):
         file_icon.setObjectName("ImportFileIcon")
         layout.addWidget(file_icon)
 
-        self._name_label = QLabel(Path(self._file_path).name)
+        self._name_label = QLabel(self._full_name)
         self._name_label.setObjectName("ImportFileName")
+        # 超长文件名不撑破行宽: 水平方向不参与最小宽度协商 + resize 时中部截断
+        self._name_label.setMinimumWidth(0)
+        self._name_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        self._name_label.setToolTip(self._full_name)
         layout.addWidget(self._name_label, stretch=1)
 
         self._status_icon = IconWidget()
@@ -74,6 +85,12 @@ class ImportFileRow(QFrame):
 
         self._status_label = QLabel("等待中")
         self._status_label.setObjectName("ImportFileStatus")
+        # 失败原因可能很长: 限宽 + 省略号截断, 完整原因见 tooltip
+        self._status_label.setMaximumWidth(_STATUS_MAX_WIDTH)
+        self._status_label.setMinimumWidth(0)
+        self._status_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         layout.addWidget(self._status_label)
 
     def status(self) -> str:
@@ -102,10 +119,54 @@ class ImportFileRow(QFrame):
             self._repolish(self._status_icon)
             text = "失败"
             if reason:
-                text += f"：{_clean_reason(reason, self._file_path)}"
+                full_reason = _clean_reason(reason, self._file_path)
+                text += f"：{self._elide_reason(full_reason)}"
+                self._status_label.setToolTip(full_reason)
             self._status_label.setText(text)
         self._repolish(self._status_label)
         self._animate_transition()
+
+    def _elide_reason(self, reason: str) -> str:
+        """失败原因按状态列宽度省略号截断 (完整原因见 tooltip)。"""
+        fm = self._status_label.fontMetrics()
+        prefix_width = fm.horizontalAdvance("失败：")
+        return fm.elidedText(
+            reason,
+            Qt.TextElideMode.ElideRight,
+            max(60, _STATUS_MAX_WIDTH - prefix_width),
+        )
+
+    def _apply_elided_name(self) -> None:
+        """文件名按当前行宽中部截断 (保住扩展名), 全名见 tooltip。
+
+        可用宽度按「行宽 - 固定占用」确定性计算, 不读 label 几何 ——
+        resizeEvent 内 layout.activate() 会被 Qt 推迟到事件循环之后,
+        label 宽度是旧值会导致省略号误判"放得下" (2026-09-17 溢出回归点)。
+        """
+        fm = self._name_label.fontMetrics()
+        # 固定占用: 左右 margin 12+12, 文件图标 16, 两个 spacing 8+8
+        reserved = 12 + 16 + 8 + 8 + 12
+        # 状态区: 状态文本 (sizeHint 确定性计算, 上限 320) + 状态图标/转圈
+        status_w = min(self._status_label.sizeHint().width(), _STATUS_MAX_WIDTH)
+        if self._status_icon.isVisible():
+            status_w += 16 + 8
+        if self._spinner.isVisible():
+            status_w += 16 + 8
+        available = max(40, self.width() - reserved - status_w)
+        self._name_label.setText(
+            fm.elidedText(self._full_name, Qt.TextElideMode.ElideMiddle, available)
+        )
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        """行宽变化时重新截断文件名, 防止超长名撑破容器。"""
+        super().resizeEvent(event)
+        self._apply_elided_name()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        """首次显示时按布局分配的实际宽度截断 (隐藏状态下 resize 事件被
+        Qt 延迟到 show 时才派发, 初始截断不能只依赖 resizeEvent)。"""
+        super().showEvent(event)
+        self._apply_elided_name()
 
     @staticmethod
     def _repolish(widget: QWidget) -> None:
@@ -177,6 +238,7 @@ class ImportFileList(QFrame):
 
         self._summary_label = QLabel("")
         self._summary_label.setObjectName("ImportFileSummary")
+        self._summary_label.setWordWrap(True)
         self._summary_label.setVisible(False)
         layout.addWidget(self._summary_label)
 
@@ -243,6 +305,10 @@ class ImportFileList(QFrame):
             self._summary_label.setText(f"导入失败: {brief}")
         self._summary_label.setVisible(True)
         self._start_btn.setVisible(False)
+
+    def set_validate_running(self, running: bool) -> None:
+        """校验进行期间禁用「开始校验」按钮 (防连点触发多条提示叠加)。"""
+        self._start_btn.setEnabled(not running)
 
     def clear(self) -> None:
         """清空列表并重置状态。"""

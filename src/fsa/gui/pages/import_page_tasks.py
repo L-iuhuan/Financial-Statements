@@ -267,6 +267,8 @@ class ImportPageTasksMixin(QWidget):
         if not running:
             self._validation_cancel_event = None
             self._validation_bridge = None
+        # 校验期间禁用「开始校验」按钮, 防连点触发多条提示叠加
+        self._file_list.set_validate_running(running)
         self._sync_progress_controls()
 
     def _set_multi_running(self, running: bool) -> None:

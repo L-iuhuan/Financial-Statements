@@ -248,3 +248,84 @@ class TestImportFileListFailureFinalize:
         widget.set_failed(0, "文件不存在")
         widget.fail_all_pending("批量异常")
         assert "导入失败" in widget._summary_label.text()
+
+
+class TestOverflowAndInfoBarFixes:
+    """2026-09-17 实测缺陷回归: 行溢出 + InfoBar 叠加 + 按钮防连点。"""
+
+    def test_long_filename_elided_not_overflow(self, qapp, qtbot) -> None:
+        """超长文件名在窄容器中截断显示省略号, 不撑破行宽。"""
+        widget = ImportFileList()
+        qtbot.addWidget(widget)
+        long_name = (
+            "附表2：厦门拓尔微电子有限公司-带辅助核算的科目余额表、"
+            "序时账及现金流量明细表20260531.xls"
+        )
+        widget.show()
+        widget.set_files([long_name])
+        widget.resize(360, 200)
+        row = widget.findChildren(ImportFileRow)[0]
+        row.show()  # 隐藏控件的 resize 事件被 Qt 延迟, 可见时同步派发
+        row.resize(320, 40)
+        assert "…" in row._name_label.text()
+        assert row._name_label.toolTip() == long_name, "全名应保留在 tooltip"
+        assert row.width() <= 360, "行宽不应超过容器"
+
+    def test_failed_reason_elided_with_tooltip(self, qapp, qtbot) -> None:
+        """超长失败原因截断显示, 完整原因在 tooltip。"""
+        widget = ImportFileList()
+        qtbot.addWidget(widget)
+        full_reason = "a.xlsx: " + "异常信息段落" * 50
+        widget.set_files(["a.xlsx"])
+        widget.set_failed(0, full_reason)
+        row = widget.findChildren(ImportFileRow)[0]
+        assert "…" in row._status_label.text(), "长原因应省略号截断"
+        assert "异常信息段落" in row._status_label.toolTip(), "完整原因在 tooltip"
+        assert row._status_label.maximumWidth() == 320
+
+    def test_validate_running_disables_start_button(self, qapp, qtbot) -> None:
+        """校验进行期间「开始校验」按钮禁用, 结束后恢复。"""
+        widget = ImportFileList()
+        qtbot.addWidget(widget)
+        widget.set_files(["a.xlsx"])
+        widget.set_completed(0)
+        widget.finish_batch(1, 10)
+        assert widget._start_btn.isEnabled()
+        widget.set_validate_running(True)
+        assert not widget._start_btn.isEnabled()
+        widget.set_validate_running(False)
+        assert widget._start_btn.isEnabled()
+
+    def test_show_info_single_instance_closes_previous(
+        self, qapp, qtbot, app_state, monkeypatch
+    ) -> None:
+        """连续两次 _show_info: 上一条被关闭, 同屏只保留一条。"""
+        import fsa.gui.pages.import_page_results as results_mod
+
+        created: list = []
+
+        class _FakeInfoBar:
+            def __init__(self) -> None:
+                self.closed = False
+                created.append(self)
+
+            def close(self) -> None:
+                self.closed = True
+
+            @staticmethod
+            def _factory(title: str, message: str, **kwargs: object) -> _FakeInfoBar:
+                return _FakeInfoBar()
+
+            success = staticmethod(_factory)
+            warning = staticmethod(_factory)
+            error = staticmethod(_factory)
+            info = staticmethod(_factory)
+
+        monkeypatch.setattr(results_mod, "InfoBar", _FakeInfoBar)
+        page = ImportPage(app_state)
+        qtbot.addWidget(page)
+        page._show_info("第一条提示", "success")
+        page._show_info("第二条提示", "warning")
+        assert len(created) == 2
+        assert created[0].closed, "第一条应在新条弹出前被关闭"
+        assert not created[1].closed

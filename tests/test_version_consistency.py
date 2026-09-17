@@ -14,8 +14,8 @@ _INSTALLER = _PROJECT_ROOT / "installer.iss"
 
 
 def test_app_version_is_current_release() -> None:
-    """当前发布版本应为 0.4.3 (导入体验修复 + 关于区/侧边栏底部移除)。"""
-    assert APP_VERSION == "0.4.3"
+    """当前发布版本应为 0.4.4 (导入列表溢出与 InfoBar 叠加修复)。"""
+    assert APP_VERSION == "0.4.4"
 
 
 def test_pyproject_version_matches_app_version() -> None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
@@ -316,6 +317,14 @@ class ImportPageResultsMixin(QWidget):
                 widget.deleteLater()
 
     def _show_info(self, message: str, kind: str = "info") -> None:
+        # 单实例提示: 弹出新条前关闭上一条, 避免多条 InfoBar 顶部叠加
+        # (2026-09-17 实测"点击校验弹出几个框自动消失"反馈)
+        previous = getattr(self, "_active_infobar", None)
+        if previous is not None:
+            try:
+                previous.close()
+            except RuntimeError:
+                logger.debug("上一条 InfoBar 已销毁, 无需关闭")
         methods = {
             "success": InfoBar.success,
             "warning": InfoBar.warning,
@@ -323,7 +332,7 @@ class ImportPageResultsMixin(QWidget):
             "info": InfoBar.info,
         }
         method = methods.get(kind, InfoBar.info)
-        method(
+        bar = method(
             "提示",
             message,
             orient=Qt.Orientation.Horizontal,
@@ -332,3 +341,4 @@ class ImportPageResultsMixin(QWidget):
             duration=3000,
             parent=self,
         )
+        self._active_infobar = bar
