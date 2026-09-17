@@ -39,6 +39,10 @@ a = Analysis(
         "win32com.client",
         "pythoncom",
         "pywintypes",
+        # win32timezone 是 pywin32 的子模块, COM 读取含日期单元格时才被
+        # pywintypes.Time 动态导入, PyInstaller 静态分析会漏掉
+        # (2026-09-17 "附表1 稳定失败"根因: No module named 'win32timezone')
+        "win32timezone",
         "qfluentwidgets",
         "PySide6.QtCore",
         "PySide6.QtGui",
