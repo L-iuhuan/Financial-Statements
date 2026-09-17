@@ -135,6 +135,94 @@ class _ExcelAppProtocol(Protocol):
     def Quit(self) -> None: ...
 
 
+def _snapshot_excel_pids() -> set[int]:
+    """快照当前 EXCEL.EXE 进程 PID 集合 (tasklist 解析, 不引入 psutil)。"""
+    import subprocess
+
+    try:
+        completed = subprocess.run(  # noqa: S603 - 固定命令与参数
+            ["tasklist", "/FI", "IMAGENAME eq EXCEL.EXE", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return _parse_tasklist_pids(completed.stdout)
+
+
+def _parse_tasklist_pids(output: str) -> set[int]:
+    """从 tasklist CSV 输出解析 PID 列 (与进程枚举解耦, 便于单测)。"""
+    pids: set[int] = set()
+    for line in output.splitlines():
+        parts = [part.strip().strip('"') for part in line.split(",")]
+        if len(parts) >= 2 and parts[1].isdigit():
+            pids.add(int(parts[1]))
+    return pids
+
+
+def _visible_excel_pids() -> set[int]:
+    """带可见窗口的 EXCEL.EXE 进程 PID 集合 (用户正在使用的实例)。"""
+    try:
+        import win32gui
+        import win32process
+    except ImportError:
+        return set()
+    visible_pids: set[int] = set()
+
+    def _collect(hwnd: int, _: object) -> None:
+        if win32gui.IsWindowVisible(hwnd):
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            visible_pids.add(pid)
+
+    try:
+        win32gui.EnumWindows(_collect, None)
+    except Exception:  # noqa: BLE001 - 窗口枚举失败按"无可见 Excel"保守处理
+        return set()
+    return visible_pids
+
+
+def cleanup_invisible_excel() -> int:
+    """结束所有不可见的 EXCEL.EXE 实例 (自动化残留僵尸), 返回清理数。
+
+    僵尸成因: COM 会话 Quit 失败时残留的隐藏实例会阻塞后续所有自动化调用
+    (表现为属性/方法全部拒绝, 2026-09-17 "全部失败"根因; 实测: 保留用户
+    可见 Excel 不动、仅清理不可见僵尸即恢复正常)。用户正常打开的 Excel
+    必有可见窗口 (含最小化), 不在清理范围内。
+    """
+    all_pids = _snapshot_excel_pids()
+    if not all_pids:
+        return 0
+    invisible = all_pids - _visible_excel_pids()
+    if not invisible:
+        return 0
+    killed = _kill_pids(invisible)
+    if killed:
+        logger.info(f"已清理 {killed} 个阻塞的不可见 Excel 残留实例")
+    return killed
+
+
+def _kill_pids(pids: set[int]) -> int:
+    """强制结束指定 PID 的进程 (任务管理器的编程等价), 返回成功数。"""
+    import subprocess
+
+    killed = 0
+    for pid in pids:
+        try:
+            completed = subprocess.run(  # noqa: S603 - 参数为已校验的整数 PID
+                ["taskkill", "/PID", str(pid), "/F"],
+                capture_output=True,
+                timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if completed.returncode == 0:
+                killed += 1
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return killed
+
+
 class ExcelComSession:
     """延迟启动的 Excel COM 批量读取会话 (DLP 加密环境批量导入提速)。
 
@@ -150,6 +238,9 @@ class ExcelComSession:
         self._excel: _ExcelAppProtocol | None = None
         self._pythoncom: ModuleType | None = None
         self._co_initialized = False
+        # 首次 DispatchEx 之前的 EXCEL.EXE 快照 (None = 本会话从未启动过 Excel):
+        # 用于识别并清理本会话自己产生的不可见残留实例, 绝不触碰用户可见 Excel
+        self._pid_snapshot: set[int] | None = None
 
     def __enter__(self) -> ExcelComSession:
         return self
@@ -179,6 +270,10 @@ class ExcelComSession:
                     self._co_initialized = True
                 except (com_error, OSError):
                     self._co_initialized = False
+            if self._pid_snapshot is None:
+                # 首次启动前的 EXCEL.EXE 快照: 之后用于识别「本会话新增的
+                # 不可见残留实例」并清理 (绝不触碰用户可见 Excel)
+                self._pid_snapshot = _snapshot_excel_pids()
             try:
                 excel_obj = cast(
                     "_ExcelAppProtocol",
@@ -203,26 +298,61 @@ class ExcelComSession:
         file_path: str,
         progress_cb: Callable[[int, int], None] | None = None,
     ) -> dict[str, RawSheetData]:
-        """用共享 Excel 进程读取一个文件 (共享进程异常时自愈重启并重试一次)。"""
+        """用共享 Excel 进程读取一个文件 (自动化被阻塞时自愈重试)。
+
+        重试策略 (2026-09-17 实测调优):
+        1. 首次失败: 丢弃坏实例 + 清理本会话产生的不可见残留, 换新实例重试;
+        2. 仍失败: 常见根因是环境中残留的不可见 Excel 僵尸 (含其他会话遗留)
+           阻塞 COM, 自动清理全部不可见残留后做最后一次重试;
+        3. 仍失败: 抛中文业务异常, 单文件失败不毒化批次其余文件。
+        """
         try:
             excel = self._ensure_started()
             return _read_workbook_sheets(excel, str(file_path), progress_cb)
         except FSAError as error:
-            # 共享进程可能已死 (DLP 干扰/Excel 崩溃): 丢弃坏实例, 换新进程重试一次;
-            # 重试仍失败则该文件按失败处理, 不毒化批次中其余文件
             self._reset_broken(str(error))
             excel = self._ensure_started()
-            return _read_workbook_sheets(excel, str(file_path), progress_cb)
+            try:
+                return _read_workbook_sheets(excel, str(file_path), progress_cb)
+            except FSAError as retry_error:
+                killed = cleanup_invisible_excel()
+                if not killed:
+                    raise retry_error from error
+                logger.info(f"清理 {killed} 个残留 Excel 实例后进行最后一次重试")
+                self._excel = None
+                excel = self._ensure_started()
+                return _read_workbook_sheets(excel, str(file_path), progress_cb)
 
     def _reset_broken(self, cause: str) -> None:
-        """丢弃疑似死亡的共享 Excel 引用, 下次读取时自动启动新实例。"""
+        """丢弃疑似死亡的共享 Excel 引用, 并清理本会话产生的不可见残留实例。"""
         logger.warning(f"共享 Excel 进程疑似不可用, 将重启新实例重试: {cause}")
         if self._excel is not None:
             try:
                 self._excel.Quit()
             except Exception as error:  # noqa: BLE001 - 坏引用的 Quit 允许失败
                 logger.debug(f"丢弃不可用 Excel 引用时 Quit 失败 (忽略): {error}")
+                self._cleanup_own_zombies()
             self._excel = None
+
+    def _cleanup_own_zombies(self) -> None:
+        """结束本会话产生的不可见 Excel 残留实例 (绝不触碰用户可见窗口)。
+
+        Quit 失败时坏实例会变成不可见僵尸进程阻塞后续 COM 调用,
+        只清理「快照之后新增且无可见窗口」的实例, 保证不误杀用户 Excel。
+        """
+        if self._pid_snapshot is None:
+            return
+        try:
+            new_pids = _snapshot_excel_pids() - self._pid_snapshot
+            if not new_pids:
+                return
+            own_zombies = new_pids - _visible_excel_pids()
+            if own_zombies:
+                killed = _kill_pids(own_zombies)
+                if killed:
+                    logger.info(f"已清理 {killed} 个残留的不可见 Excel 实例")
+        except Exception as error:  # noqa: BLE001 - 清理失败不影响主流程
+            logger.debug(f"清理残留 Excel 实例失败 (忽略): {error}")
 
     def close(self) -> None:
         """关闭共享 Excel 进程并回收 COM 线程资源 (幂等, 未启动时为空操作)。"""
@@ -231,6 +361,8 @@ class ExcelComSession:
                 self._excel.Quit()
             except Exception as error:  # noqa: BLE001 - 关闭阶段异常不掩盖业务结果
                 logger.warning(f"关闭共享 Excel 进程时出现异常 (可忽略): {error}")
+                # Quit 失败会留下不可见僵尸阻塞后续所有自动化, 立即清理
+                self._cleanup_own_zombies()
             self._excel = None
         if self._pythoncom is not None and self._co_initialized:
             self._pythoncom.CoUninitialize()

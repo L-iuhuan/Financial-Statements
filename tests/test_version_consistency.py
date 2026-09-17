@@ -14,8 +14,8 @@ _INSTALLER = _PROJECT_ROOT / "installer.iss"
 
 
 def test_app_version_is_current_release() -> None:
-    """当前发布版本应为 0.4.5 (Excel COM 会话自愈: 共享进程死亡不再毒化批次)。"""
-    assert APP_VERSION == "0.4.5"
+    """当前发布版本应为 0.4.6 (僵尸 Excel 自动清理, 修复"全部失败")。"""
+    assert APP_VERSION == "0.4.6"
 
 
 def test_pyproject_version_matches_app_version() -> None:

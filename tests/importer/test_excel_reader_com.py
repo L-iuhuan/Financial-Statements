@@ -303,3 +303,102 @@ class TestComSessionRecovery:
         assert "资产负债表" in first
         assert "资产负债表" in second
         assert counter["instances"] == 2, "死亡实例只重启一次, 第二个文件复用新实例"
+
+
+class TestZombieExcelCleanup:
+    """不可见僵尸 Excel 清理回归 (2026-09-17 "全部失败"根因)。"""
+
+    def test_parse_tasklist_pids_extracts_pids(self) -> None:
+        """tasklist CSV 输出解析出 PID 集合。"""
+        from fsa.core.importer.excel_reader import _parse_tasklist_pids
+
+        output = '"EXCEL.EXE","1234","Console","1","100,000 K"\n"EXCEL.EXE","5678","Console","1","200,000 K"\n'
+        assert _parse_tasklist_pids(output) == {1234, 5678}
+
+    def test_parse_tasklist_pids_ignores_garbage(self) -> None:
+        """无任务/表头等噪声输出返回空集合。"""
+        from fsa.core.importer.excel_reader import _parse_tasklist_pids
+
+        assert _parse_tasklist_pids("INFO: No tasks are running which match the criteria.\n\n") == set()
+
+    def test_cleanup_invisible_kills_only_invisible(self, monkeypatch) -> None:
+        """清理只杀不可见实例, 可见 (用户) Excel 绝不动。"""
+        import fsa.core.importer.excel_reader as reader
+
+        monkeypatch.setattr(reader, "_snapshot_excel_pids", lambda: {1, 2, 3})
+        monkeypatch.setattr(reader, "_visible_excel_pids", lambda: {1})
+        killed: list[set[int]] = []
+
+        def fake_kill(pids: set[int]) -> int:
+            killed.append(set(pids))
+            return len(pids)
+
+        monkeypatch.setattr(reader, "_kill_pids", fake_kill)
+        assert reader.cleanup_invisible_excel() == 2
+        assert killed == [{2, 3}], "仅不可见 {2,3} 被清理"
+
+    def test_cleanup_no_excel_returns_zero(self, monkeypatch) -> None:
+        """无 Excel 进程时清理为空操作。"""
+        import fsa.core.importer.excel_reader as reader
+
+        monkeypatch.setattr(reader, "_snapshot_excel_pids", lambda: set())
+        assert reader.cleanup_invisible_excel() == 0
+
+    def test_own_zombies_guard_none_snapshot(self, monkeypatch) -> None:
+        """会话从未启动时 (快照为 None) 不做任何进程操作。"""
+        import fsa.core.importer.excel_reader as reader
+
+        def boom() -> set[int]:
+            raise AssertionError("快照为 None 时不应查询进程")
+
+        monkeypatch.setattr(reader, "_snapshot_excel_pids", boom)
+        session = reader.ExcelComSession()
+        session._cleanup_own_zombies()  # 无异常即通过
+
+    def test_read_file_escalates_to_global_cleanup(self, monkeypatch) -> None:
+        """两次失败后清理全局僵尸并做第三次 (最后一次) 重试成功。"""
+        import fsa.core.importer.excel_reader as reader
+
+        calls = {"read": 0, "cleanup": 0}
+
+        def fake_read(excel: object, path: str, progress_cb: object = None) -> dict:
+            calls["read"] += 1
+            if calls["read"] < 3:
+                raise reader.FSAError(f"模拟失败 {calls['read']}")
+            return {"资产负债表": object()}
+
+        def fake_cleanup() -> int:
+            calls["cleanup"] += 1
+            return 1  # 清理到 1 个僵尸
+
+        monkeypatch.setattr(reader, "_read_workbook_sheets", fake_read)
+        monkeypatch.setattr(reader, "cleanup_invisible_excel", fake_cleanup)
+
+        session = reader.ExcelComSession()
+        session._ensure_started = lambda: None  # type: ignore[method-assign]
+        session._reset_broken = lambda cause: None  # type: ignore[method-assign]
+        result = session.read_file("fake.xlsx")
+        assert "资产负债表" in result
+        assert calls == {"read": 3, "cleanup": 1}
+
+    def test_read_file_raises_when_no_zombies(self, monkeypatch) -> None:
+        """两次失败且无僵尸可清时立即抛错 (不做无用第三次尝试)。"""
+        import pytest
+
+        import fsa.core.importer.excel_reader as reader
+
+        calls = {"read": 0}
+
+        def fake_read(excel: object, path: str, progress_cb: object = None) -> dict:
+            calls["read"] += 1
+            raise reader.FSAError("模拟失败")
+
+        monkeypatch.setattr(reader, "_read_workbook_sheets", fake_read)
+        monkeypatch.setattr(reader, "cleanup_invisible_excel", lambda: 0)
+
+        session = reader.ExcelComSession()
+        session._ensure_started = lambda: None  # type: ignore[method-assign]
+        session._reset_broken = lambda cause: None  # type: ignore[method-assign]
+        with pytest.raises(reader.FSAError, match="模拟失败"):
+            session.read_file("fake.xlsx")
+        assert calls["read"] == 2
