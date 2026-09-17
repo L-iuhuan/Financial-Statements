@@ -24,8 +24,9 @@ _apply_import_result / _apply_validation_summary / _persist_multi_entity_results
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from loguru import logger
 from PySide6.QtCore import QObject, Signal
@@ -34,6 +35,7 @@ from qfluentwidgets import IndeterminateProgressBar
 
 from fsa.core.models.detail import DetailDataset
 from fsa.gui.app_state import AppState
+from fsa.gui.widgets.import_file_list import ImportFileList
 
 if TYPE_CHECKING:
     from fsa.core.models.report import Report
@@ -45,6 +47,9 @@ class _ImportBridge(QObject):
     finished = Signal(object)  # dict: reports / dataset / errors / file_count
     failed = Signal(str)
     progress = Signal(str)
+    file_started = Signal(int, str)  # index, name
+    file_completed = Signal(int)  # index
+    file_failed = Signal(int, str)  # index, reason
 
 
 class _ValidationBridge(QObject):
@@ -68,7 +73,7 @@ class ImportPageTasksMixin(QWidget):
 
     _state: AppState
     _import_status_label: QLabel
-    _received_files_label: QLabel
+    _file_list: ImportFileList
     _progress: IndeterminateProgressBar
     _cancel_import_btn: QPushButton
     _import_cancel_event: threading.Event | None
@@ -91,6 +96,7 @@ class ImportPageTasksMixin(QWidget):
             self,
             file_paths: list[str],
             progress_cb: object | None = None,
+            event_cb: Callable[[dict[str, object]], None] | None = None,
             cancel_event: threading.Event | None = None,
         ) -> tuple[list[Report], DetailDataset, list[str]]: ...
 
@@ -120,11 +126,7 @@ class ImportPageTasksMixin(QWidget):
 
         logger.info(f"导入文件(后台): {file_paths}")
         # 拖入即显: 用户能立刻看到拖入了哪些文件、共几个
-        names = "、".join(Path(p).name for p in file_paths)
-        self._received_files_label.setText(
-            f"已接收 {len(file_paths)} 个文件：{names}（正在导入…）"
-        )
-        self._received_files_label.setVisible(True)
+        self._file_list.set_files(file_paths)
         self._set_import_running(True)
         cancel_event = threading.Event()
         self._import_cancel_event = cancel_event
@@ -137,6 +139,9 @@ class ImportPageTasksMixin(QWidget):
             lambda message, gen=generation: self._on_background_import_failed(message, gen)
         )
         bridge.progress.connect(self._import_status_label.setText)
+        bridge.file_started.connect(self._on_file_started)
+        bridge.file_completed.connect(self._on_file_completed)
+        bridge.file_failed.connect(self._on_file_failed)
         self._import_bridge = bridge
 
         def run() -> None:
@@ -144,6 +149,7 @@ class ImportPageTasksMixin(QWidget):
                 reports, dataset, errors = self._import_paths(
                     file_paths,
                     progress_cb=bridge.progress.emit,
+                    event_cb=lambda event: self._emit_file_event(bridge, event),
                     cancel_event=cancel_event,
                 )
             except Exception as e:
@@ -161,6 +167,30 @@ class ImportPageTasksMixin(QWidget):
                 )
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _emit_file_event(self, bridge: _ImportBridge, event: dict[str, object]) -> None:
+        """在后台线程中将结构化文件事件转发到信号桥。"""
+        kind = event.get("kind")
+        index = cast(int, event.get("index", -1))
+        if kind == "started":
+            bridge.file_started.emit(index, str(event.get("name", "")))
+        elif kind == "completed":
+            bridge.file_completed.emit(index)
+        elif kind == "failed":
+            bridge.file_failed.emit(index, str(event.get("reason", "")))
+
+    def _on_file_started(self, index: int, name: str) -> None:
+        """单个文件开始导入 (GUI 线程)。"""
+        _ = name
+        self._file_list.set_importing(index)
+
+    def _on_file_completed(self, index: int) -> None:
+        """单个文件导入完成 (GUI 线程)。"""
+        self._file_list.set_completed(index)
+
+    def _on_file_failed(self, index: int, reason: str) -> None:
+        """单个文件导入失败 (GUI 线程)。"""
+        self._file_list.set_failed(index, reason)
 
     def _on_background_import_finished(self, payload: object) -> None:
         """后台导入完成 (queued 到 GUI 线程)。"""

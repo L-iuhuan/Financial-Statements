@@ -19,6 +19,7 @@ sha256_file, 故引用这两个名字的管线不可外移。
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from loguru import logger
@@ -37,7 +38,7 @@ from qfluentwidgets import FluentIcon, IconWidget, IndeterminateProgressBar
 
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
-from fsa.core.importer.excel_reader import ExcelComSession, read_excel
+from fsa.core.importer.excel_reader import ExcelComSession, RawSheetData, read_excel
 from fsa.core.importer.importer import ImportService
 from fsa.core.models.detail import DetailDataset
 from fsa.core.models.report import Report, ReportType
@@ -53,6 +54,7 @@ from fsa.gui.pages.import_page_tasks import (
     _ValidationBridge,
 )
 from fsa.gui.widgets.drop_zone import DropZone
+from fsa.gui.widgets.import_file_list import ImportFileList
 from fsa.gui.widgets.period_picker import PeriodPicker
 from fsa.gui.widgets.result_card import ResultCard
 from fsa.gui.widgets.summary_card import SummaryCard
@@ -132,12 +134,10 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         self._drop_zone = DropZone()
         layout.addWidget(self._drop_zone)
 
-        # 已接收文件列表 (拖入即显示文件名与数量, 导入期间持续可见)
-        self._received_files_label = QLabel("")
-        self._received_files_label.setObjectName("MetaLabel")
-        self._received_files_label.setWordWrap(True)
-        self._received_files_label.setVisible(False)
-        layout.addWidget(self._received_files_label)
+        # 已接收文件列表 (拖入即显示文件名与状态, 导入期间持续可见)
+        self._file_list = ImportFileList()
+        self._file_list.start_validate_clicked.connect(self.trigger_validate_async)
+        layout.addWidget(self._file_list)
 
         # 历史回看横幅 (默认隐藏, 仅在查看历史结果时显示)
         self._history_banner = QFrame()
@@ -362,6 +362,7 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         self,
         file_paths: list[str],
         progress_cb: object | None = None,
+        event_cb: Callable[[dict[str, object]], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> tuple[list[Report], DetailDataset, list[str]]:
         """纯数据导入管线 (可在后台线程运行, 不触碰任何 Qt 控件)。
@@ -380,7 +381,7 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
 
         with _Session() as com_session:
             reports_by_type, successful_datasets, errors = self._read_all_files(
-                file_paths, com_session, progress_cb, cancel_event
+                file_paths, com_session, progress_cb, event_cb, cancel_event
             )
 
         dataset = DetailDataset(period=self._state.period)
@@ -393,6 +394,7 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         file_paths: list[str],
         com_session: ExcelComSession,
         progress_cb: object | None,
+        event_cb: Callable[[dict[str, object]], None] | None,
         cancel_event: threading.Event | None,
     ) -> tuple[dict[ReportType, Report], list[DetailDataset], list[str]]:
         """逐个读取并解析全部文件 (主表 + 明细共享一次读取)。"""
@@ -401,59 +403,31 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         errors: list[str] = []
 
         for index, path in enumerate(file_paths, 1):
-            if cancel_event is not None and cancel_event.is_set():
-                errors.append(f"{path}: 已取消")
+            zero_based = index - 1
+            self._emit_event(event_cb, "started", zero_based, name=Path(path).name)
+            if self._is_cancelled(cancel_event, path, event_cb, zero_based, errors):
                 continue
-            emit = progress_cb
-            if callable(emit):
-                emit(f"正在导入第 {index}/{len(file_paths)} 个文件: {Path(path).name}")
-            pdf_diagnostics = None
-            try:
-                suffix = Path(path).suffix.lower()
-                if suffix == ".pdf":
-                    from fsa.core.importer.pdf_reader import (
-                        PdfReadDiagnostics,
-                        read_pdf,
-                    )
+            self._emit_progress(progress_cb, index, len(file_paths), path)
 
-                    pdf_diagnostics = PdfReadDiagnostics()
-                    raw_data = read_pdf(path, diagnostics=pdf_diagnostics)
-                else:
-                    raw_data = read_excel(path, com_session=com_session)
-            except FileNotFoundError:
-                logger.warning(f"文件「{path}」不存在")
-                errors.append(f"{path}: 文件不存在")
+            read_result = self._read_single_file(path, com_session)
+            if isinstance(read_result, str):
+                errors.append(read_result)
+                self._emit_event(event_cb, "failed", zero_based, reason=read_result)
                 continue
-            except (FSAError, ValueError, OSError, ImportError, KeyError, TypeError) as e:
-                logger.warning(f"文件「{path}」读取失败: {e}")
-                errors.append(f"{path}: {e}")
+            raw_data, suffix, pdf_diagnostics = read_result
+
+            if self._is_cancelled(cancel_event, path, event_cb, zero_based, errors):
                 continue
 
-            if cancel_event is not None and cancel_event.is_set():
-                errors.append(f"{path}: 已取消")
-                continue
-
-            # 审查修正 (2026-08-16 终审 P2): 主表/明细导入失败计入 errors,
-            # 使成功计数与「重试失败文件」准确 (此前仅 debug 日志, 文件被误计为成功)
-            file_failures: list[str] = []
-            try:
-                file_reports = self._importer.import_data(raw_data, path, suffix)
-            except Exception as e:
-                logger.warning(f"主表导入失败（明细不受影响）: {path}: {e}")
-                file_failures.append(f"主表导入失败: {e}")
-                file_reports = []
-            if pdf_diagnostics is not None:
-                for report in file_reports:
-                    report.parse_diagnostics = pdf_diagnostics.summary_text()
-
-            try:
-                file_dataset = self._detail_importer.import_data(raw_data)
-            except Exception as e:
-                logger.warning(f"明细导入失败（主表不受影响）: {path}: {e}")
-                file_failures.append(f"明细导入失败: {e}")
-                file_dataset = DetailDataset(source_file=path, period=self._state.period)
+            file_reports, file_dataset, file_failures = self._import_file_data(
+                raw_data, path, suffix, pdf_diagnostics
+            )
             if file_failures:
-                errors.append(f"{path}: {'；'.join(file_failures)}")
+                reason = f"{path}: {'；'.join(file_failures)}"
+                errors.append(reason)
+                self._emit_event(event_cb, "failed", zero_based, reason=reason)
+            else:
+                self._emit_event(event_cb, "completed", zero_based)
 
             for report in file_reports:
                 if report.report_type not in reports_by_type:
@@ -461,6 +435,104 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
             successful_datasets.append(file_dataset)
 
         return reports_by_type, successful_datasets, errors
+
+    @staticmethod
+    def _is_cancelled(
+        cancel_event: threading.Event | None,
+        path: str,
+        event_cb: Callable[[dict[str, object]], None] | None,
+        index: int,
+        errors: list[str],
+    ) -> bool:
+        """检查取消状态; 若已取消则记录错误、发出失败事件并返回 True。"""
+        if cancel_event is None or not cancel_event.is_set():
+            return False
+        reason = f"{path}: 已取消"
+        errors.append(reason)
+        ImportPage._emit_event(event_cb, "failed", index, reason=reason)
+        return True
+
+    @staticmethod
+    def _emit_progress(
+        progress_cb: object | None, index: int, total: int, path: str
+    ) -> None:
+        """发送文本进度消息。"""
+        emit = progress_cb
+        if callable(emit):
+            emit(f"正在导入第 {index}/{total} 个文件: {Path(path).name}")
+
+    def _read_single_file(
+        self, path: str, com_session: ExcelComSession
+    ) -> tuple[dict[str, RawSheetData], str, object | None] | str:
+        """读取单个文件; 失败时返回错误字符串。"""
+        try:
+            suffix = Path(path).suffix.lower()
+            if suffix == ".pdf":
+                from fsa.core.importer.pdf_reader import (
+                    PdfReadDiagnostics,
+                    read_pdf,
+                )
+
+                pdf_diagnostics = PdfReadDiagnostics()
+                raw_data = read_pdf(path, diagnostics=pdf_diagnostics)
+            else:
+                pdf_diagnostics = None
+                raw_data = read_excel(path, com_session=com_session)
+        except FileNotFoundError:
+            logger.warning(f"文件「{path}」不存在")
+            return f"{path}: 文件不存在"
+        except (FSAError, ValueError, OSError, ImportError, KeyError, TypeError) as e:
+            logger.warning(f"文件「{path}」读取失败: {e}")
+            return f"{path}: {e}"
+        return raw_data, suffix, pdf_diagnostics
+
+    def _import_file_data(
+        self,
+        raw_data: dict[str, RawSheetData],
+        path: str,
+        suffix: str,
+        pdf_diagnostics: object | None,
+    ) -> tuple[list[Report], DetailDataset, list[str]]:
+        """导入单个文件的主表与明细; 返回报告列表、明细数据集、失败原因列表。"""
+        # 审查修正 (2026-08-16 终审 P2): 主表/明细导入失败计入 errors,
+        # 使成功计数与「重试失败文件」准确 (此前仅 debug 日志, 文件被误计为成功)
+        file_failures: list[str] = []
+        try:
+            file_reports = self._importer.import_data(raw_data, path, suffix)
+        except Exception as e:
+            logger.warning(f"主表导入失败（明细不受影响）: {path}: {e}")
+            file_failures.append(f"主表导入失败: {e}")
+            file_reports = []
+        if pdf_diagnostics is not None:
+            for report in file_reports:
+                report.parse_diagnostics = pdf_diagnostics.summary_text()  # type: ignore[attr-defined]
+
+        try:
+            file_dataset = self._detail_importer.import_data(raw_data)
+        except Exception as e:
+            logger.warning(f"明细导入失败（主表不受影响）: {path}: {e}")
+            file_failures.append(f"明细导入失败: {e}")
+            file_dataset = DetailDataset(source_file=path, period=self._state.period)
+        return file_reports, file_dataset, file_failures
+
+    @staticmethod
+    def _emit_event(
+        event_cb: Callable[[dict[str, object]], None] | None,
+        kind: str,
+        index: int,
+        *,
+        name: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """向事件回调发送结构化文件事件。"""
+        if event_cb is None:
+            return
+        event: dict[str, object] = {"kind": kind, "index": index}
+        if name is not None:
+            event["name"] = name
+        if reason is not None:
+            event["reason"] = reason
+        event_cb(event)
 
     def trigger_validate(self) -> None:
         """同步校验入口 (保留给测试与内部调用)。"""

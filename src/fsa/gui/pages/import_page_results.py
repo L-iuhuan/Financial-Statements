@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -29,6 +28,7 @@ from fsa.core.models.result import ValidationResult
 from fsa.core.models.rule import Severity
 from fsa.gui.app_state import AppState
 from fsa.gui.widgets.drop_zone import DropZone
+from fsa.gui.widgets.import_file_list import ImportFileList
 from fsa.gui.widgets.report_card import ReportCard
 from fsa.gui.widgets.result_card import ResultCard
 from fsa.gui.widgets.summary_card import SummaryCard
@@ -64,7 +64,7 @@ class ImportPageResultsMixin(QWidget):
     _detail_section: QFrame
     _reports_section: QFrame
     _drop_zone: DropZone
-    _received_files_label: QLabel
+    _file_list: ImportFileList
     _empty_state: QFrame
     _card_pass: SummaryCard
     _card_error: SummaryCard
@@ -82,8 +82,7 @@ class ImportPageResultsMixin(QWidget):
             self._drop_zone.setVisible(True)
             self._empty_state.setVisible(False)
             # 重置/清空时隐藏已接收文件列表
-            self._received_files_label.setVisible(False)
-            self._received_files_label.setText("")
+            self._file_list.clear()
             self.validate_enabled_changed.emit(False)
             self._clear_report_cards()
             self._sync_history_banner()

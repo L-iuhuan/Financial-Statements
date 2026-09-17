@@ -379,6 +379,51 @@ def _generate_qss(p: dict[str, str]) -> str:
         color: {p["text_tertiary"]};
     }}
 
+    /* ── 导入文件列表 ── */
+    QFrame#ImportFileList {{
+        background-color: transparent;
+    }}
+    QFrame#ImportFileRow {{
+        background-color: {p["bg_surface"]};
+        border: 1px solid {p["border"]};
+        border-radius: 6px;
+    }}
+    QFrame#ImportFileRow[status="importing"] {{
+        border-color: {p["brand_500"]};
+        background-color: {p["brand_50"]};
+    }}
+    QLabel#ImportFileName {{
+        font-size: 13px;
+        color: {p["text_primary"]};
+    }}
+    QLabel#ImportFileStatus[status="waiting"] {{
+        font-size: 12px;
+        color: {p["text_tertiary"]};
+    }}
+    QLabel#ImportFileStatus[status="importing"] {{
+        font-size: 12px;
+        color: {p["brand_600"]};
+        font-weight: 600;
+    }}
+    QLabel#ImportFileStatus[status="completed"] {{
+        font-size: 12px;
+        color: {p["success"]};
+    }}
+    QLabel#ImportFileStatus[status="failed"] {{
+        font-size: 12px;
+        color: {p["error"]};
+    }}
+    QLabel#ImportFileStatusIcon[status="completed"] {{
+        color: {p["success"]};
+    }}
+    QLabel#ImportFileStatusIcon[status="failed"] {{
+        color: {p["error"]};
+    }}
+    QLabel#ImportFileSummary {{
+        font-size: 12px;
+        color: {p["text_secondary"]};
+    }}
+
     /* ── 汇总卡片 ── */
     QFrame#SummaryCard {{
         background-color: {p["bg_surface"]};
