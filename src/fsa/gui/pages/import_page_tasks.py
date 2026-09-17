@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, cast
 
 from loguru import logger
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QWidget
 from qfluentwidgets import IndeterminateProgressBar
 
 from fsa.core.models.detail import DetailDataset
@@ -400,19 +400,45 @@ class ImportPageTasksMixin(QWidget):
             return
         self._show_info(f"校验失败: {message}", "error")
 
+    def _pick_entities_for_multi(self, root: str) -> list[str] | None:
+        """列出 root 下子文件夹并弹出勾选对话框，返回选中主体的完整路径列表。"""
+        root_path = Path(root)
+        names = sorted(path.name for path in root_path.iterdir() if path.is_dir())
+        if not names:
+            self._show_info("所选目录下没有主体子文件夹", "warning")
+            return None
+
+        from fsa.services.entity_config import load_default_entity_configs
+
+        configs = load_default_entity_configs()
+        descriptions = {
+            name: configs[name].aliases[0]
+            for name in names
+            if name in configs and configs[name].aliases
+        }
+
+        from fsa.gui.widgets.entity_select_dialog import EntitySelectDialog
+
+        dialog = EntitySelectDialog(names, descriptions, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        selected = dialog.selected_entities()
+        if not selected:
+            return None
+        return [str(root_path / name) for name in selected]
+
     def _on_multi_entity_clicked(self) -> None:
-        """选择根目录, 将每个子文件夹作为一个主体批量校验。"""
+        """选择根目录, 勾选主体后将选中的子文件夹批量校验。"""
         from PySide6.QtWidgets import QFileDialog
 
         root = QFileDialog.getExistingDirectory(self, "选择多主体根目录（每个子文件夹一个主体）")
         if not root:
             return
-        folders = sorted(str(path) for path in Path(root).iterdir() if path.is_dir())
-        if not folders:
-            self._show_info("所选目录下没有主体子文件夹", "warning")
-            return
         if self._multi_running:
             self._show_info("已有批量校验任务正在进行", "warning")
+            return
+        folders = self._pick_entities_for_multi(root)
+        if not folders:
             return
 
         self._set_multi_running(True)

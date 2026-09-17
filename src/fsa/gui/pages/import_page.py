@@ -124,7 +124,7 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         self._multi_entity_btn.setObjectName("BtnSecondary")
         self._multi_entity_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._multi_entity_btn.setFixedHeight(32)
-        self._multi_entity_btn.setToolTip("选择包含多个主体文件夹的目录，每个子文件夹按一个主体批量校验")
+        self._multi_entity_btn.setToolTip("选择包含多个主体文件夹的目录，勾选要校验/对比的主体（选择 2 个即可做双边核对）")
         self._multi_entity_btn.clicked.connect(self._on_multi_entity_clicked)
         period_row.addWidget(self._multi_entity_btn)
         period_row.addStretch()
