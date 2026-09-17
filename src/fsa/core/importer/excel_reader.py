@@ -180,12 +180,22 @@ class ExcelComSession:
                 except (com_error, OSError):
                     self._co_initialized = False
             try:
-                self._excel = cast("_ExcelAppProtocol", win32com.client.DispatchEx("Excel.Application"))
+                excel_obj = cast(
+                    "_ExcelAppProtocol",
+                    win32com.client.DispatchEx("Excel.Application"),
+                )
             except Exception as error:
                 raise FSAError(f"无法启动 Excel 进程: {error}") from error
-            self._excel.Visible = False
-            self._excel.DisplayAlerts = False
-            self._excel.AskToUpdateLinks = False
+            # 属性配置"先配置后提交 + 尽力而为": Excel 启动繁忙时属性写入会被
+            # dynamic dispatch 拒绝 (AttributeError), 属瞬态噪声而非致命错误;
+            # 此前在此处硬失败会把残缺实例提交进会话, 毒化整批导入
+            # (2026-09-17 "每一个导入都失败"回归根因)
+            for prop in ("Visible", "DisplayAlerts", "AskToUpdateLinks"):
+                try:
+                    setattr(excel_obj, prop, False)
+                except Exception as error:  # noqa: BLE001 - COM 属性写入异常类型不统一, 配置属尽力而为
+                    logger.warning(f"Excel COM 属性 {prop} 设置失败 (忽略继续): {error}")
+            self._excel = excel_obj
         return self._excel
 
     def read_file(
@@ -193,9 +203,26 @@ class ExcelComSession:
         file_path: str,
         progress_cb: Callable[[int, int], None] | None = None,
     ) -> dict[str, RawSheetData]:
-        """用共享 Excel 进程读取一个文件。"""
-        excel = self._ensure_started()
-        return _read_workbook_sheets(excel, str(file_path), progress_cb)
+        """用共享 Excel 进程读取一个文件 (共享进程异常时自愈重启并重试一次)。"""
+        try:
+            excel = self._ensure_started()
+            return _read_workbook_sheets(excel, str(file_path), progress_cb)
+        except FSAError as error:
+            # 共享进程可能已死 (DLP 干扰/Excel 崩溃): 丢弃坏实例, 换新进程重试一次;
+            # 重试仍失败则该文件按失败处理, 不毒化批次中其余文件
+            self._reset_broken(str(error))
+            excel = self._ensure_started()
+            return _read_workbook_sheets(excel, str(file_path), progress_cb)
+
+    def _reset_broken(self, cause: str) -> None:
+        """丢弃疑似死亡的共享 Excel 引用, 下次读取时自动启动新实例。"""
+        logger.warning(f"共享 Excel 进程疑似不可用, 将重启新实例重试: {cause}")
+        if self._excel is not None:
+            try:
+                self._excel.Quit()
+            except Exception as error:  # noqa: BLE001 - 坏引用的 Quit 允许失败
+                logger.debug(f"丢弃不可用 Excel 引用时 Quit 失败 (忽略): {error}")
+            self._excel = None
 
     def close(self) -> None:
         """关闭共享 Excel 进程并回收 COM 线程资源 (幂等, 未启动时为空操作)。"""

@@ -163,3 +163,143 @@ class TestComUsedRangeRowOffset:
         result = reader._read_excel_com_sync("fake.xlsx")
         raw = result["资产负债表"]
         assert raw.rows[0]["_row"] == 2
+
+
+class TestComSessionRecovery:
+    """ExcelComSession 自愈回归 (2026-09-17 "每一个导入都失败"根因)。"""
+
+    @pytest.fixture(autouse=True)
+    def _fake_win32(self, monkeypatch):
+        import sys
+        from types import ModuleType
+
+        parent = ModuleType("win32com")
+        client = ModuleType("win32com.client")
+        parent.client = client
+        monkeypatch.setitem(sys.modules, "win32com", parent)
+        monkeypatch.setitem(sys.modules, "win32com.client", client)
+        self.client = client
+
+    @staticmethod
+    def _make_excel_factory(fail_first_open: bool):
+        """生成假 Excel 工厂: fail_first_open=True 时首个实例的 Open 抛异常。"""
+        counter = {"instances": 0}
+
+        def factory(_prog: str):
+            counter["instances"] += 1
+            is_first = counter["instances"] == 1
+
+            class _UsedRange:
+                Row = 1
+                Column = 1
+                Value = (("项目", "期末余额"), ("货币资金", 100.0))
+
+            class _Sheet:
+                Name = "资产负债表"
+                UsedRange = _UsedRange()
+
+            class _Worksheets:
+                Count = 1
+
+                def __iter__(self):
+                    return iter([_Sheet()])
+
+            class _Workbook:
+                Worksheets = _Worksheets()
+
+                def Close(self, SaveChanges: bool = False) -> None:
+                    pass
+
+            class _Workbooks:
+                def Open(self, *args, **kwargs):
+                    if is_first and fail_first_open:
+                        raise RuntimeError("模拟 Excel 进程死亡")
+                    return _Workbook()
+
+            class _Excel:
+                Workbooks = _Workbooks()
+
+                def Quit(self) -> None:
+                    pass
+
+            return _Excel()
+
+        return factory, counter
+
+    def test_session_retries_with_fresh_excel_when_broken(self, monkeypatch) -> None:
+        """共享进程死亡: read_file 丢弃坏实例、重启新进程并重试, 最终成功。"""
+        factory, counter = self._make_excel_factory(fail_first_open=True)
+        monkeypatch.setattr(self.client, "DispatchEx", factory, raising=False)
+
+        from fsa.core.importer.excel_reader import ExcelComSession
+
+        with ExcelComSession() as session:
+            result = session.read_file("fake.xlsx")
+
+        assert "资产负债表" in result
+        assert counter["instances"] == 2, "应丢弃死亡实例并重启新实例重试一次"
+
+    def test_property_set_failure_is_best_effort(self, monkeypatch) -> None:
+        """属性写入被拒 (Excel 启动繁忙) 不构成致命错误, 会话仍正常读取。"""
+
+        class _UsedRange:
+            Row = 1
+            Column = 1
+            Value = (("项目", "期末余额"), ("货币资金", 100.0))
+
+        class _Sheet:
+            Name = "资产负债表"
+            UsedRange = _UsedRange()
+
+        class _Worksheets:
+            Count = 1
+
+            def __iter__(self):
+                return iter([_Sheet()])
+
+        class _Workbook:
+            Worksheets = _Worksheets()
+
+            def Close(self, SaveChanges: bool = False) -> None:
+                pass
+
+        class _Workbooks:
+            def Open(self, *args, **kwargs):
+                return _Workbook()
+
+        class _Excel:
+            Workbooks = _Workbooks()
+
+            def __setattr__(self, name: str, value: object) -> None:
+                if name in ("Visible", "DisplayAlerts", "AskToUpdateLinks"):
+                    raise AttributeError(
+                        f"Property 'Excel.Application.{name}' can not be set."
+                    )
+                super().__setattr__(name, value)
+
+            def Quit(self) -> None:
+                pass
+
+        monkeypatch.setattr(self.client, "DispatchEx", lambda _prog: _Excel(), raising=False)
+
+        from fsa.core.importer.excel_reader import ExcelComSession
+
+        with ExcelComSession() as session:
+            result = session.read_file("fake.xlsx")
+
+        assert "资产负债表" in result
+
+    def test_broken_session_does_not_poison_batch(self, monkeypatch) -> None:
+        """死亡实例被丢弃后, 批次内下一个文件用新实例正常读取。"""
+        factory, counter = self._make_excel_factory(fail_first_open=True)
+        monkeypatch.setattr(self.client, "DispatchEx", factory, raising=False)
+
+        from fsa.core.importer.excel_reader import ExcelComSession
+
+        with ExcelComSession() as session:
+            first = session.read_file("a.xlsx")
+            second = session.read_file("b.xlsx")
+
+        assert "资产负债表" in first
+        assert "资产负债表" in second
+        assert counter["instances"] == 2, "死亡实例只重启一次, 第二个文件复用新实例"
