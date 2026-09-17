@@ -634,6 +634,12 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         summaries = [o.summary for o in outcomes if o.summary is not None]
         combined = merge_summaries(*summaries) if summaries else None
         bilateral = service.check_bilateral(outcomes)
+        purchase_sales = service.check_purchase_sales(outcomes)
         from fsa.services.multi_entity_service import MultiEntityResult
 
-        return MultiEntityResult(outcomes=outcomes, combined=combined, bilateral=bilateral)
+        return MultiEntityResult(
+            outcomes=outcomes,
+            combined=combined,
+            bilateral=bilateral,
+            purchase_sales=purchase_sales,
+        )

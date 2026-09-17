@@ -9,6 +9,7 @@ from pathlib import Path
 from loguru import logger
 
 from fsa.core.engine.registry import RuleRegistry
+from fsa.core.engine.rule_hints import format_hint_block
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
 from fsa.core.importer.importer import ImportService
@@ -60,6 +61,7 @@ class MultiEntityResult:
     outcomes: list[EntityOutcome] = field(default_factory=list)
     combined: ValidationSummary | None = None
     bilateral: list[ValidationResult] = field(default_factory=list)
+    purchase_sales: list[ValidationResult] = field(default_factory=list)
 
 
 class MultiEntityService:
@@ -85,10 +87,12 @@ class MultiEntityService:
         summaries = [o.summary for o in outcomes if o.summary is not None]
         combined = merge_summaries(*summaries) if summaries else None
         bilateral = self.check_bilateral(outcomes)
+        purchase_sales = self.check_purchase_sales(outcomes)
         return MultiEntityResult(
             outcomes=outcomes,
             combined=combined,
             bilateral=bilateral,
+            purchase_sales=purchase_sales,
         )
 
     def validate_folder(
@@ -175,8 +179,9 @@ class MultiEntityService:
         匹配规则: 明细行「对方单位」归一化后命中对方主体的「标识 + 别名」集合
         （对方单位通常填公司全称, 与文件夹名不一致——2026-09-17 实测修复:
         此前按主体名精确匹配, 真实数据永配不上, 双边核对恒为 0 条）。
-        科目对与容差按"流出方主体"的配置解析（其自定义 -> 全局首个自定义 ->
-        默认值），避免第一个主体的配置被误用到所有主体对（口径隔离）。
+        容差约定: 每个主体对按组合中**先出现主体（left）**的配置解析——
+        其自定义 -> 全局首个自定义 -> 默认值；right 主体的容差配置在该
+        主体自身为先出现主体的其他组合中生效（口径隔离, 与既有行为一致）。
         """
         datasets = {
             outcome.entity_id: outcome.dataset for outcome in outcomes
@@ -206,6 +211,64 @@ class MultiEntityService:
                         )
                     )
         return results
+
+    def check_purchase_sales(self, outcomes: list[EntityOutcome]) -> list[ValidationResult]:
+        """核对跨主体关联方采购与销售收入双边金额（附表4 ↔ 附表5）。
+
+        容差约定与 check_bilateral 一致: 按主体对中先出现主体（left）的
+        bilateral_tolerance 解析。
+        """
+        datasets = {
+            outcome.entity_id: outcome.dataset for outcome in outcomes
+        }
+        name_sets = {
+            entity_id: self._name_set(entity_id) for entity_id in datasets
+        }
+        entities = list(datasets)
+        results: list[ValidationResult] = []
+        for left_idx in range(len(entities)):
+            for right_idx in range(left_idx + 1, len(entities)):
+                left = entities[left_idx]
+                right = entities[right_idx]
+                _, tolerance = self._bilateral_settings_for(left)
+                self._append_purchase_sales(
+                    datasets, left, right, name_sets, tolerance, results
+                )
+                self._append_purchase_sales(
+                    datasets, right, left, name_sets, tolerance, results
+                )
+        return results
+
+    def _append_purchase_sales(
+        self,
+        datasets: dict[str, DetailDataset],
+        buyer: str,
+        seller: str,
+        name_sets: dict[str, frozenset[str]],
+        tolerance: float,
+        results: list[ValidationResult],
+    ) -> None:
+        """生成单一方向的购销核对结果（任一侧非零时产出）。
+
+        P1: 买方缺附表4（关联方采购明细）或卖方缺附表5（销售收入报表）时
+        直接跳过——「缺表」不得当成「差额」误报。
+        """
+        buyer_data = datasets[buyer]
+        seller_data = datasets[seller]
+        if not buyer_data.related_party_purchases or not seller_data.sales_details:
+            return
+        purchase = MultiEntityService._sum_purchases(
+            buyer_data, name_sets[seller]
+        )
+        sales = MultiEntityService._sum_sales(
+            seller_data, name_sets[buyer]
+        )
+        if purchase or sales:
+            results.append(
+                MultiEntityService._build_purchase_sales_result(
+                    buyer, seller, purchase, sales, tolerance
+                )
+            )
 
     def _name_set(self, entity_id: str) -> frozenset[str]:
         """主体的全部可匹配名称 (标识 + 配置别名), 归一化后返回。"""
@@ -257,7 +320,11 @@ class MultiEntityService:
 
         left_names/right_names: 各主体的「标识+别名」归一化集合, 用于匹配
         明细行的「对方单位」字段。
+        P1: 任一侧的内部现金流明细表整体缺失（未提供/未导入）时直接跳过——
+        「缺数据」不得当成「差额」误报（此时单边金额无从对证）。
         """
+        if not left_data.internal_cash_flows or not right_data.internal_cash_flows:
+            return []
         left_in = MultiEntityService._sum_flows(left_data, right_names, inflow_project)
         right_out = MultiEntityService._sum_flows(right_data, left_names, outflow_project)
         right_in = MultiEntityService._sum_flows(right_data, left_names, inflow_project)
@@ -293,6 +360,17 @@ class MultiEntityService:
         """构建单方向的双边核对结果。"""
         diff = inflow - outflow
         passed = abs(diff) <= tolerance
+        message = (
+            f"「{entity}」对「{counterparty}」「{inflow_project}」"
+            f"{inflow:,.2f} vs 对方「{outflow_project}」{outflow:,.2f}: "
+            f"{'一致' if passed else f'差额 {diff:,.2f}'}"
+        )
+        if not passed:
+            # 单边为零多半是别名未配置 (对方以其他名称登记), 提示先查配置
+            # 再定性差异 (oracle 评审建议, 降低 P1 困扰)
+            if inflow == 0.0 or outflow == 0.0:
+                message += "（提示：若一方在对方明细中以其他名称登记，请在实体配置中补充别名后重新校验）"
+            message += format_hint_block("ICF-002", Severity.WARNING.value)
         return ValidationResult(
             rule_id="ICF-002",
             rule_name="内部现金流双边核对",
@@ -303,11 +381,7 @@ class MultiEntityService:
             diff=diff,
             tolerance=tolerance,
             formula="内部流入金额 == 对方内部流出金额",
-            message=(
-                f"「{entity}」对「{counterparty}」「{inflow_project}」"
-                f"{inflow:,.2f} vs 对方「{outflow_project}」{outflow:,.2f}: "
-                f"{'一致' if passed else f'差额 {diff:,.2f}'}"
-            ),
+            message=message,
             category="L2-明细勾稽",
         )
 
@@ -324,3 +398,57 @@ class MultiEntityService:
             ):
                 total += row.amount
         return total
+
+    @staticmethod
+    def _sum_purchases(dataset: DetailDataset, seller_names: frozenset[str]) -> float:
+        """汇总主体对指定卖方（标识/别名集合）的关联方采购金额。"""
+        total = 0.0
+        for row in dataset.related_party_purchases:
+            if _normalize_entity_name(row.counterparty) in seller_names:
+                total += row.total_amount
+        return total
+
+    @staticmethod
+    def _sum_sales(dataset: DetailDataset, buyer_names: frozenset[str]) -> float:
+        """汇总主体对指定买方（标识/别名集合）的销售收入金额。"""
+        total = 0.0
+        for row in dataset.sales_details:
+            if _normalize_entity_name(row.customer) in buyer_names:
+                total += row.revenue_amount
+        return total
+
+    @staticmethod
+    def _build_purchase_sales_result(
+        buyer: str,
+        seller: str,
+        purchase: float,
+        sales: float,
+        tolerance: float,
+    ) -> ValidationResult:
+        """构建单方向关联方购销核对结果。"""
+        diff = purchase - sales
+        passed = abs(diff) <= tolerance
+        message = (
+            f"「{buyer}」向「{seller}」采购 {purchase:,.2f} 元 vs "
+            f"对方「{seller}」对「{buyer}」销售 {sales:,.2f} 元: "
+            f"{'金额一致' if passed else f'差额 {diff:,.2f} 元'}"
+        )
+        if not passed:
+            # 单边为零多半是别名未配置 (对方以其他名称登记), 提示先查配置
+            # 再定性差异 (oracle 评审建议, 降低 P1 困扰)
+            if purchase == 0.0 or sales == 0.0:
+                message += "（提示：若一方在对方明细中以其他名称登记，请在实体配置中补充别名后重新校验）"
+            message += format_hint_block("RPS-001", Severity.WARNING.value)
+        return ValidationResult(
+            rule_id="RPS-001",
+            rule_name="关联方购销双边核对",
+            passed=passed,
+            severity=Severity.WARNING,
+            left_value=purchase,
+            right_value=sales,
+            diff=diff,
+            tolerance=tolerance,
+            formula="一方采购金额 == 对方销售金额",
+            message=message,
+            category="L2-明细勾稽",
+        )

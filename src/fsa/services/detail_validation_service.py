@@ -18,6 +18,7 @@ from fsa.core.engine.reclassification_checks import (
     check_reclassification_rules,
     check_reclassification_vs_balance_sheet,
 )
+from fsa.core.engine.rule_hints import format_hint_block
 from fsa.core.engine.supplementary_checks import (
     check_internal_cash_flow_vs_statement,
     check_related_party_purchase_breakdown,
@@ -110,6 +111,12 @@ class DetailValidationService:
         results += check_internal_cash_flow_vs_statement(
             dataset, reports, self._config.tolerance
         )
+
+        # 未通过结果统一附加小白解读 (2026-09-17: 级别说明/为什么关注/常见原因/建议),
+        # 集中在此出口处理避免每条检查各自拼接 (P4: 面向财务用户)
+        for result in results:
+            if not result.passed and not result.errored and not result.skipped:
+                result.message += format_hint_block(result.rule_id, result.severity.value)
 
         passed = sum(1 for result in results if result.passed)
         failed = sum(1 for result in results if not result.passed and not result.errored)

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fsa.core.models.result import ValidationResult
 from fsa.services.multi_entity_service import MultiEntityResult
 
 
@@ -84,25 +85,43 @@ class MultiEntityResultDialog(QDialog):
         layout.addWidget(entity_table)
 
         if result.bilateral:
-            bilateral_title = QLabel("内部现金流双边核对")
+            bilateral_title = QLabel("内部现金流双边核对（附表6）")
             bilateral_title.setObjectName("SectionTitle")
             layout.addWidget(bilateral_title)
+            layout.addWidget(_bilateral_table(result.bilateral))
 
-            bilateral_table = QTableWidget(len(result.bilateral), 4)
-            bilateral_table.setHorizontalHeaderLabels(["结果", "方向", "差额", "说明"])
-            bilateral_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-            bilateral_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-            bilateral_table.horizontalHeader().setStretchLastSection(True)
-            for row_idx, item in enumerate(result.bilateral):
-                status = "通过" if item.passed else "不通过"
-                bilateral_table.setItem(row_idx, 0, QTableWidgetItem(status))
-                bilateral_table.setItem(row_idx, 1, QTableWidgetItem(item.rule_name))
-                bilateral_table.setItem(row_idx, 2, QTableWidgetItem(f"{item.diff:,.2f}"))
-                bilateral_table.setItem(row_idx, 3, QTableWidgetItem(item.message))
-            bilateral_table.resizeColumnsToContents()
-            layout.addWidget(bilateral_table)
+        if result.purchase_sales:
+            ps_title = QLabel("关联方购销双边核对（附表4 ↔ 附表5）")
+            ps_title.setObjectName("SectionTitle")
+            layout.addWidget(ps_title)
+            layout.addWidget(_bilateral_table(result.purchase_sales))
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         buttons.clicked.connect(self.accept)
         layout.addWidget(buttons)
+
+
+def _bilateral_table(results: list[ValidationResult]) -> QTableWidget:
+    """构建双边核对结果表: 结论/差额 + 说明首行 (悬停查看完整解读)。
+
+    单元格只显示消息首行 (事实描述, 含双方名称与金额对比), 完整消息
+    (含【为什么关注/常见原因/建议】解读) 挂在 tooltip 上, 保持表格紧凑。
+    """
+    table = QTableWidget(len(results), 3)
+    table.setHorizontalHeaderLabels(["结果", "差额（元）", "说明（悬停查看解读）"])
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+    table.horizontalHeader().setStretchLastSection(True)
+    table.setWordWrap(True)
+    for row_idx, item in enumerate(results):
+        status = "通过" if item.passed else ("跳过" if item.skipped else "不通过")
+        first_line = item.message.split("\n\n")[0]
+        cell = QTableWidgetItem(first_line)
+        cell.setToolTip(item.message)
+        table.setItem(row_idx, 0, QTableWidgetItem(status))
+        table.setItem(row_idx, 1, QTableWidgetItem(f"{item.diff:,.2f}"))
+        table.setItem(row_idx, 2, cell)
+    table.resizeColumnsToContents()
+    table.resizeRowsToContents()
+    return table

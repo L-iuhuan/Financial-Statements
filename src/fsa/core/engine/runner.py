@@ -16,6 +16,7 @@ from loguru import logger
 
 from fsa.core.engine.comparator import ToleranceComparator
 from fsa.core.engine.evaluator import ExpressionEvaluator
+from fsa.core.engine.rule_hints import format_hint_block, format_metric_line
 from fsa.core.engine.thresholds import DEFAULT_THRESHOLDS
 from fsa.core.models.result import TraceItem, ValidationContext, ValidationResult
 from fsa.core.models.rule import ReconciliationRule, Severity
@@ -156,7 +157,9 @@ class RuleRunner:
         """执行阈值公式 (含 <=, >=, <, >, and, or)。"""
         passed = ExpressionEvaluator.evaluate_boolean(rule.formula, namespace)
 
-        message = RuleRunner._build_threshold_message(rule, passed, threshold_vars)
+        message = RuleRunner._build_threshold_message(
+            rule, passed, threshold_vars, namespace
+        )
 
         logger.info(
             f"规则 {rule.rule_id} 结果: {'通过' if passed else '不通过'} (阈值判断)"
@@ -221,8 +224,15 @@ class RuleRunner:
         rule: ReconciliationRule,
         passed: bool,
         threshold_vars: dict[str, float] | None = None,
+        namespace: dict[str, float] | None = None,
     ) -> str:
-        """构建阈值判断的中文消息 (阈值变量替换为实际值便于用户理解)。"""
+        """构建阈值判断的中文消息 (含实际值指标与小白解读, 不展示原始公式)。
+
+        用户反馈 (2026-09-17): 旧消息直接展示公式, 财务用户看不懂"为何警告"。
+        现改为: 级别 +【实际值】指标 (实时算出, 如 资产负债率 = 88.0%) +
+        【判断标准】+【为什么关注/常见原因/建议】(rule_hints)。指标计算失败
+        时省略该行, 不影响判定 (P1)。
+        """
         if passed:
             return f"{rule.name}: 校验通过（满足阈值条件）"
 
@@ -232,10 +242,10 @@ class RuleRunner:
             Severity.INFO: "提示",
         }.get(rule.severity, "异常")
 
-        return (
-            f"{rule.name}: 校验不通过 [{severity_text}]\n"
-            f"  判断条件: {_display_formula(rule.formula, threshold_vars)}"
-        )
+        message = f"{rule.name}: 未满足判断标准 [{severity_text}]"
+        if namespace:
+            message += format_metric_line(rule.rule_id, namespace, threshold_vars)
+        return message + format_hint_block(rule.rule_id, rule.severity.value)
 
     @staticmethod
     def _build_message(
@@ -255,12 +265,13 @@ class RuleRunner:
             Severity.INFO: "提示",
         }.get(rule.severity, "异常")
 
-        return (
+        message = (
             f"{rule.name}: 校验不通过 [{severity_text}]\n"
             f"  左侧值: {left:,.2f} 元\n"
             f"  右侧值: {right:,.2f} 元\n"
             f"  差额: {diff:,.2f} 元 (超出容差 {rule.tolerance:.2f} 元)"
         )
+        return message + format_hint_block(rule.rule_id, rule.severity.value)
 
 
 def _extract_variable_names(expression: str) -> list[str]:
@@ -286,28 +297,6 @@ def _extract_variable_names(expression: str) -> list[str]:
             seen.add(token)
             result.append(token)
     return result
-
-
-def _display_formula(
-    formula: str, threshold_vars: dict[str, float] | None
-) -> str:
-    """将公式中的阈值变量名替换为实际值，便于财务用户理解判断条件。
-
-    变量名按长度降序替换，避免长名包含短名时被部分替换。
-    """
-    if not threshold_vars:
-        return formula
-    display = formula
-    for var in sorted(threshold_vars, key=len, reverse=True):
-        display = display.replace(var, _format_threshold(threshold_vars[var]))
-    return display
-
-
-def _format_threshold(value: float) -> str:
-    """格式化阈值数字: 1.0 -> '1', 0.85 -> '0.85', 0.8 -> '0.8'。"""
-    if value == int(value):
-        return str(int(value))
-    return f"{value:.4f}".rstrip("0").rstrip(".")
 
 
 def _add_trace_item(

@@ -18,6 +18,7 @@
 | `cash_flow_checks.py` + `cash_flow_rules.py` | L4 凭证级现金流分类检查（CF-CLS-001..008/901，保守 WARNING） |
 | `reclassification_checks.py` | L2 往来重分类（RC-001/002） |
 | `supplementary_checks.py` | L2 关联方采购/销售明细/内部现金流（RP/SAL/ICF） |
+| `rule_hints.py` | 每条规则的小白解读文案（级别说明/为什么关注/常见原因/建议 + 阈值类【实际值】指标）；**接线**：runner 的 `_build_message`/`_build_threshold_message` 与 `DetailValidationService.validate` 出口在"未通过"结果上统一追加（2026-09-17，用户反馈"为何有差/为何警告看不懂"）；新增规则必须补 RuleHint（tests/engine/test_rule_hints.py 有覆盖门禁） |
 
 `__init__.py` 为空：无包级导出，消费者直接 import 子模块。
 

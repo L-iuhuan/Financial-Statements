@@ -258,11 +258,13 @@ class TestRunnerInjection:
         assert trace["dar_threshold"] == pytest.approx(0.92)
 
     def test_threshold_message_shows_resolved_value(self) -> None:
-        """不通过消息中阈值变量替换为实际数值 (面向财务用户)。"""
+        """不通过消息展示小白可读的实际值与判断标准 (不出现原始公式变量)。"""
         rule = _registry().get_by_id("LR-DAR-001")
         assert rule is not None
         ctx = _context(_bs(asset_total=100.0, liability_total=85.0))
         result = RuleRunner.run(rule, ctx, threshold_vars_for("construction"))
         assert result.passed is False
-        assert "0.8" in result.message
+        assert "资产负债率 = 85.0%" in result.message
+        assert "80%" in result.message  # construction 行业阈值动态展示
         assert "dar_threshold" not in result.message
+        assert "liability_total" not in result.message

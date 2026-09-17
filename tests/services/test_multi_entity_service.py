@@ -11,11 +11,16 @@ from fsa.core.engine.registry import RuleRegistry
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
 from fsa.core.importer.importer import ImportService
-from fsa.core.models.detail import DetailDataset
+from fsa.core.models.detail import (
+    DetailDataset,
+    InternalCashFlowRow,
+    RelatedPartyPurchaseRow,
+    SalesDetailRow,
+)
 from fsa.core.models.report import Report, ReportType
 from fsa.core.models.result import ValidationResult
 from fsa.services.entity_config import EntityConfig, load_entity_configs
-from fsa.services.multi_entity_service import MultiEntityService
+from fsa.services.multi_entity_service import EntityOutcome, MultiEntityService
 
 
 def _write_detail(path: Path, entity: str, counterparty: str, project: str, amount: float) -> None:
@@ -478,3 +483,279 @@ class TestImportOne:
         assert len(outcome.reports) == 1
         assert outcome.reports[0].report_type == ReportType.BALANCE_SHEET
         assert captured["detail"] == [str(folder / "data.xlsx")]
+
+
+def _make_purchase_outcome(
+    entity_id: str,
+    purchases: list[RelatedPartyPurchaseRow] | None = None,
+    sales: list[SalesDetailRow] | None = None,
+) -> EntityOutcome:
+    """构造仅含附表4/附表5明细的 EntityOutcome（不经过文件导入）。"""
+    dataset = DetailDataset(entity=entity_id)
+    dataset.related_party_purchases = purchases or []
+    dataset.sales_details = sales or []
+    return EntityOutcome(entity_id=entity_id, folder="", dataset=dataset)
+
+
+class TestPurchaseSalesBilateral:
+    """跨主体附表4 ↔ 附表5 关联方购销双边核对。"""
+
+    def test_alias_matching_bidirectional_pass(self) -> None:
+        """对方单位用公司全称、主体用短名+别名, 双向均匹配通过。"""
+        left_purchases = [
+            RelatedPartyPurchaseRow(
+                buyer="10厦门拓尔",
+                counterparty="拓尔微电子股份有限公司",
+                payment_nature="货款",
+                total_amount=12345.67,
+            )
+        ]
+        right_sales = [
+            SalesDetailRow(
+                year=2026,
+                month=6,
+                entity="1西安拓尔微",
+                customer="厦门拓尔微电子有限公司",
+                revenue_type="销售",
+                revenue_amount=12345.67,
+                cost_amount=0.0,
+            )
+        ]
+        right_purchases = [
+            RelatedPartyPurchaseRow(
+                buyer="1西安拓尔微",
+                counterparty="厦门拓尔微电子有限公司",
+                payment_nature="货款",
+                total_amount=10000.0,
+            )
+        ]
+        left_sales = [
+            SalesDetailRow(
+                year=2026,
+                month=6,
+                entity="10厦门拓尔",
+                customer="拓尔微电子股份有限公司",
+                revenue_type="销售",
+                revenue_amount=10000.0,
+                cost_amount=0.0,
+            )
+        ]
+        left = _make_purchase_outcome(
+            "10厦门拓尔", purchases=left_purchases, sales=left_sales
+        )
+        right = _make_purchase_outcome(
+            "1西安拓尔微", purchases=right_purchases, sales=right_sales
+        )
+        configs = {
+            "10厦门拓尔": EntityConfig(
+                entity_id="10厦门拓尔", aliases=("厦门拓尔微电子有限公司",)
+            ),
+            "1西安拓尔微": EntityConfig(
+                entity_id="1西安拓尔微", aliases=("拓尔微电子股份有限公司",)
+            ),
+        }
+        service = MultiEntityService(_registry(), configs=configs)
+        results = service.check_purchase_sales([left, right])
+        assert len(results) == 2
+        assert all(r.passed for r in results)
+        assert all(r.rule_id == "RPS-001" for r in results)
+
+    def test_amount_mismatch_reports_fail_and_diff(self) -> None:
+        """采购与销售金额不一致时产出不通过, diff 数值正确。"""
+        left_purchases = [
+            RelatedPartyPurchaseRow(
+                buyer="A", counterparty="B", payment_nature="货款", total_amount=120.0
+            )
+        ]
+        right_sales = [
+            SalesDetailRow(
+                year=2026, month=6, entity="B", customer="A",
+                revenue_type="销售", revenue_amount=100.0,
+                cost_amount=0.0,
+            )
+        ]
+        left = _make_purchase_outcome("A", purchases=left_purchases)
+        right = _make_purchase_outcome("B", sales=right_sales)
+        service = MultiEntityService(_registry())
+        results = service.check_purchase_sales([left, right])
+        assert len(results) == 1
+        assert results[0].passed is False
+        assert results[0].diff == 20.0
+        assert "差额 20.00 元" in results[0].message
+
+    def test_no_data_returns_empty(self) -> None:
+        """双方都无相关购销明细时不产出结果。"""
+        left = _make_purchase_outcome("A")
+        right = _make_purchase_outcome("B")
+        service = MultiEntityService(_registry())
+        results = service.check_purchase_sales([left, right])
+        assert results == []
+
+    def test_direction_not_swapped(self) -> None:
+        """left采购 vs right销售配成一条, 左右值不串。"""
+        left_purchases = [
+            RelatedPartyPurchaseRow(
+                buyer="A", counterparty="B", payment_nature="货款", total_amount=300.0
+            )
+        ]
+        right_sales = [
+            SalesDetailRow(
+                year=2026, month=6, entity="B", customer="A",
+                revenue_type="销售", revenue_amount=300.0,
+                cost_amount=0.0,
+            )
+        ]
+        left = _make_purchase_outcome("A", purchases=left_purchases)
+        right = _make_purchase_outcome("B", sales=right_sales)
+        service = MultiEntityService(_registry())
+        results = service.check_purchase_sales([left, right])
+        assert len(results) == 1
+        assert results[0].left_value == 300.0
+        assert results[0].right_value == 300.0
+        assert results[0].passed is True
+        assert "A」向「B」采购" in results[0].message
+        assert "对方「B」对「A」销售" in results[0].message
+
+    def test_tolerance_override_allows_small_diff(self) -> None:
+        """bilateral_tolerance 覆写: 差额 0.5 在容差 1.0 内通过。"""
+        left_purchases = [
+            RelatedPartyPurchaseRow(
+                buyer="A", counterparty="B", payment_nature="货款", total_amount=100.5
+            )
+        ]
+        right_sales = [
+            SalesDetailRow(
+                year=2026, month=6, entity="B", customer="A",
+                revenue_type="销售", revenue_amount=100.0,
+                cost_amount=0.0,
+            )
+        ]
+        left = _make_purchase_outcome("A", purchases=left_purchases)
+        right = _make_purchase_outcome("B", sales=right_sales)
+        configs = {"A": EntityConfig(entity_id="A", bilateral_tolerance=1.0)}
+        service = MultiEntityService(_registry(), configs=configs)
+        results = service.check_purchase_sales([left, right])
+        assert len(results) == 1
+        assert results[0].passed is True
+        assert results[0].tolerance == 1.0
+        assert results[0].diff == 0.5
+
+    def test_missing_sales_table_skips_direction(self) -> None:
+        """P1: 卖方整体未提供附表5(销售明细)时跳过, 不把「缺表」当「差额」误报。"""
+        left_purchases = [
+            RelatedPartyPurchaseRow(
+                buyer="A", counterparty="B", payment_nature="货款", total_amount=100.0
+            )
+        ]
+        left = _make_purchase_outcome("A", purchases=left_purchases)
+        right = _make_purchase_outcome("B")  # B 无附表5
+        service = MultiEntityService(_registry())
+        results = service.check_purchase_sales([left, right])
+        assert results == []
+
+    def test_missing_purchase_table_skips_direction(self) -> None:
+        """P1: 买方整体未提供附表4(采购明细)时跳过, 不把「缺表」当「差额」误报。"""
+        right_sales = [
+            SalesDetailRow(
+                year=2026, month=6, entity="B", customer="A",
+                revenue_type="销售", revenue_amount=100.0,
+                cost_amount=0.0,
+            )
+        ]
+        left = _make_purchase_outcome("A")  # A 无附表4
+        right = _make_purchase_outcome("B", sales=right_sales)
+        service = MultiEntityService(_registry())
+        results = service.check_purchase_sales([left, right])
+        assert results == []
+
+
+    def test_single_side_zero_failure_suggests_alias(self) -> None:
+        """单边为零的不通过结果提示检查别名配置 (oracle 评审建议)。"""
+        left_purchases = [
+            RelatedPartyPurchaseRow(
+                buyer="A", counterparty="B", payment_nature="货款", total_amount=100.0
+            )
+        ]
+        # B 的附表5 只登记了对其他客户的销售, 对 A 无匹配 (别名缺失)
+        right_sales = [
+            SalesDetailRow(
+                year=2026, month=6, entity="B", customer="其他客户",
+                revenue_type="销售", revenue_amount=500.0,
+                cost_amount=0.0,
+            )
+        ]
+        left = _make_purchase_outcome("A", purchases=left_purchases)
+        right = _make_purchase_outcome("B", sales=right_sales)
+        service = MultiEntityService(_registry())
+        results = service.check_purchase_sales([left, right])
+        assert len(results) == 1
+        assert results[0].passed is False
+        assert "补充别名" in results[0].message
+        assert "【为什么关注】" in results[0].message
+
+
+def _make_icf_outcome(
+    entity_id: str, counterparty: str, amount: float, project: str
+) -> EntityOutcome:
+    """构造仅含附表6 内部现金流明细一行的 EntityOutcome。"""
+    dataset = DetailDataset(entity=entity_id)
+    dataset.internal_cash_flows = [
+        InternalCashFlowRow(
+            month=6,
+            entity=entity_id,
+            counterparty=counterparty,
+            payment_nature="货款",
+            project=project,
+            amount=amount,
+        )
+    ]
+    return EntityOutcome(entity_id=entity_id, folder="", dataset=dataset)
+
+
+class TestBilateralMissingTableGuard:
+    """P1: 内部现金流双边核对缺表跳过 (2026-09-17)。"""
+
+    def test_missing_icf_table_skips_pair(self) -> None:
+        """一方整体未提供附表6 时不产出双边结果 (缺数据 ≠ 差额)。"""
+        left = _make_icf_outcome(
+            "A", counterparty="B", amount=100.0,
+            project="销售商品、提供劳务收到的现金",
+        )
+        right = EntityOutcome(entity_id="B", folder="", dataset=DetailDataset(entity="B"))
+        service = MultiEntityService(_registry())
+        results = service.check_bilateral([left, right])
+        assert results == []
+
+    def test_both_tables_present_still_checks(self) -> None:
+        """双方都有附表6 时正常产出核对结果 (守卫不误伤正常路径)。"""
+        left = _make_icf_outcome(
+            "A", counterparty="B", amount=100.0,
+            project="销售商品、提供劳务收到的现金",
+        )
+        right = _make_icf_outcome(
+            "B", counterparty="A", amount=100.0,
+            project="购买商品、接受劳务支付的现金",
+        )
+        service = MultiEntityService(_registry())
+        results = service.check_bilateral([left, right])
+        # 仅 A流入↔B流出 一个方向有数据, 产出 1 条通过结果
+        assert len(results) == 1
+        assert results[0].passed is True
+        assert results[0].diff == 0.0
+
+    def test_icf_single_side_zero_failure_suggests_alias(self) -> None:
+        """ICF 单边为零的不通过结果提示检查别名配置。"""
+        left = _make_icf_outcome(
+            "A", counterparty="B", amount=100.0,
+            project="销售商品、提供劳务收到的现金",
+        )
+        # B 的附表6 只登记了对 C 的往来, 对 A 无匹配 (别名缺失)
+        right = _make_icf_outcome(
+            "B", counterparty="C", amount=500.0,
+            project="购买商品、接受劳务支付的现金",
+        )
+        service = MultiEntityService(_registry())
+        results = service.check_bilateral([left, right])
+        assert len(results) == 1
+        assert results[0].passed is False
+        assert "补充别名" in results[0].message
