@@ -14,8 +14,8 @@ _INSTALLER = _PROJECT_ROOT / "installer.iss"
 
 
 def test_app_version_is_current_release() -> None:
-    """当前发布版本应为 0.4.7 (WPS 表格兼容通道回退)。"""
-    assert APP_VERSION == "0.4.7"
+    """当前发布版本应为 0.4.8 (报表卡片溢出修复 + 未映射科目清零)。"""
+    assert APP_VERSION == "0.4.8"
 
 
 def test_pyproject_version_matches_app_version() -> None:

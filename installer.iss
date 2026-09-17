@@ -4,7 +4,7 @@
 ; 产物: installer_output\财务报表勾稽校验系统_Setup_0.4.2.exe
 
 #define MyAppName "财务报表勾稽校验系统"
-#define MyAppVersion "0.4.7"
+#define MyAppVersion "0.4.8"
 #define MyAppPublisher "FSA"
 #define MyAppExeName "财务报表勾稽校验系统.exe"
 #define MyAppId "{{8F3A2B1C-4D5E-4F6A-9B8C-1D2E3F4A5B6C}"

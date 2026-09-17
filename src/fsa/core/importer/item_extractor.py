@@ -324,6 +324,9 @@ def _extract_item(
     unmapped: list[str] | None = None,
 ) -> None:
     """提取主表中的一个项目。"""
+    if _is_structural_noise(item_name_str):
+        # 结构噪声 (校验列等): 不是科目, 不计入未映射清单
+        return
     key = get_key(item_name_str)
     if key is None:
         # 仅当该行主金额列有可解析数值时才记为"未映射丢失项"
@@ -535,6 +538,16 @@ def _is_skip_row(item_name_str: str) -> bool:
         or item_name_str.endswith(":")
         or item_name_str.startswith("注")
     )
+
+
+# 结构噪声标签: 客户在报表中添加的校验列/标记行, 不是会计科目
+# (2026-09-17 真实语料扫描: 22 家出现"校验"、18 家出现"所有者权益变动校验")
+_STRUCTURAL_NOISE = frozenset({"校验", "所有者权益变动校验", "所有者权益变动校验；"})
+
+
+def _is_structural_noise(item_name_str: str) -> bool:
+    """判断是否为客户添加的结构噪声 (校验列等), 不是会计科目。"""
+    return item_name_str.strip() in _STRUCTURAL_NOISE
 
 
 def _normalize(value: str) -> str:

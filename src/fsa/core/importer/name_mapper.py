@@ -54,6 +54,10 @@ _STANDARD_NAMES: dict[str, str] = {
     "投资性房地产": "investment_property",
     "开发支出": "development_expenditure",
     "长期应收款": "long_term_receivables",
+    "长期股权投资": "long_term_equity_investment",
+    "其他权益工具投资": "other_equity_instrument_investment",
+    "债权投资": "debt_investment",
+    "其他非流动金融资产": "other_non_current_financial_assets",
     "其他非流动资产": "other_non_current_assets",
     "递延所得税资产": "deferred_tax_assets",
     "非流动资产合计": "non_current_assets",
@@ -82,6 +86,18 @@ _STANDARD_NAMES: dict[str, str] = {
     "其他非流动负债": "other_non_current_liabilities",
     "非流动负债合计": "non_current_liabilities",
     "负债合计": "liability_total",
+    # === 资产负债表 - 流动资产（补充） ===
+    "衍生金融资产": "derivative_financial_assets",
+    "应收利息": "interest_receivable",
+    "应收股利": "dividends_receivable",
+    "短期投资": "short_term_investments",
+    # === 资产负债表 - 流动负债（补充） ===
+    "交易性金融负债": "trading_financial_liabilities",
+    "衍生金融负债": "derivative_financial_liabilities",
+    "应付利息": "interest_payable",
+    # === 资产负债表 - 非流动负债（补充） ===
+    "长期应付职工薪酬": "long_term_employee_benefits",
+    "其他债权投资": "other_debt_investments",
     # === 资产负债表 - 所有者权益 ===
     "实收资本": "paid_in_capital",
     "资本公积": "capital_reserve",
@@ -122,6 +138,13 @@ _STANDARD_NAMES: dict[str, str] = {
     "信用减值损失": "credit_impairment",
     "资产减值损失": "asset_impairment",
     "资产处置收益": "asset_disposal_gain",
+    # === 利润表 - 投资收益明细 ===
+    "对联营企业和合营企业的投资收益": "investment_income_associates",
+    "以摊余成本计量的金融资产终止确认收益": "derecognition_income_amortized_cost",
+    "净敞口套期收益": "net_exposure_hedging_income",
+    # === 利润表 - 其他综合收益分项 ===
+    "不能重分类进损益的其他综合收益": "oci_not_reclassifiable",
+    "将重分类进损益的其他综合收益": "oci_reclassifiable",
     "营业利润": "operating_profit",
     "营业外收入": "non_operating_income",
     "营业外支出": "non_operating_expense",
@@ -205,6 +228,11 @@ _ALIASES: dict[str, str] = {
     "分配股利、利润或偿付利息支付的现金": "cash_for_dividends",
     "汇率变动对现金及现金等价物的影响": "fx_effect",
     "归属于母公司所有者的净利润": "net_profit_parent",
+    # 受限资金 (货币资金附注常见)
+    "受限资金": "restricted_funds",
+    "受限资金-保函保证金": "restricted_funds_guarantee_deposit",
+    # 利息费用 (财务费用/利润表常见, 与利息支出同义)
+    "利息费用": "interest_expense",
 }
 
 # 合并: 标准名 + 别名 -> key

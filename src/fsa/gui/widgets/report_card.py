@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -46,7 +47,11 @@ class ReportCard(QFrame):
     def __init__(self, report: Report) -> None:
         super().__init__()
         self._report = report
+        self._full_source_name = Path(report.source_file).name
         self.setObjectName("ReportCard")
+        # 防窄屏挤压/超长文本撑破: 卡片不参与最小宽度协商
+        self.setMinimumWidth(220)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -76,7 +81,10 @@ class ReportCard(QFrame):
 
         name = QLabel(self._report.report_type.value)
         name.setObjectName("RuleName")
+        name.setMinimumWidth(0)
+        name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         header.addWidget(name, stretch=1)
+        self._name_label = name
 
         status = QLabel("已导入")
         status.setObjectName("ReportCardStatus")
@@ -117,12 +125,16 @@ class ReportCard(QFrame):
         file_icon.setFixedSize(14, 14)
         meta2.addWidget(file_icon)
 
-        source = Path(self._report.source_file).name
+        source = self._full_source_name
         file_label = QLabel(source or "--")
         file_label.setObjectName("MetaLabel")
-        meta2.addWidget(file_label)
+        # 长文件名不撑破卡片: 水平方向不参与最小宽度协商 + resize 时中部截断
+        file_label.setMinimumWidth(0)
+        file_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        file_label.setToolTip(self._report.source_file or "")
+        meta2.addWidget(file_label, stretch=1)
+        self._file_label = file_label
 
-        meta2.addStretch()
         layout.addLayout(meta2)
 
         # 未映射清单提示 (可视化)
@@ -140,6 +152,43 @@ class ReportCard(QFrame):
         self._detail_btn.setToolTip("查看已识别科目金额与原始行列, 以及未映射清单")
         self._detail_btn.clicked.connect(self._show_items_dialog)
         layout.addWidget(self._detail_btn)
+
+    def _apply_elided_texts(self) -> None:
+        """按当前卡片宽度截断长文本 (报表名/来源文件名), 防止撑破容器。
+
+        可用宽度按「卡片宽 - 固定占用」确定性计算, 不读 label 几何 ——
+        resizeEvent 内 label 宽度可能是旧值导致省略号误判 (2026-09-17 实测)。
+        """
+        # 名称行固定占用: 左右边距 16+16, 图标框 32, 状态徽章约 56, 三个间距 24
+        name_fm = self._name_label.fontMetrics()
+        name_avail = max(40, self.width() - 16 - 16 - 32 - 56 - 24)
+        self._name_label.setText(
+            name_fm.elidedText(
+                self._report.report_type.value,
+                Qt.TextElideMode.ElideRight,
+                name_avail,
+            )
+        )
+        # 文件名行固定占用: 左右边距 16+16, 文件图标 14, 间距 4
+        file_fm = self._file_label.fontMetrics()
+        file_avail = max(40, self.width() - 16 - 16 - 14 - 4)
+        self._file_label.setText(
+            file_fm.elidedText(
+                self._full_source_name or "--",
+                Qt.TextElideMode.ElideMiddle,
+                file_avail,
+            )
+        )
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        """卡片宽度变化时重新截断, 防止长文件名撑破容器。"""
+        super().resizeEvent(event)
+        self._apply_elided_texts()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        """首次显示时按布局分配的实际宽度截断 (隐藏状态下 resize 事件被延迟)。"""
+        super().showEvent(event)
+        self._apply_elided_texts()
 
     def _show_items_dialog(self) -> None:
         """打开科目清单对话框: 已识别科目与未映射清单两个标签页。"""
