@@ -509,3 +509,91 @@ class TestWpsFallback:
         session = reader.ExcelComSession()
         with pytest.raises(reader.FSAError, match="WPS"):
             session.read_file("fake.xlsx")
+
+
+class TestVisibilityCriterion:
+    """XLMAIN 主窗口判据回归 (2026-09-17: 插件辅助窗口误判僵尸为用户实例, 66 个堆积)。"""
+
+    @pytest.fixture(autouse=True)
+    def _fake_win32(self, monkeypatch):
+        import sys
+        from types import ModuleType
+
+        gui = ModuleType("win32gui")
+        proc = ModuleType("win32process")
+        monkeypatch.setitem(sys.modules, "win32gui", gui)
+        monkeypatch.setitem(sys.modules, "win32process", proc)
+        self.gui = gui
+        self.proc = proc
+        self._windows: list[tuple[int, str, bool, int]] = []
+
+    def _set_windows(self, windows: list[tuple[int, str, bool, int]]) -> None:
+        """配置假窗口列表: (hwnd, class_name, visible, pid)。"""
+        self._windows = windows
+
+        def fake_get_class(hwnd: int) -> str:
+            return next((c for h, c, v, p in self._windows if h == hwnd), "")
+
+        def fake_is_visible(hwnd: int) -> bool:
+            return next((v for h, c, v, p in self._windows if h == hwnd), False)
+
+        def fake_get_pid(hwnd: int) -> tuple[int, int]:
+            return next(((0, p) for h, c, v, p in self._windows if h == hwnd), (0, 0))
+
+        def fake_enum(callback, _):
+            for hwnd, _cls, _vis, _pid in self._windows:
+                callback(hwnd, None)
+
+        self.gui.GetClassName = fake_get_class
+        self.gui.IsWindowVisible = fake_is_visible
+        self.gui.EnumWindows = fake_enum
+        self.proc.GetWindowThreadProcessId = fake_get_pid
+
+    def test_only_visible_xlmain_counts(self) -> None:
+        """只有可见 XLMAIN 主窗口才算用户实例; 插件辅助窗口不算。"""
+        from fsa.core.importer.excel_reader import _visible_excel_pids
+
+        self._set_windows([
+            (100, "XLMAIN", True, 1000),                 # 用户 Excel: 主窗口可见
+            (200, "XLMAIN", False, 2000),                # 僵尸: 主窗口隐藏
+            (201, "TOTWindowsManager", True, 2000),      # 僵尸的辅助窗口可见 (插件)
+            (202, "HwndWrapper[CPAHelper]", True, 2000), # 僵尸的 VSTO 窗口可见
+        ])
+
+        result = _visible_excel_pids()
+        assert result == {1000}
+
+    def test_minimized_excel_still_visible(self) -> None:
+        """最小化的用户 Excel (XLMAIN visible=1) 仍被保护。"""
+        from fsa.core.importer.excel_reader import _visible_excel_pids
+
+        self._set_windows([
+            (100, "XLMAIN", True, 1000),  # 最小化窗口 WS_VISIBLE 保持 1
+        ])
+        assert _visible_excel_pids() == {1000}
+
+    def test_enum_failure_returns_none(self) -> None:
+        """窗口枚举失败返回 None (调用方跳过清理, 不误杀)。"""
+        from fsa.core.importer.excel_reader import _visible_excel_pids
+
+        def boom(callback, _):
+            raise RuntimeError("模拟枚举失败")
+
+        self.gui.EnumWindows = boom
+
+        assert _visible_excel_pids() is None
+
+    def test_cleanup_skips_when_visibility_unknown(self, monkeypatch) -> None:
+        """可见性无法判定时跳过清理 (不杀任何进程)。"""
+        import fsa.core.importer.excel_reader as reader
+
+        monkeypatch.setattr(reader, "_snapshot_excel_pids", lambda: {1, 2, 3})
+        monkeypatch.setattr(reader, "_visible_excel_pids", lambda: None)
+
+        killed: list[set[int]] = []
+        monkeypatch.setattr(
+            reader, "_kill_pids", lambda pids: killed.append(pids) or len(pids)
+        )
+
+        assert reader.cleanup_invisible_excel() == 0
+        assert killed == [], "可见性未知时不得清理任何进程"

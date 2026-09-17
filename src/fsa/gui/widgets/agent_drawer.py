@@ -140,6 +140,17 @@ class AgentDrawer(AgentSessionMixin, AgentMessageMixin):
         clear_btn.clicked.connect(self._clear_current_session)
         h.addWidget(clear_btn)
 
+        # 清空全部对话按钮
+        clear_all_btn = QPushButton("全部清空")
+        clear_all_btn.setFixedSize(56, 28)
+        clear_all_btn.setToolTip("清空全部对话")
+        clear_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_all_btn.setObjectName("AgentHeaderBtn")
+        clear_all_btn.clicked.connect(self._clear_all_sessions)
+        clear_all_btn.setVisible(self._chat_repo is not None)
+        h.addWidget(clear_all_btn)
+        self._clear_all_btn = clear_all_btn
+
         # 关闭按钮 (X 图标); qicon() 随主题自动重绘
         close_btn = QPushButton()
         close_btn.setIcon(FluentIcon.CLOSE.qicon())

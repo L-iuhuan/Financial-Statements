@@ -342,6 +342,47 @@ class TestEntityConfig:
         }
         assert detail_config.margin_tolerance == 0.02
 
+    def test_save_entity_configs_roundtrip(self, tmp_path: Path) -> None:
+        """save_entity_configs -> load_entity_configs 往返无损 (全字段保留)。"""
+        from fsa.services.entity_config import save_entity_configs
+
+        configs = {
+            "1西安拓尔微": EntityConfig(
+                entity_id="1西安拓尔微",
+                aliases=("拓尔微电子股份有限公司", "西安拓尔"),
+                industry="general",
+                bilateral_tolerance=0.05,
+            ),
+            "10厦门拓尔": EntityConfig(
+                entity_id="10厦门拓尔",
+                aliases=("厦门拓尔微电子有限公司",),
+                industry="retail",
+                margin_tolerance=0.02,
+            ),
+        }
+        path = tmp_path / "entity_config.json"
+        save_entity_configs(configs, path)
+
+        loaded = load_entity_configs(path)
+        assert len(loaded) == 2
+        assert loaded["1西安拓尔微"].aliases == ("拓尔微电子股份有限公司", "西安拓尔")
+        assert loaded["1西安拓尔微"].bilateral_tolerance == 0.05
+        assert loaded["1西安拓尔微"].industry == "general"
+        assert loaded["10厦门拓尔"].aliases == ("厦门拓尔微电子有限公司",)
+        assert loaded["10厦门拓尔"].industry == "retail"
+        assert loaded["10厦门拓尔"].margin_tolerance == 0.02
+        assert loaded["10厦门拓尔"].bilateral_tolerance is None
+
+    def test_save_entity_configs_creates_parent_dir(self, tmp_path: Path) -> None:
+        """保存路径父目录不存在时自动创建。"""
+        from fsa.services.entity_config import save_entity_configs
+
+        path = tmp_path / "deep" / "nested" / "entity_config.json"
+        save_entity_configs({"A": EntityConfig(entity_id="A", aliases=("甲公司",))}, path)
+        assert path.exists()
+        loaded = load_entity_configs(path)
+        assert loaded["A"].aliases == ("甲公司",)
+
     def test_new_fields_default_to_none(self) -> None:
         """新增字段缺省为 None（不改变默认行为）。"""
         config = EntityConfig(entity_id="主体A")
@@ -406,12 +447,12 @@ class TestImportOne:
         folder.mkdir()
         (folder / "bad.xlsx").write_text("非报表文件", encoding="utf-8")
 
-        def _fail_main(self, file_path: str) -> list[Report]:
+        def _fail_main(self, file_path: str, com_session: object = None) -> list[Report]:
             raise FSAError(f"无法识别报表: {file_path}")
 
         detail_calls: list[str] = []
 
-        def _spy_detail(self, file_path: str) -> DetailDataset:
+        def _spy_detail(self, file_path: str, com_session: object = None) -> DetailDataset:
             detail_calls.append(file_path)
             return DetailDataset()
 
@@ -434,10 +475,10 @@ class TestImportOne:
         folder.mkdir()
         (folder / "main.xlsx").write_text("主表文件占位", encoding="utf-8")
 
-        def _ok_main(self, file_path: str) -> list[Report]:
+        def _ok_main(self, file_path: str, com_session: object = None) -> list[Report]:
             return []
 
-        def _fail_detail(self, file_path: str) -> DetailDataset:
+        def _fail_detail(self, file_path: str, com_session: object = None) -> DetailDataset:
             raise FSAError(f"非明细文件: {file_path}")
 
         monkeypatch.setattr(ImportService, "import_file", _ok_main)
@@ -459,7 +500,7 @@ class TestImportOne:
 
         captured: dict[str, list[str]] = {}
 
-        def _ok_main(self, file_path: str) -> list[Report]:
+        def _ok_main(self, file_path: str, com_session: object = None) -> list[Report]:
             report = Report(
                 report_type=ReportType.BALANCE_SHEET,
                 period="2026-06",
@@ -468,7 +509,7 @@ class TestImportOne:
             )
             return [report]
 
-        def _spy_detail(self, file_path: str) -> DetailDataset:
+        def _spy_detail(self, file_path: str, com_session: object = None) -> DetailDataset:
             captured["detail"] = [file_path]
             return DetailDataset()
 
@@ -759,3 +800,73 @@ class TestBilateralMissingTableGuard:
         assert len(results) == 1
         assert results[0].passed is False
         assert "补充别名" in results[0].message
+
+
+class TestSharedComSession:
+    """共享 Excel COM 会话管理 (2026-09-17 "卡死"根因修复)。"""
+
+    def test_close_idempotent(self) -> None:
+        """close() 未启动会话时为空操作, 重复调用安全。"""
+        service = MultiEntityService(_registry())
+        service.close()
+        service.close()
+
+    def test_validate_folders_closes_session(self, tmp_path: Path) -> None:
+        """validate_folders 结束后自动关闭共享会话。"""
+        close_calls: list[int] = []
+
+        class _FakeSession:
+            def close(self) -> None:
+                close_calls.append(1)
+
+        service = MultiEntityService(_registry())
+        service._com_session = _FakeSession()  # type: ignore[assignment]
+
+        folder = tmp_path / "空主体"
+        folder.mkdir()
+        service.validate_folders([str(folder)], period="2026-06")
+
+        assert close_calls == [1], "validate_folders 结束后应关闭共享会话"
+        assert service._com_session is None, "close 后会话引用应清空"
+
+    def test_empty_folder_records_error(self, tmp_path: Path) -> None:
+        """空文件夹 (无可导入文件) 记录中文错误提示。"""
+        folder = tmp_path / "空主体"
+        folder.mkdir()
+        service = MultiEntityService(_registry())
+        outcome = service.validate_folder(str(folder), period="2026-06")
+        assert outcome.errors, "空文件夹应记录错误"
+        assert "没有可导入" in outcome.errors[0]
+
+    def test_import_one_passes_shared_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_import_one 将共享 COM 会话同时传给主表与明细导入。"""
+        folder = tmp_path / "主体A"
+        folder.mkdir()
+        (folder / "data.xlsx").write_text("占位", encoding="utf-8")
+
+        sessions: dict[str, object] = {}
+
+        def _spy_main(
+            self: ImportService, file_path: str, com_session: object = None
+        ) -> list[Report]:
+            sessions["main"] = com_session
+            return []
+
+        def _spy_detail(
+            self: DetailImporter, file_path: str, com_session: object = None
+        ) -> DetailDataset:
+            sessions["detail"] = com_session
+            return DetailDataset()
+
+        monkeypatch.setattr(ImportService, "import_file", _spy_main)
+        monkeypatch.setattr(DetailImporter, "import_file", _spy_detail)
+
+        service = MultiEntityService(_registry())
+        service.validate_folder(str(folder), period="2026-06")
+
+        assert "main" in sessions and "detail" in sessions
+        assert sessions["main"] is sessions["detail"], "主表和明细应共享同一会话"
+        assert sessions["main"] is service._com_session
+        service.close()

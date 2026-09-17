@@ -164,7 +164,12 @@ class ImportPageResultsMixin(QWidget):
         self._card_pass.set_data("通过", summary.passed, "校验通过的规则")
         self._card_error.set_data("不通过", fail_count, "必须修正的差额")
         self._card_warn.set_data("警告", warn_count, "建议关注的偏差")
-        self._card_total.set_data("规则总数", summary.total, "规则库总数")
+        total_sub = (
+            "规则库总数"
+            if summary.skipped == 0
+            else f"其中跳过 {summary.skipped}（缺数据）"
+        )
+        self._card_total.set_data("规则总数", len(summary.results), total_sub)
 
         # 更新筛选标签计数 (B-14: 与 _match_filter 语义保持一致)
         # - "all" 显示全部结果卡片 (含 skipped), 故用 len(summary.results)

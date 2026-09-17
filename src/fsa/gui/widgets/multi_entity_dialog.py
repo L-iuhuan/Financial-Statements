@@ -35,16 +35,26 @@ class MultiEntityResultDialog(QDialog):
         summary = QLabel()
         summary.setObjectName("PageTitle")
         summary.setStyleSheet("font-size: 14px;")
-        if result.combined is None:
+        summaries = [o.summary for o in result.outcomes if o.summary is not None]
+        if not summaries:
             summary.setText("没有主体成功完成校验")
         else:
+            total_results = sum(len(s.results) for s in summaries)
+            total_passed = sum(s.passed for s in summaries)
+            total_failed = sum(s.failed for s in summaries)
+            total_errored = sum(s.errored for s in summaries)
             summary.setText(
-                f"合并校验: 共 {result.combined.total} 条规则 · "
-                f"通过 {result.combined.passed} · "
-                f"不通过 {result.combined.failed} · "
-                f"异常 {result.combined.errored}"
+                f"合计（全部主体）: 共 {total_results} 条校验结果 · "
+                f"通过 {total_passed} · "
+                f"不通过 {total_failed} · "
+                f"异常 {total_errored}"
             )
         layout.addWidget(summary)
+
+        if summaries:
+            subtitle = QLabel("合计 = 各主体校验结果之和")
+            subtitle.setObjectName("MetaLabel")
+            layout.addWidget(subtitle)
 
         # B1-5: 告知用户各主体结果已写入历史记录 (None 表示未尝试/存储不可用)
         if saved_count is not None and saved_count > 0:

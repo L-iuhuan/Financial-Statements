@@ -392,6 +392,13 @@ def _generate_qss(p: dict[str, str]) -> str:
         border-color: {p["brand_500"]};
         background-color: {p["brand_50"]};
     }}
+    QFrame#ImportFileRow[status="failed"] {{
+        background-color: {p["error_bg"]};
+        border-left: 3px solid {p["error"]};
+    }}
+    QFrame#ImportFileRow[status="completed"] {{
+        border-left: 3px solid {p["success"]};
+    }}
     QLabel#ImportFileName {{
         font-size: 13px;
         color: {p["text_primary"]};

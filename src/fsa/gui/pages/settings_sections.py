@@ -5,11 +5,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -18,16 +23,26 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import SwitchButton
+from qfluentwidgets import InfoBar, InfoBarPosition, SwitchButton
 
 from fsa.core.edition import get_edition_config
+from fsa.core.engine.thresholds import KNOWN_INDUSTRIES
 from fsa.core.resources import resource_path
 from fsa.core.version import APP_VERSION
 from fsa.gui.app_state import AppState
 from fsa.gui.widgets.dropdown_combo import DropdownCombo
+from fsa.services.entity_config import (
+    DEFAULT_ENTITY_CONFIG_PATH,
+    EntityConfig,
+    load_default_entity_configs,
+    load_entity_configs,
+    save_entity_configs,
+)
 
 if TYPE_CHECKING:
     from fsa.gui.pages.settings_page import SettingsPage
@@ -134,8 +149,6 @@ def build_validation_section(
     state: AppState,
 ) -> QFrame:
     """构建校验参数分区。"""
-    from fsa.core.engine.thresholds import KNOWN_INDUSTRIES
-
     frame, layout = _section("校验参数")
 
     row1, _ = _row(
@@ -497,4 +510,159 @@ def build_llm_section(
     page._llm_api_key_input = key_input
     page._llm_remote_switch = remote_switch
 
+    return frame
+
+
+_ENTITY_CONFIG_COLUMNS = ["主体标识", "别名（多个用逗号分隔）", "行业", "双边核对容差（元）"]
+_ENTITY_CONFIG_INDUSTRIES = [(k, INDUSTRY_DISPLAY_NAMES.get(k, k)) for k in KNOWN_INDUSTRIES]
+
+
+def _add_entity_row(
+    table: QTableWidget,
+    entity_id: str = "",
+    aliases: str = "",
+    industry: str = "general",
+    tolerance: float | None = None,
+) -> None:
+    row = table.rowCount()
+    table.insertRow(row)
+    for col, text in ((0, entity_id), (1, aliases)):
+        item = QTableWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable)
+        table.setItem(row, col, item)
+    combo = QComboBox()
+    for key, display in _ENTITY_CONFIG_INDUSTRIES:
+        combo.addItem(display, key)
+    combo.setCurrentIndex(max(combo.findData(industry), 0))
+    table.setCellWidget(row, 2, combo)
+    edit = QLineEdit("" if tolerance is None else str(tolerance))
+    edit.setObjectName("StyledInput")
+    edit.setPlaceholderText("0.01")
+    table.setCellWidget(row, 3, edit)
+
+
+def _delete_selected_entity_rows(table: QTableWidget) -> None:
+    rows = sorted({idx.row() for idx in table.selectedIndexes()}, reverse=True)
+    for row in rows:
+        table.removeRow(row)
+
+
+def _load_entity_configs(table: QTableWidget, config_path: str | Path | None) -> None:
+    table.setRowCount(0)
+    configs = load_entity_configs(config_path) if config_path else load_default_entity_configs()
+    for entity_id, config in configs.items():
+        _add_entity_row(table, entity_id, "， ".join(config.aliases), config.industry, config.bilateral_tolerance)
+
+
+def _save_entity_configs(page: QWidget, table: QTableWidget, config_path: str | Path | None) -> None:
+    base = load_entity_configs(config_path) if config_path else load_default_entity_configs()
+    updated: dict[str, EntityConfig] = {}
+    for row in range(table.rowCount()):
+        id_item = table.item(row, 0)
+        entity_id = id_item.text().strip() if id_item else ""
+        if not entity_id:
+            continue
+        old = base.get(entity_id, EntityConfig(entity_id=entity_id))
+        alias_item = table.item(row, 1)
+        alias_text = alias_item.text() if alias_item else ""
+        aliases = tuple(a.strip() for a in alias_text.replace("，", ",").split(",") if a.strip())
+        combo = table.cellWidget(row, 2)
+        if not isinstance(combo, QComboBox):
+            continue
+        industry = str(combo.currentData())
+        edit = table.cellWidget(row, 3)
+        if not isinstance(edit, QLineEdit):
+            continue
+        tol_text = edit.text().strip()
+        try:
+            bilateral_tolerance = float(tol_text) if tol_text else None
+        except ValueError:
+            bilateral_tolerance = old.bilateral_tolerance
+        updated[entity_id] = replace(old, aliases=aliases, industry=industry, bilateral_tolerance=bilateral_tolerance)
+    try:
+        save_entity_configs(updated, config_path or DEFAULT_ENTITY_CONFIG_PATH)
+    except OSError:
+        logger.exception("保存主体配置失败")
+        InfoBar.error(
+            "保存失败",
+            "无法写入主体配置文件，请检查路径后重试。",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=4000,
+            parent=page,
+        )
+        return
+    InfoBar.success(
+        "已保存",
+        "主体配置已保存。",
+        orient=Qt.Orientation.Horizontal,
+        isClosable=True,
+        position=InfoBarPosition.TOP_RIGHT,
+        duration=2000,
+        parent=page,
+    )
+
+
+def build_entity_config_section(
+    page: SettingsPage,
+    settings: QSettings,
+    state: AppState,
+    config_path: str | Path | None = None,
+) -> QFrame:
+    """构建多主体配置分区。"""
+    _ = settings, state
+    frame, layout = _section("多主体配置")
+    desc = QLabel(
+        "主体标识 = 多主体批量校验中各公司子文件夹的名称；\n"
+        "别名 = 该公司在其他公司报表中登记的名称（通常是公司全称），"
+        "跨主体购销/现金流双边核对靠它匹配“对方单位”。"
+    )
+    desc.setObjectName("MetaLabel")
+    desc.setWordWrap(True)
+    layout.addWidget(desc)
+
+    table = QTableWidget(0, 4)
+    table.setObjectName("EntityConfigTable")
+    table.setHorizontalHeaderLabels(_ENTITY_CONFIG_COLUMNS)
+    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setAlternatingRowColors(True)
+    table.horizontalHeader().setStretchLastSection(True)
+    table.setColumnWidth(0, 140)
+    table.setColumnWidth(1, 220)
+    table.setColumnWidth(2, 140)
+    layout.addWidget(table)
+
+    btn_row = QHBoxLayout()
+    add_btn = QPushButton("新增行")
+    del_btn = QPushButton("删除所选行")
+    save_btn = QPushButton("保存")
+    for btn in (add_btn, del_btn, save_btn):
+        btn.setFixedHeight(32)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    add_btn.setObjectName("BtnSecondary")
+    del_btn.setObjectName("BtnSecondary")
+    save_btn.setObjectName("BtnPrimary")
+    add_btn.clicked.connect(lambda: _add_entity_row(table))
+    del_btn.clicked.connect(lambda: _delete_selected_entity_rows(table))
+    save_btn.clicked.connect(lambda: _save_entity_configs(page, table, config_path))
+    btn_row.addWidget(add_btn)
+    btn_row.addWidget(del_btn)
+    btn_row.addStretch()
+    btn_row.addWidget(save_btn)
+    layout.addLayout(btn_row)
+
+    path_hint = Path(config_path) if config_path else DEFAULT_ENTITY_CONFIG_PATH
+    hint = QLabel(
+        f"配置文件位于 {path_hint}，"
+        "高级口径（现金等价物科目、余额表映射等）可在该文件中手工调整。"
+    )
+    hint.setObjectName("MetaLabel")
+    hint.setWordWrap(True)
+    layout.addWidget(hint)
+
+    page._entity_config_table = table
+    page._entity_config_save_btn = save_btn
+    page._entity_config_path = config_path
+    _load_entity_configs(table, config_path)
     return frame

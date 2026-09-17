@@ -22,7 +22,11 @@ from fsa.core.importer.detail_parsers import (
     parse_sales_row,
     parse_trial_balance_row,
 )
-from fsa.core.importer.excel_reader import RawSheetData, read_excel
+from fsa.core.importer.excel_reader import (
+    ExcelComSession,
+    RawSheetData,
+    read_excel,
+)
 from fsa.core.models.detail import DetailDataset
 
 _CUMULATIVE_KEYWORDS = ("1-本月", "1- 本月", "本年累计")
@@ -34,19 +38,25 @@ class DetailImporter:
     def __init__(self, period: str = "") -> None:
         self.period = period
 
-    def import_file(self, file_path: str) -> DetailDataset:
+    def import_file(
+        self, file_path: str, com_session: ExcelComSession | None = None
+    ) -> DetailDataset:
         """读取文件并解析为 DetailDataset（含 Excel COM 自动回退）。
 
         读取后委托 import_data 完成解析管线。
         非 Excel 格式（PDF 无明细表语义）返回空数据集而非报错——此前会抛
         openpyxl InvalidFileException 逃逸窄捕获, 导致多主体整批中断
         (2026-09-17 真实语料实测根因)。
+
+        Args:
+            file_path: 文件路径
+            com_session: 批量导入时复用的 Excel COM 会话 (同线程创建/使用/关闭)
         """
         if Path(file_path).suffix.lower() == ".pdf":
             dataset = DetailDataset(period=self.period)
             dataset.source_file = str(file_path)
             return dataset
-        raw_data = read_excel(file_path)
+        raw_data = read_excel(file_path, com_session=com_session)
         dataset = self.import_data(raw_data)
         dataset.source_file = str(file_path)
         return dataset

@@ -12,6 +12,7 @@ from fsa.core.engine.registry import RuleRegistry
 from fsa.core.engine.rule_hints import format_hint_block
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
+from fsa.core.importer.excel_reader import ExcelComSession
 from fsa.core.importer.importer import ImportService
 from fsa.core.importer.name_mapper import clean_name
 from fsa.core.models.detail import DetailDataset
@@ -74,26 +75,32 @@ class MultiEntityService:
     ) -> None:
         self._registry = registry
         self._configs = configs or {}
+        # 共享 Excel COM 会话 (懒启动): 多主体批量读取 DLP 加密文件时复用
+        # 同一 Excel 进程, 避免每文件 5-40s 启动开销 (2026-09-17"卡死"根因)
+        self._com_session: ExcelComSession | None = None
 
     def validate_folders(
         self,
         folders: list[str],
         period: str = "",
     ) -> MultiEntityResult:
-        """逐主体校验，合并结果并做双边核对。"""
-        outcomes = [
-            self.validate_folder(folder, period=period) for folder in folders
-        ]
-        summaries = [o.summary for o in outcomes if o.summary is not None]
-        combined = merge_summaries(*summaries) if summaries else None
-        bilateral = self.check_bilateral(outcomes)
-        purchase_sales = self.check_purchase_sales(outcomes)
-        return MultiEntityResult(
-            outcomes=outcomes,
-            combined=combined,
-            bilateral=bilateral,
-            purchase_sales=purchase_sales,
-        )
+        """逐主体校验，合并结果并做双边核对 (结束后关闭共享 COM 会话)。"""
+        try:
+            outcomes = [
+                self.validate_folder(folder, period=period) for folder in folders
+            ]
+            summaries = [o.summary for o in outcomes if o.summary is not None]
+            combined = merge_summaries(*summaries) if summaries else None
+            bilateral = self.check_bilateral(outcomes)
+            purchase_sales = self.check_purchase_sales(outcomes)
+            return MultiEntityResult(
+                outcomes=outcomes,
+                combined=combined,
+                bilateral=bilateral,
+                purchase_sales=purchase_sales,
+            )
+        finally:
+            self.close()
 
     def validate_folder(
         self,
@@ -113,6 +120,10 @@ class MultiEntityService:
             for path in sorted(folder_path.iterdir())
             if path.is_file() and path.suffix.lower() in _SUPPORTED_SUFFIXES
         ]
+        if not files:
+            errors.append(
+                "文件夹中没有可导入的报表文件（支持 .xlsx/.xls/.csv/.pdf）"
+            )
         for path in files:
             self._import_one(path, reports_by_type, dataset, errors, period)
 
@@ -153,7 +164,9 @@ class MultiEntityService:
         可能就是纯主表文件，明细导入失败属预期路径。
         """
         try:
-            reports = ImportService(period).import_file(str(path))
+            reports = ImportService(period).import_file(
+                str(path), com_session=self._shared_session()
+            )
         except (FileNotFoundError, FSAError, ValueError, OSError, ImportError) as error:
             errors.append(f"{path.name}: {error}")
             return
@@ -167,11 +180,33 @@ class MultiEntityService:
             if report.report_type not in reports_by_type:
                 reports_by_type[report.report_type] = report
         try:
-            dataset.merge(DetailImporter(period).import_file(str(path)))
+            dataset.merge(
+                DetailImporter(period).import_file(
+                    str(path), com_session=self._shared_session()
+                )
+            )
         except (FileNotFoundError, FSAError, ValueError, OSError, ImportError) as error:
             logger.debug(f"「{path.name}」明细导入失败，可能为纯主表文件: {error}")
         except Exception as error:
             logger.debug(f"「{path.name}」明细导入未预期异常 (忽略继续): {error}")
+
+    def _shared_session(self) -> ExcelComSession:
+        """懒启动共享 Excel COM 会话 (批量 DLP 加密文件复用同一 Excel 进程)。
+
+        多主体此前每文件独立回退 COM, 每文件 5-40s Excel 启动 × 上百文件 =
+        小时级耗时, 用户表现为"选整个文件夹卡死" (2026-09-17 根因)。
+        会话须在同一线程创建/使用/关闭 (COM 单元模型) —— validate_folder
+        循环与 close() 均在调用方同一后台线程执行, 满足亲和性约束。
+        """
+        if self._com_session is None:
+            self._com_session = ExcelComSession()
+        return self._com_session
+
+    def close(self) -> None:
+        """关闭共享 Excel COM 会话并回收本会话残留 (幂等; 须与创建线程相同)。"""
+        if self._com_session is not None:
+            self._com_session.close()
+            self._com_session = None
 
     def check_bilateral(self, outcomes: list[EntityOutcome]) -> list[ValidationResult]:
         """按主体标识/别名核对内部交易现金流双边金额（流入方 vs 流出方）。

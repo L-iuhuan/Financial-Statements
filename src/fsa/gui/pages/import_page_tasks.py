@@ -115,7 +115,10 @@ class ImportPageTasksMixin(QWidget):
         def _apply_validation_summary(self, summary: object) -> None: ...
 
         def _run_multi_entity(
-            self, folders: list[str], cancel_event: threading.Event | None = None
+            self,
+            folders: list[str],
+            cancel_event: threading.Event | None = None,
+            progress_cb: Callable[[str], None] | None = None,
         ) -> object: ...
 
         def _persist_multi_entity_results(self, result: object) -> int: ...
@@ -162,6 +165,54 @@ class ImportPageTasksMixin(QWidget):
                     {
                         "generation": generation,
                         "file_paths": file_paths,
+                        "reports": reports,
+                        "dataset": dataset,
+                        "errors": errors,
+                    }
+                )
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _retry_file_async(self, index: int, file_path: str) -> None:
+        """单文件后台重试: 仅更新对应行, 不重置整个文件列表。"""
+        if self._import_cancel_event is not None:
+            self._show_info("已有导入任务正在进行，请先取消或等待完成", "warning")
+            return
+
+        logger.info(f"单文件重试: {file_path}")
+        self._file_list.set_importing(index)
+        self._set_import_running(True)
+        cancel_event = threading.Event()
+        self._import_cancel_event = cancel_event
+        # B1-1: 捕获本次任务的代际值
+        self._import_generation += 1
+        generation = self._import_generation
+        bridge = _ImportBridge(self)
+        bridge.finished.connect(self._on_background_import_finished)
+        bridge.failed.connect(
+            lambda message, gen=generation: self._on_background_import_failed(message, gen)
+        )
+        bridge.progress.connect(self._import_status_label.setText)
+        bridge.file_started.connect(self._on_file_started)
+        bridge.file_completed.connect(self._on_file_completed)
+        bridge.file_failed.connect(self._on_file_failed)
+        self._import_bridge = bridge
+
+        def run() -> None:
+            try:
+                reports, dataset, errors = self._import_paths(
+                    [file_path],
+                    event_cb=lambda event: self._emit_file_event(bridge, event),
+                    cancel_event=cancel_event,
+                )
+            except Exception as e:
+                logger.exception("单文件重试异常")
+                bridge.failed.emit(str(e))
+            else:
+                bridge.finished.emit(
+                    {
+                        "generation": generation,
+                        "file_paths": [file_path],
                         "reports": reports,
                         "dataset": dataset,
                         "errors": errors,
@@ -382,7 +433,9 @@ class ImportPageTasksMixin(QWidget):
 
         def run() -> None:
             try:
-                result = self._run_multi_entity(folders, cancel_event)
+                result = self._run_multi_entity(
+                    folders, cancel_event, progress_cb=bridge.progress.emit
+                )
             except Exception as e:
                 logger.exception("后台多主体批量校验任务异常")
                 bridge.failed.emit(str(e))
@@ -392,7 +445,7 @@ class ImportPageTasksMixin(QWidget):
         threading.Thread(target=run, daemon=True).start()
 
     def _on_multi_entity_finished(self, payload: object, generation: int | None = None) -> None:
-        """多主体校验完成: 落库各主体结果并展示结果对话框。"""
+        """多主体校验完成: 落库各主体结果并展示结果对话框（非模态）。"""
         self._set_multi_running(False)
         if generation is not None and generation != self._multi_generation:
             # 重置/取消后迟到的旧结果: 丢弃, 不落库不弹窗
@@ -406,7 +459,7 @@ class ImportPageTasksMixin(QWidget):
             return
         saved_count = self._persist_multi_entity_results(payload)
         dialog = MultiEntityResultDialog(payload, self, saved_count=saved_count)
-        dialog.exec()
+        dialog.show()
 
     def _on_multi_entity_failed(self, message: str, generation: int | None = None) -> None:
         """多主体校验异常。"""

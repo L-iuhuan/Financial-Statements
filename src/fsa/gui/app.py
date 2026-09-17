@@ -118,9 +118,30 @@ def _schedule_startup_update_check(window: MainWindow, settings: QSettings) -> N
     QTimer.singleShot(1200, start_worker)
 
 
+def _cleanup_zombie_excel_async() -> None:
+    """启动后台线程清理上次会话残留的不可见 Excel 僵尸 (不阻塞启动)。
+
+    僵尸会阻塞后续所有 COM 自动化 (表现为导入"全部失败"), 且曾因可见性
+    误判长期堆积 (2026-09-17 实测 66 个/12GB); 启动即扫一次, 只杀不可见
+    实例, 用户可见 Excel 绝不触碰 (excel_reader.cleanup_invisible_excel)。
+    """
+    from fsa.core.importer.excel_reader import cleanup_invisible_excel
+
+    def _run() -> None:
+        try:
+            killed = cleanup_invisible_excel()
+            if killed:
+                logger.info(f"启动清理: 已回收 {killed} 个残留 Excel 进程")
+        except Exception as error:  # noqa: BLE001 - 启动清理失败不影响应用
+            logger.debug(f"启动清理残留 Excel 失败 (忽略): {error}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def main() -> None:
     """启动财务报表勾稽校验系统。"""
     configure_file_logging()
+    _cleanup_zombie_excel_async()
 
     def exception_hook(
         exctype: type[BaseException], value: BaseException, tb: TracebackType | None

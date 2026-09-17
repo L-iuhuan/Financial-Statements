@@ -201,8 +201,9 @@ class TestMatchFilter:
         assert page._filter_buttons["fail"].text() == "不通过 (1)"
         assert page._filter_buttons["warning"].text() == "警告 (0)"
         assert page._filter_buttons["skip"].text() == "跳过 (1)"
-        # 规则总数卡片语义不变: 显示排除跳过的执行规则数
-        assert page._card_total._value.text() == "2"
+        # 规则总数卡片与「全部」筛选计数一致 (含跳过)
+        assert page._card_total._value.text() == "3"
+        assert "跳过 1（缺数据）" in page._card_total._sub.text()
         assert page._card_pass._value.text() == "1"
 
     def test_all_filter_shows_skipped_cards(self, app_state) -> None:

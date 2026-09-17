@@ -321,3 +321,30 @@ class TestChatRepoCount:
 
         # Act + Assert
         assert chat_repo.count_sessions() == 5
+
+
+class TestChatRepoDeleteAll:
+    """清空全部会话 (发版前清空测试对话, 2026-09-17 用户要求)。"""
+
+    def test_delete_all_sessions_clears_sessions_and_messages(
+        self, chat_repo: ChatRepo
+    ) -> None:
+        """删除全部会话后, 会话与消息均为空, 返回删除数。"""
+        sid1 = chat_repo.create_session(title="会话1")
+        chat_repo.add_message(sid1, "user", "问题1")
+        sid2 = chat_repo.create_session(title="会话2")
+        chat_repo.add_message(sid2, "assistant", "回答2")
+
+        deleted = chat_repo.delete_all_sessions()
+
+        assert deleted == 2
+        assert chat_repo.count_sessions() == 0
+        assert chat_repo.get_sessions() == []
+        assert chat_repo.get_messages(sid1) == []
+        assert chat_repo.get_messages(sid2) == []
+
+    def test_delete_all_sessions_empty_db_returns_zero(
+        self, chat_repo: ChatRepo
+    ) -> None:
+        """空库时返回 0, 不报错。"""
+        assert chat_repo.delete_all_sessions() == 0

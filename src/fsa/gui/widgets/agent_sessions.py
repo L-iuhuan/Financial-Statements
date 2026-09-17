@@ -76,6 +76,11 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
         new_action.triggered.connect(self._new_session)
         menu.addAction(new_action)
 
+        delete_action = QAction("删除当前会话", menu)
+        delete_action.setEnabled(self._session_id is not None)
+        delete_action.triggered.connect(self._delete_current_session)
+        menu.addAction(delete_action)
+
         pos = self._session_btn.mapToGlobal(
             QPoint(0, self._session_btn.height())
         )
@@ -110,6 +115,70 @@ class AgentSessionMixin(QFrame, _AgentDrawerContracts):
         self._update_session_btn("新对话")
         self._rebuild_messages([])
         self._messages_loaded = True
+
+    def _delete_current_session(self) -> None:
+        """删除当前会话及其全部消息。"""
+        if self._chat_repo is None or self._session_id is None:
+            return
+        from PySide6.QtWidgets import QMessageBox
+
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            "确定要删除当前会话吗？此操作不可撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._chat_repo.delete_session(self._session_id)
+        except (sqlite3.DatabaseError, RuntimeError):
+            logger.exception("删除会话失败")
+            return
+        self._session_id = None
+        self._messages_loaded = False
+        try:
+            sessions = self._chat_repo.get_sessions(limit=1)
+        except (sqlite3.DatabaseError, RuntimeError):
+            logger.exception("刷新会话列表失败")
+            sessions = []
+        if sessions:
+            sid = sessions[0]["id"]
+            self._session_id = sid
+            self._update_session_btn(sessions[0].get("title") or f"会话 #{sid}")
+            self._load_session_messages(sid)
+        else:
+            self._new_session()
+
+    def _clear_all_sessions(self) -> None:
+        """清空全部会话及其消息。"""
+        if self._chat_repo is None:
+            return
+        from PySide6.QtWidgets import QMessageBox
+
+        try:
+            count = self._chat_repo.count_sessions()
+        except (sqlite3.DatabaseError, RuntimeError):
+            logger.exception("统计会话数失败")
+            return
+        reply = QMessageBox.question(
+            self,
+            "确认清空全部",
+            f"将删除全部 {count} 个会话及其消息，不可恢复。确定继续吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._chat_repo.delete_all_sessions()
+        except (sqlite3.DatabaseError, RuntimeError):
+            logger.exception("清空全部会话失败")
+            return
+        self._session_id = None
+        self._messages_loaded = False
+        self._new_session()
 
     def _clear_current_session(self) -> None:
         """清空当前会话的全部消息 (保留会话本身)。"""

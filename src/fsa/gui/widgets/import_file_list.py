@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -37,7 +38,10 @@ def _clean_reason(reason: str, file_path: str) -> str:
 
 
 class ImportFileRow(QFrame):
-    """单个导入文件行: 图标 + 文件名 + 状态区。"""
+    """单个导入文件行: 图标 + 文件名 + 操作按钮 + 状态区。"""
+
+    remove_requested = Signal(QWidget)
+    retry_requested = Signal(QWidget)
 
     def __init__(self, file_path: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -47,6 +51,9 @@ class ImportFileRow(QFrame):
         self._status_anim: QPropertyAnimation | None = None
         self._fade_anim: QPropertyAnimation | None = None
         self._opacity_anim: QPropertyAnimation | None = None
+        self._remove_btn: QPushButton | None = None
+        self._retry_btn: QPushButton | None = None
+        self._action_container: QWidget | None = None
         self.setObjectName("ImportFileRow")
         self.setFixedHeight(_ROW_TARGET_HEIGHT)
         self._setup_ui()
@@ -72,6 +79,23 @@ class ImportFileRow(QFrame):
         self._name_label.setToolTip(self._full_name)
         layout.addWidget(self._name_label, stretch=1)
 
+        self._action_container = QWidget()
+        action_layout = QHBoxLayout(self._action_container)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(4)
+
+        self._remove_btn = self._create_action_btn("移除")
+        self._remove_btn.setToolTip("从列表移除该文件")
+        self._remove_btn.clicked.connect(self._on_remove_clicked)
+        action_layout.addWidget(self._remove_btn)
+
+        self._retry_btn = self._create_action_btn("重试")
+        self._retry_btn.setToolTip("重新导入该文件")
+        self._retry_btn.clicked.connect(self._on_retry_clicked)
+        action_layout.addWidget(self._retry_btn)
+
+        layout.addWidget(self._action_container)
+
         self._status_icon = IconWidget()
         self._status_icon.setFixedSize(16, 16)
         self._status_icon.setObjectName("ImportFileStatusIcon")
@@ -93,6 +117,49 @@ class ImportFileRow(QFrame):
         )
         layout.addWidget(self._status_label)
 
+    def file_path(self) -> str:
+        """返回文件完整路径。"""
+        return self._file_path
+
+    @staticmethod
+    def _create_action_btn(text: str) -> QPushButton:
+        """创建行内小型操作按钮（移除/重试）。"""
+        btn = QPushButton(text)
+        btn.setObjectName("TextBtn")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFixedHeight(24)
+        btn.setFixedWidth(44)
+        return btn
+
+    def _on_remove_clicked(self) -> None:
+        """点击移除: completed 状态需确认, 其余直接移除。"""
+        if self._status == "completed":
+            answer = QMessageBox.question(
+                self,
+                "确认移除",
+                "仅从列表移除，不影响已导入的报表",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self.remove_requested.emit(self)
+
+    def _on_retry_clicked(self) -> None:
+        """点击重试: 通知外部执行单文件后台导入。"""
+        self.retry_requested.emit(self)
+
+    def _sync_action_buttons(self) -> None:
+        """按当前状态显隐移除/重试按钮。"""
+        if self._remove_btn is None or self._retry_btn is None:
+            return
+        self._remove_btn.setVisible(self._status != "importing")
+        self._retry_btn.setVisible(self._status == "failed")
+        if self._action_container is not None:
+            self._action_container.setVisible(
+                self._remove_btn.isVisible() or self._retry_btn.isVisible()
+            )
+
     def status(self) -> str:
         """返回当前状态。"""
         return self._status
@@ -104,6 +171,7 @@ class ImportFileRow(QFrame):
         self._repolish(self)
         self._status_icon.setVisible(status in ("completed", "failed"))
         self._spinner.setVisible(status == "importing")
+        self._sync_action_buttons()
         if status == "waiting":
             self._status_label.setText("等待中")
         elif status == "importing":
@@ -124,6 +192,7 @@ class ImportFileRow(QFrame):
                 self._status_label.setToolTip(full_reason)
             self._status_label.setText(text)
         self._repolish(self._status_label)
+        self._apply_elided_name()
         self._animate_transition()
 
     def _elide_reason(self, reason: str) -> str:
@@ -139,20 +208,25 @@ class ImportFileRow(QFrame):
     def _apply_elided_name(self) -> None:
         """文件名按当前行宽中部截断 (保住扩展名), 全名见 tooltip。
 
-        可用宽度按「行宽 - 固定占用」确定性计算, 不读 label 几何 ——
-        resizeEvent 内 layout.activate() 会被 Qt 推迟到事件循环之后,
-        label 宽度是旧值会导致省略号误判"放得下" (2026-09-17 溢出回归点)。
+        可用宽度按「行宽 - 固定占用 - 操作按钮区 - 状态区」确定性计算,
+        不读 label 几何 —— resizeEvent 内 layout.activate() 会被 Qt 推迟到
+        事件循环之后, label 宽度是旧值会导致省略号误判"放得下"
+        (2026-09-17 溢出回归点)。
         """
         fm = self._name_label.fontMetrics()
-        # 固定占用: 左右 margin 12+12, 文件图标 16, 两个 spacing 8+8
-        reserved = 12 + 16 + 8 + 8 + 12
+        # 固定占用: 左右 margin 12+12, 文件图标 16, 文件名与按钮/按钮与状态区间距 8+8
+        reserved = 12 + 16 + 8 + 8 + 8 + 12
+        # 操作按钮区
+        action_w = 0
+        if self._action_container is not None and self._action_container.isVisible():
+            action_w = self._action_container.sizeHint().width()
         # 状态区: 状态文本 (sizeHint 确定性计算, 上限 320) + 状态图标/转圈
         status_w = min(self._status_label.sizeHint().width(), _STATUS_MAX_WIDTH)
         if self._status_icon.isVisible():
             status_w += 16 + 8
         if self._spinner.isVisible():
             status_w += 16 + 8
-        available = max(40, self.width() - reserved - status_w)
+        available = max(40, self.width() - reserved - action_w - status_w)
         self._name_label.setText(
             fm.elidedText(self._full_name, Qt.TextElideMode.ElideMiddle, available)
         )
@@ -217,6 +291,7 @@ class ImportFileList(QFrame):
     """导入文件列表容器, 包含文件行、完成汇总与「开始校验」按钮。"""
 
     start_validate_clicked = Signal()
+    row_retry_requested = Signal(QWidget)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -260,9 +335,38 @@ class ImportFileList(QFrame):
         assert rows_layout is not None
         for path in file_paths:
             row = ImportFileRow(path)
+            row.remove_requested.connect(self._on_row_remove)
+            row.retry_requested.connect(self._on_row_retry)
             self._rows.append(row)
             rows_layout.addWidget(row)
             row.fade_in()
+
+    def rows(self) -> list[ImportFileRow]:
+        """返回当前所有文件行（只读副本）。"""
+        return list(self._rows)
+
+    def index_of(self, row: QWidget) -> int:
+        """返回指定行在列表中的索引, 不存在返回 -1。"""
+        if isinstance(row, ImportFileRow) and row in self._rows:
+            return self._rows.index(row)
+        return -1
+
+    def _on_row_remove(self, row: QWidget) -> None:
+        """从列表移除指定行。"""
+        if not isinstance(row, ImportFileRow) or row not in self._rows:
+            return
+        self._rows.remove(row)
+        rows_layout = self._rows_container.layout()
+        assert rows_layout is not None
+        rows_layout.removeWidget(row)
+        row.hide()
+        row.setParent(None)
+        row.deleteLater()
+
+    def _on_row_retry(self, row: QWidget) -> None:
+        """将单文件重试请求转发给页面处理。"""
+        if isinstance(row, ImportFileRow):
+            self.row_retry_requested.emit(row)
 
     def set_importing(self, index: int) -> None:
         """将指定索引行设为「导入中」。"""

@@ -164,6 +164,21 @@ class ChatRepo:
         conn.commit()
         logger.info(f"删除对话会话 #{session_id}")
 
+    def delete_all_sessions(self) -> int:
+        """删除全部会话及其消息, 返回删除的会话数。
+
+        用途: 发版前清空测试对话内容 (2026-09-17 用户要求)。
+        """
+        conn = self._db.connection
+        row = conn.execute("SELECT COUNT(*) FROM chat_sessions").fetchone()
+        total = int(row[0]) if row is not None else 0
+        conn.execute("DELETE FROM chat_messages")
+        conn.execute("DELETE FROM chat_sessions")
+        conn.commit()
+        if total:
+            logger.info(f"已清空全部对话会话 ({total} 个)")
+        return total
+
     def clear_messages(self, session_id: int) -> None:
         """清空指定会话的全部消息 (保留会话本身)。
 

@@ -8,6 +8,7 @@ update_manifest_url。
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from loguru import logger
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QTableWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +30,7 @@ from fsa.gui.app_state import AppState
 from fsa.gui.pages.settings_sections import (
     build_about_section,
     build_appearance_section,
+    build_entity_config_section,
     build_llm_section,
     build_storage_section,
     build_update_section,
@@ -68,11 +71,15 @@ class SettingsPage(QWidget):
     _llm_model_input: QLineEdit
     _llm_api_key_input: QLineEdit
     _llm_remote_switch: SwitchButton
+    _entity_config_table: QTableWidget
+    _entity_config_save_btn: QPushButton
+    _entity_config_path: str | Path | None
 
-    def __init__(self, state: AppState) -> None:
+    def __init__(self, state: AppState, entity_config_path: str | Path | None = None) -> None:
         super().__init__()
         self.setObjectName("SettingsPage")
         self._state = state
+        self._entity_config_path = entity_config_path
         self._settings = QSettings("FSA", "FinancialAudit")
         # 更新检查/下载后台任务状态 (防重复点击; 桥对象防 GC)
         self._update_bridge: _UpdateBridge | None = None
@@ -105,6 +112,7 @@ class SettingsPage(QWidget):
 
         layout.addWidget(build_appearance_section(self, self._settings, self._state))
         layout.addWidget(build_validation_section(self, self._settings, self._state))
+        layout.addWidget(build_entity_config_section(self, self._settings, self._state, self._entity_config_path))
         layout.addWidget(build_storage_section(self, self._settings, self._state))
         layout.addWidget(build_llm_section(self, self._settings, self._state))
         layout.addWidget(build_update_section(self, self._settings, self._state))

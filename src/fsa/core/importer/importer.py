@@ -10,7 +10,11 @@ from pathlib import Path
 
 from loguru import logger
 
-from fsa.core.importer.excel_reader import RawSheetData, read_excel
+from fsa.core.importer.excel_reader import (
+    ExcelComSession,
+    RawSheetData,
+    read_excel,
+)
 from fsa.core.importer.item_extractor import extract_items
 from fsa.core.importer.report_identifier import identify_reports
 from fsa.core.importer.sce_extractor import extract_sce_items
@@ -30,7 +34,9 @@ class ImportService:
     def __init__(self, period: str = "") -> None:
         self.period = period
 
-    def import_file(self, file_path: str) -> list[Report]:
+    def import_file(
+        self, file_path: str, com_session: ExcelComSession | None = None
+    ) -> list[Report]:
         """导入文件中的所有报表。
 
         根据文件扩展名路由到对应的读取器:
@@ -41,6 +47,8 @@ class ImportService:
 
         Args:
             file_path: 文件路径
+            com_session: 批量导入时复用的 Excel COM 会话 (DLP 加密文件
+                免去每文件 5-40s 的 Excel 启动开销; 必须与调用方同线程)
 
         Returns:
             Report 对象列表，仅包含成功识别的报表
@@ -64,7 +72,7 @@ class ImportService:
                 report.parse_diagnostics = diagnostics.summary_text()
             return reports
 
-        raw_data = read_excel(file_path)
+        raw_data = read_excel(file_path, com_session=com_session)
 
         return self.import_data(raw_data, str(file_path), suffix)
 

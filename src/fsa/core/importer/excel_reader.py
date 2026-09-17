@@ -162,24 +162,40 @@ def _parse_tasklist_pids(output: str) -> set[int]:
     return pids
 
 
-def _visible_excel_pids() -> set[int]:
-    """带可见窗口的 EXCEL.EXE 进程 PID 集合 (用户正在使用的实例)。"""
+# Excel 主窗口类名。用户实例必有一个可见 XLMAIN 顶层窗口 (最小化亦保持
+# WS_VISIBLE); 隐藏 COM 实例的 XLMAIN 不可见, 但会挂出可见的插件辅助窗口
+# (DLP/CPA 加载项, 实测 'TOTWindowsManager'/'连续编号' visible=1)——
+# 按"任意窗口可见"判定会把僵尸误判为用户实例而永不清理
+# (2026-09-17 实测 66 个僵尸堆积之根因)。
+_EXCEL_MAIN_WINDOW_CLASS = "XLMAIN"
+
+
+def _visible_excel_pids() -> set[int] | None:
+    """带可见主窗口 (XLMAIN) 的 EXCEL.EXE 进程 PID 集合 (用户正在使用的实例)。
+
+    Returns:
+        可见实例 PID 集合; None 表示无法判定 (pywin32 缺失或枚举失败)。
+        调用方收到 None 时必须跳过清理——空集语义是"全部可杀",
+        会误杀用户正在使用的 Excel。
+    """
     try:
         import win32gui
         import win32process
     except ImportError:
-        return set()
+        return None
     visible_pids: set[int] = set()
 
     def _collect(hwnd: int, _: object) -> None:
+        if win32gui.GetClassName(hwnd) != _EXCEL_MAIN_WINDOW_CLASS:
+            return
         if win32gui.IsWindowVisible(hwnd):
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
             visible_pids.add(pid)
 
     try:
         win32gui.EnumWindows(_collect, None)
-    except Exception:  # noqa: BLE001 - 窗口枚举失败按"无可见 Excel"保守处理
-        return set()
+    except Exception:  # noqa: BLE001 - 枚举失败按"无法判定"处理, 绝不按空集误杀
+        return None
     return visible_pids
 
 
@@ -189,12 +205,17 @@ def cleanup_invisible_excel() -> int:
     僵尸成因: COM 会话 Quit 失败时残留的隐藏实例会阻塞后续所有自动化调用
     (表现为属性/方法全部拒绝, 2026-09-17 "全部失败"根因; 实测: 保留用户
     可见 Excel 不动、仅清理不可见僵尸即恢复正常)。用户正常打开的 Excel
-    必有可见窗口 (含最小化), 不在清理范围内。
+    必有可见主窗口 XLMAIN (含最小化), 不在清理范围内。可见性无法判定时
+    (pywin32 缺失/窗口枚举失败) 跳过清理, 绝不误杀。
     """
     all_pids = _snapshot_excel_pids()
     if not all_pids:
         return 0
-    invisible = all_pids - _visible_excel_pids()
+    visible = _visible_excel_pids()
+    if visible is None:
+        logger.warning("无法枚举窗口判定 Excel 可见性, 跳过本次残留清理 (避免误杀用户 Excel)")
+        return 0
+    invisible = all_pids - visible
     if not invisible:
         return 0
     killed = _kill_pids(invisible)
@@ -390,7 +411,11 @@ class ExcelComSession:
             new_pids = _snapshot_excel_pids() - self._pid_snapshot
             if not new_pids:
                 return
-            own_zombies = new_pids - _visible_excel_pids()
+            visible = _visible_excel_pids()
+            if visible is None:
+                logger.debug("无法判定 Excel 可见性, 跳过本会话残留清理")
+                return
+            own_zombies = new_pids - visible
             if own_zombies:
                 killed = _kill_pids(own_zombies)
                 if killed:

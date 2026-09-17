@@ -54,7 +54,7 @@ from fsa.gui.pages.import_page_tasks import (
     _ValidationBridge,
 )
 from fsa.gui.widgets.drop_zone import DropZone
-from fsa.gui.widgets.import_file_list import ImportFileList
+from fsa.gui.widgets.import_file_list import ImportFileList, ImportFileRow
 from fsa.gui.widgets.period_picker import PeriodPicker
 from fsa.gui.widgets.result_card import ResultCard
 from fsa.gui.widgets.summary_card import SummaryCard
@@ -137,6 +137,7 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         # 已接收文件列表 (拖入即显示文件名与状态, 导入期间持续可见)
         self._file_list = ImportFileList()
         self._file_list.start_validate_clicked.connect(self.trigger_validate_async)
+        self._file_list.row_retry_requested.connect(self._on_file_row_retry)
         layout.addWidget(self._file_list)
 
         # 历史回看横幅 (默认隐藏, 仅在查看历史结果时显示)
@@ -344,6 +345,15 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
 
     def _on_file(self, file_path: str) -> None:
         self._on_files([file_path])
+
+    def _on_file_row_retry(self, row: QWidget) -> None:
+        """文件行点击重试: 按行索引执行单文件后台导入。"""
+        if not isinstance(row, ImportFileRow):
+            return
+        index = self._file_list.index_of(row)
+        if index < 0:
+            return
+        self._retry_file_async(index, row.file_path())
 
     def _on_files(self, file_paths: list[str]) -> None:
         """同步导入入口 (保留给测试与内部调用)。
@@ -612,7 +622,12 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
             return None
         return threshold_vars_for(industry)
 
-    def _run_multi_entity(self, folders: list[str], cancel_event: threading.Event | None = None) -> object:
+    def _run_multi_entity(
+        self,
+        folders: list[str],
+        cancel_event: threading.Event | None = None,
+        progress_cb: Callable[[str], None] | None = None,
+    ) -> object:
         """执行多主体批量校验 (后台线程)。"""
         from fsa.services.multi_entity_service import MultiEntityService
 
@@ -623,23 +638,31 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         from fsa.services.entity_config import load_default_entity_configs
 
         service = MultiEntityService(registry, load_default_entity_configs())
-        # 按文件夹逐个校验; 无法中断单个主体内部文件读取, 但在主体间检查取消
-        outcomes = []
-        for folder in folders:
-            if cancel_event is not None and cancel_event.is_set():
-                break
-            outcomes.append(service.validate_folder(folder, period=self._state.period))
-        from fsa.services.package_service import merge_summaries
+        # 共享 Excel COM 会话在 finally 中关闭 (与创建线程相同, COM 亲和性)
+        try:
+            # 按文件夹逐个校验; 无法中断单个主体内部文件读取, 但在主体间检查取消
+            outcomes = []
+            for index, folder in enumerate(folders, 1):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                if progress_cb is not None:
+                    progress_cb(
+                        f"多主体校验中：第 {index}/{len(folders)} 个 · {Path(folder).name}"
+                    )
+                outcomes.append(service.validate_folder(folder, period=self._state.period))
+            from fsa.services.package_service import merge_summaries
 
-        summaries = [o.summary for o in outcomes if o.summary is not None]
-        combined = merge_summaries(*summaries) if summaries else None
-        bilateral = service.check_bilateral(outcomes)
-        purchase_sales = service.check_purchase_sales(outcomes)
-        from fsa.services.multi_entity_service import MultiEntityResult
+            summaries = [o.summary for o in outcomes if o.summary is not None]
+            combined = merge_summaries(*summaries) if summaries else None
+            bilateral = service.check_bilateral(outcomes)
+            purchase_sales = service.check_purchase_sales(outcomes)
+            from fsa.services.multi_entity_service import MultiEntityResult
 
-        return MultiEntityResult(
-            outcomes=outcomes,
-            combined=combined,
-            bilateral=bilateral,
-            purchase_sales=purchase_sales,
-        )
+            return MultiEntityResult(
+                outcomes=outcomes,
+                combined=combined,
+                bilateral=bilateral,
+                purchase_sales=purchase_sales,
+            )
+        finally:
+            service.close()

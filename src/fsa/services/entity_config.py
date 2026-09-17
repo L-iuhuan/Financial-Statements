@@ -92,6 +92,46 @@ def load_default_entity_configs() -> dict[str, EntityConfig]:
     return load_entity_configs(DEFAULT_ENTITY_CONFIG_PATH)
 
 
+def save_entity_configs(
+    configs: dict[str, EntityConfig],
+    path: str | Path = DEFAULT_ENTITY_CONFIG_PATH,
+) -> None:
+    """将主体配置写回 JSON 文件 (GUI 主体配置编辑器的保存入口)。
+
+    全字段序列化, 与 load_entity_configs 往返无损; 目录不存在时自动创建。
+    与默认值相同的 tb_to_bs_mappings 不落盘 (重载时自动取默认)。
+    """
+    config_path = Path(path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    entities: dict[str, dict[str, object]] = {}
+    for entity_id, config in configs.items():
+        raw: dict[str, object] = {
+            "tolerance": config.tolerance,
+            "industry": config.industry,
+            "cash_equivalent_codes": list(config.cash_equivalent_codes),
+            "aliases": list(config.aliases),
+        }
+        if config.tb_to_bs_mappings != dict(_DEFAULT_TB_BS_MAPPINGS):
+            raw["tb_to_bs_mappings"] = config.tb_to_bs_mappings
+        if config.reclass_pairs is not None:
+            raw["reclass_pairs"] = {
+                key: list(value) for key, value in config.reclass_pairs.items()
+            }
+        if config.balance_sheet_accounts is not None:
+            raw["balance_sheet_accounts"] = config.balance_sheet_accounts
+        if config.margin_tolerance is not None:
+            raw["margin_tolerance"] = config.margin_tolerance
+        if config.bilateral_pairs is not None:
+            raw["bilateral_pairs"] = config.bilateral_pairs
+        if config.bilateral_tolerance is not None:
+            raw["bilateral_tolerance"] = config.bilateral_tolerance
+        entities[entity_id] = raw
+    config_path.write_text(
+        json.dumps({"entities": entities}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def load_entity_configs(path: str | Path) -> dict[str, EntityConfig]:
     """从 JSON 文件加载主体配置。
 

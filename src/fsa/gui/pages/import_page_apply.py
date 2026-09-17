@@ -65,6 +65,11 @@ class ImportPageApplyMixin(QWidget):
     ) -> None:
         """将导入结果写回 AppState 并给出中文反馈 (仅 GUI 线程调用)。"""
         failed_paths = [path for path in file_paths if any(str(err).startswith(f"{path}:") for err in errors)]
+        # 单文件重试/批量重试后, 仍保留在文件列表中的失败行也需参与重试入口显隐
+        for row in self._file_list.rows():
+            if row.status() == "failed":
+                failed_paths.append(row.file_path())
+        failed_paths = list(dict.fromkeys(failed_paths))
         self._retry_failed_paths = failed_paths
         self._retry_failed_btn.setVisible(bool(failed_paths))
         if failed_paths:
