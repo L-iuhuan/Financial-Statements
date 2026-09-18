@@ -14,8 +14,8 @@ _INSTALLER = _PROJECT_ROOT / "installer.iss"
 
 
 def test_app_version_is_current_release() -> None:
-    """当前发布版本应为 0.4.16 (多主体配置行业下拉换 DropdownCombo 带自绘箭头+菜单全称, 容差输入框加高与数字校验)。"""
-    assert APP_VERSION == "0.4.16"
+    """当前发布版本应为 0.4.17 (多主体配置表格行高按单元格控件实际高度设定, 修复穿越行下沿)。"""
+    assert APP_VERSION == "0.4.17"
 
 
 def test_pyproject_version_matches_app_version() -> None:

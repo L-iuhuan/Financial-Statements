@@ -118,3 +118,23 @@ class TestEntityConfigSection:
         assert menu_text["general"] == "通用（默认）"
         assert button_text["cyclical"] == "周期性"
         assert menu_text["cyclical"] == "周期性行业（钢铁/化工/航运等）"
+
+    def test_table_in_layout_and_rows_fit_cell_widgets(
+        self, qapp, qtbot, app_state, tmp_path
+    ) -> None:
+        """表格在布局中可见, 且行高容纳单元格控件 (2026-09-18 穿越行下沿修复)。"""
+        path = tmp_path / "entity_config.json"
+        _write_sample_config(path)
+        page = SettingsPage(app_state, entity_config_path=path)
+        qtbot.addWidget(page)
+        page.resize(1000, 700)
+        page.show()
+        qtbot.wait(50)
+        table = page._entity_config_table
+        assert table.isVisible(), "表格必须在布局中可见 (防漏加布局回归)"
+        combo = table.cellWidget(0, 2)
+        edit = table.cellWidget(0, 3)
+        assert table.rowHeight(0) >= combo.sizeHint().height(), "行高应容纳下拉控件"
+        assert table.rowHeight(0) >= edit.sizeHint().height(), "行高应容纳容差控件"
+        assert table.rowHeight(0) >= combo.minimumHeight()
+        assert table.rowHeight(0) >= edit.minimumHeight()

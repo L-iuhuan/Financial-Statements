@@ -559,6 +559,19 @@ def _add_entity_row(
     edit.setMinimumHeight(32)
     edit.setValidator(QDoubleValidator(0.0, 1e12, 6))
     table.setCellWidget(row, 3, edit)
+    # 行高按单元格控件实际高度设定: cell widget 不参与 ResizeToContents
+    # 行高计算, 控件高于行高会"穿越"行下沿 (2026-09-18 用户反馈);
+    # 取 sizeHint 与最小高度较大者 + 8 上下留白, 覆盖任意 DPI 缩放
+    table.setRowHeight(
+        row,
+        max(
+            combo.sizeHint().height(),
+            combo.minimumHeight(),
+            edit.sizeHint().height(),
+            edit.minimumHeight(),
+        )
+        + 8,
+    )
 
 
 def _delete_selected_entity_rows(table: QTableWidget) -> None:
@@ -676,12 +689,11 @@ def build_entity_config_section(
     header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
     header.resizeSection(2, industry_w)
     header.resizeSection(3, tolerance_w)
-    # 行高按单元格内容自适应 (含下拉框的行默认 30px 在高 DPI 下裁切)
-    table.verticalHeader().setSectionResizeMode(
-        QHeaderView.ResizeMode.ResizeToContents
-    )
-    # 高度上限: 主体多时表格内部滚动, 不把整个设置页拉超长 (避免内外
-    # 滚动条打架); 下限保证至少可见 4~5 行
+    # 行高在 _add_entity_row 中按单元格控件实际高度逐行显式设定:
+    # cell widget 不参与 ResizeToContents 行高计算, 控件高于行高会
+    # "穿越"行下沿 (2026-09-18 用户反馈); 纵向表头保持默认 Interactive,
+    # 避免 ResizeToContents 覆盖显式行高
+    # 高度下限保证至少可见 4~5 行; 上限防止主体多时把设置页拉超长
     table.setMinimumHeight(200)
     table.setMaximumHeight(340)
     layout.addWidget(table)
