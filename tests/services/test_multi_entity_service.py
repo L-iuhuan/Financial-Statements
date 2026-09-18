@@ -437,27 +437,35 @@ class TestMultiEntityIndustryThresholds:
 
 
 class TestImportOne:
-    """_import_one 双轨导入: 主表成功后才尝试明细, 明细失败仅调试日志。"""
+    """_import_one 双轨导入: 读取一次、主表成功后才尝试明细, 明细失败仅调试日志。"""
+
+    @pytest.fixture(autouse=True)
+    def _stub_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """桩掉 read_excel, 防止测试触发真实 COM 回退 (启动 Excel 耗时数十秒)。"""
+        import fsa.services.multi_entity_service as mod
+
+        monkeypatch.setattr(mod, "read_excel", lambda *args, **kwargs: {})
 
     def test_main_failure_records_single_error_and_skips_detail(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """主表导入失败: 记录一条错误且不再尝试明细导入（避免重复错误）。"""
+        """读取失败: 记录一条错误且不再尝试明细导入（避免重复错误）。"""
         folder = tmp_path / "主体A"
         folder.mkdir()
         (folder / "bad.xlsx").write_text("非报表文件", encoding="utf-8")
+        import fsa.services.multi_entity_service as mod
 
-        def _fail_main(self, file_path: str, com_session: object = None) -> list[Report]:
-            raise FSAError(f"无法识别报表: {file_path}")
+        def _fail_read(*args: object, **kwargs: object) -> dict[str, object]:
+            raise FSAError("无法识别报表")
 
-        detail_calls: list[str] = []
+        detail_calls: list[object] = []
 
-        def _spy_detail(self, file_path: str, com_session: object = None) -> DetailDataset:
-            detail_calls.append(file_path)
+        def _spy_detail(self: DetailImporter, data: object) -> DetailDataset:
+            detail_calls.append(data)
             return DetailDataset()
 
-        monkeypatch.setattr(ImportService, "import_file", _fail_main)
-        monkeypatch.setattr(DetailImporter, "import_file", _spy_detail)
+        monkeypatch.setattr(mod, "read_excel", _fail_read)
+        monkeypatch.setattr(DetailImporter, "import_data", _spy_detail)
 
         outcome = MultiEntityService(_registry()).validate_folder(
             str(folder), period="2026-06"
@@ -475,14 +483,10 @@ class TestImportOne:
         folder.mkdir()
         (folder / "main.xlsx").write_text("主表文件占位", encoding="utf-8")
 
-        def _ok_main(self, file_path: str, com_session: object = None) -> list[Report]:
-            return []
+        def _fail_detail(self: DetailImporter, data: object) -> DetailDataset:
+            raise FSAError("非明细文件")
 
-        def _fail_detail(self, file_path: str, com_session: object = None) -> DetailDataset:
-            raise FSAError(f"非明细文件: {file_path}")
-
-        monkeypatch.setattr(ImportService, "import_file", _ok_main)
-        monkeypatch.setattr(DetailImporter, "import_file", _fail_detail)
+        monkeypatch.setattr(DetailImporter, "import_data", _fail_detail)
 
         outcome = MultiEntityService(_registry()).validate_folder(
             str(folder), period="2026-06"
@@ -493,28 +497,31 @@ class TestImportOne:
     def test_main_success_then_detail_import(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """主表导入成功后继续明细导入, 数据均被收集。"""
+        """主表导入成功后继续明细导入, 同一份原始数据供两边复用 (读一次)。"""
         folder = tmp_path / "主体C"
         folder.mkdir()
         (folder / "data.xlsx").write_text("占位", encoding="utf-8")
 
-        captured: dict[str, list[str]] = {}
+        captured: dict[str, object] = {}
 
-        def _ok_main(self, file_path: str, com_session: object = None) -> list[Report]:
+        def _ok_main(
+            self: ImportService, data: object, source_file: str, suffix: str
+        ) -> list[Report]:
+            captured["main_raw"] = data
             report = Report(
                 report_type=ReportType.BALANCE_SHEET,
                 period="2026-06",
-                source_file=file_path,
+                source_file=source_file,
                 items=[],
             )
             return [report]
 
-        def _spy_detail(self, file_path: str, com_session: object = None) -> DetailDataset:
-            captured["detail"] = [file_path]
+        def _spy_detail(self: DetailImporter, data: object) -> DetailDataset:
+            captured["detail_raw"] = data
             return DetailDataset()
 
-        monkeypatch.setattr(ImportService, "import_file", _ok_main)
-        monkeypatch.setattr(DetailImporter, "import_file", _spy_detail)
+        monkeypatch.setattr(ImportService, "import_data", _ok_main)
+        monkeypatch.setattr(DetailImporter, "import_data", _spy_detail)
 
         outcome = MultiEntityService(_registry()).validate_folder(
             str(folder), period="2026-06"
@@ -523,7 +530,56 @@ class TestImportOne:
         assert outcome.errors == []
         assert len(outcome.reports) == 1
         assert outcome.reports[0].report_type == ReportType.BALANCE_SHEET
-        assert captured["detail"] == [str(folder / "data.xlsx")]
+        assert (
+            captured["main_raw"] is captured["detail_raw"]
+        ), "主表与明细应复用同一份原始数据 (读一次)"
+
+    def test_reads_excel_once_per_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """回归 (2026-09-18 性能修复): 每个文件只读一次, 不再主表/明细各读一遍。"""
+        folder = tmp_path / "主体D"
+        folder.mkdir()
+        (folder / "a.xlsx").write_text("占位", encoding="utf-8")
+        (folder / "b.xlsx").write_text("占位", encoding="utf-8")
+        import fsa.services.multi_entity_service as mod
+
+        read_calls: list[str] = []
+
+        def _count_read(
+            file_path: str, com_session: object = None
+        ) -> dict[str, object]:
+            read_calls.append(file_path)
+            return {}
+
+        monkeypatch.setattr(mod, "read_excel", _count_read)
+
+        MultiEntityService(_registry()).validate_folder(str(folder), period="2026-06")
+
+        assert sorted(read_calls) == sorted(
+            [str(folder / "a.xlsx"), str(folder / "b.xlsx")]
+        ), "每个文件必须只读取一次 (DLP 加密文件 COM 读取成本高)"
+
+    def test_validate_folder_emits_per_file_progress(
+        self, tmp_path: Path
+    ) -> None:
+        """逐文件进度: 消息含 第 i/N 个文件 与文件名 (GUI 状态栏反馈)。"""
+        folder = tmp_path / "主体E"
+        folder.mkdir()
+        (folder / "甲.xlsx").write_text("占位", encoding="utf-8")
+        (folder / "乙.xlsx").write_text("占位", encoding="utf-8")
+
+        messages: list[str] = []
+        MultiEntityService(_registry()).validate_folder(
+            str(folder), period="2026-06", progress_cb=messages.append
+        )
+
+        # 注: sorted(iterdir) 按码点排序, 乙(U+4E59) 先于 甲(U+7532) —— 断言顺序无关
+        assert len(messages) == 2, "每个文件一条进度消息"
+        assert any("1/2" in m for m in messages)
+        assert any("2/2" in m for m in messages)
+        assert any("甲.xlsx" in m for m in messages)
+        assert any("乙.xlsx" in m for m in messages)
 
 
 def _make_purchase_outcome(
@@ -841,32 +897,30 @@ class TestSharedComSession:
     def test_import_one_passes_shared_session(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """_import_one 将共享 COM 会话同时传给主表与明细导入。"""
+        """_import_one 将共享 COM 会话传给 read_excel, 且每文件只读一次。"""
         folder = tmp_path / "主体A"
         folder.mkdir()
         (folder / "data.xlsx").write_text("占位", encoding="utf-8")
+        import fsa.services.multi_entity_service as mod
 
-        sessions: dict[str, object] = {}
+        sessions: list[object] = []
 
-        def _spy_main(
-            self: ImportService, file_path: str, com_session: object = None
-        ) -> list[Report]:
-            sessions["main"] = com_session
-            return []
+        def _spy_read(
+            file_path: str, com_session: object = None
+        ) -> dict[str, object]:
+            sessions.append(com_session)
+            return {}
 
-        def _spy_detail(
-            self: DetailImporter, file_path: str, com_session: object = None
-        ) -> DetailDataset:
-            sessions["detail"] = com_session
+        def _stub_detail(self: DetailImporter, data: object) -> DetailDataset:
             return DetailDataset()
 
-        monkeypatch.setattr(ImportService, "import_file", _spy_main)
-        monkeypatch.setattr(DetailImporter, "import_file", _spy_detail)
+        monkeypatch.setattr(mod, "read_excel", _spy_read)
+        monkeypatch.setattr(DetailImporter, "import_data", _stub_detail)
 
         service = MultiEntityService(_registry())
         service.validate_folder(str(folder), period="2026-06")
 
-        assert "main" in sessions and "detail" in sessions
-        assert sessions["main"] is sessions["detail"], "主表和明细应共享同一会话"
-        assert sessions["main"] is service._com_session
+        assert sessions, "read_excel 应被调用"
+        assert sessions[0] is service._com_session, "应传入共享 COM 会话"
+        assert len(sessions) == 1, "主表与明细复用同一次读取"
         service.close()

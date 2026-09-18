@@ -127,6 +127,15 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
         self._multi_entity_btn.setToolTip("选择包含多个主体文件夹的目录，勾选要校验/对比的主体（选择 2 个即可做双边核对）")
         self._multi_entity_btn.clicked.connect(self._on_multi_entity_clicked)
         period_row.addWidget(self._multi_entity_btn)
+        # 上次批量结果回看: 关闭结果对话框后仍可重新打开 (2026-09-18 用户反馈
+        # "结果只能在历史记录里查到" —— 历史记录按主体分散保存, 合并视图无处回看)
+        self._last_multi_btn = QPushButton("上次批量结果")
+        self._last_multi_btn.setObjectName("TextBtn")
+        self._last_multi_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._last_multi_btn.setToolTip("重新打开最近一次多主体批量校验结果")
+        self._last_multi_btn.setVisible(False)
+        self._last_multi_btn.clicked.connect(self._on_view_last_multi_result)
+        period_row.addWidget(self._last_multi_btn)
         period_row.addStretch()
         layout.addLayout(period_row)
 
@@ -645,11 +654,27 @@ class ImportPage(ImportPageTasksMixin, ImportPageApplyMixin, ImportPageResultsMi
             for index, folder in enumerate(folders, 1):
                 if cancel_event is not None and cancel_event.is_set():
                     break
+                entity_name = Path(folder).name
+
+                def _file_progress(
+                    message: str, idx: int = index, total: int = len(folders)
+                ) -> None:
+                    # 服务层消息自带「主体」与逐文件信息, 此处仅补主体序号上下文
+                    if progress_cb is not None:
+                        progress_cb(f"多主体校验中：第 {idx}/{total} 个主体 · {message}")
+
                 if progress_cb is not None:
                     progress_cb(
-                        f"多主体校验中：第 {index}/{len(folders)} 个 · {Path(folder).name}"
+                        f"多主体校验中：第 {index}/{len(folders)} 个主体 · "
+                        f"「{entity_name}」开始导入"
                     )
-                outcomes.append(service.validate_folder(folder, period=self._state.period))
+                outcomes.append(
+                    service.validate_folder(
+                        folder,
+                        period=self._state.period,
+                        progress_cb=_file_progress,
+                    )
+                )
             from fsa.services.package_service import merge_summaries
 
             summaries = [o.summary for o in outcomes if o.summary is not None]

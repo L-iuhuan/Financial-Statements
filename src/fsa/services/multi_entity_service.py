@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from fsa.core.engine.registry import RuleRegistry
 from fsa.core.engine.rule_hints import format_hint_block
 from fsa.core.exceptions import FSAError
 from fsa.core.importer.detail_importer import DetailImporter
-from fsa.core.importer.excel_reader import ExcelComSession
+from fsa.core.importer.excel_reader import ExcelComSession, read_excel
 from fsa.core.importer.importer import ImportService
 from fsa.core.importer.name_mapper import clean_name
 from fsa.core.models.detail import DetailDataset
@@ -83,11 +84,18 @@ class MultiEntityService:
         self,
         folders: list[str],
         period: str = "",
+        progress_cb: Callable[[str], None] | None = None,
     ) -> MultiEntityResult:
-        """逐主体校验，合并结果并做双边核对 (结束后关闭共享 COM 会话)。"""
+        """逐主体校验，合并结果并做双边核对 (结束后关闭共享 COM 会话)。
+
+        progress_cb: 可选进度回调, 逐文件接收中文进度消息 (GUI 状态栏展示)。
+        """
         try:
             outcomes = [
-                self.validate_folder(folder, period=period) for folder in folders
+                self.validate_folder(
+                    folder, period=period, progress_cb=progress_cb
+                )
+                for folder in folders
             ]
             summaries = [o.summary for o in outcomes if o.summary is not None]
             combined = merge_summaries(*summaries) if summaries else None
@@ -107,8 +115,9 @@ class MultiEntityService:
         folder: str,
         entity_id: str | None = None,
         period: str = "",
+        progress_cb: Callable[[str], None] | None = None,
     ) -> EntityOutcome:
-        """导入一个主体文件夹中的全部报表文件并校验。"""
+        """导入一个主体文件夹中的全部报表文件并校验 (逐文件报告进度)。"""
         folder_path = Path(folder)
         entity = entity_id or folder_path.name
         reports_by_type: dict[ReportType, Report] = {}
@@ -124,7 +133,14 @@ class MultiEntityService:
             errors.append(
                 "文件夹中没有可导入的报表文件（支持 .xlsx/.xls/.csv/.pdf）"
             )
-        for path in files:
+        for file_index, path in enumerate(files, 1):
+            if progress_cb is not None:
+                # 逐文件进度: 大文件 (如 72MB 计提表) 单次 COM 读取可达
+                # 50s+, 没有逐文件反馈时用户以为卡死 (2026-09-18 用户反馈)
+                progress_cb(
+                    f"「{entity}」正在导入第 {file_index}/{len(files)} 个文件: "
+                    f"{path.name}"
+                )
             self._import_one(path, reports_by_type, dataset, errors, period)
 
         reports = list(reports_by_type.values())
@@ -157,35 +173,68 @@ class MultiEntityService:
         errors: list[str],
         period: str,
     ) -> None:
-        """导入单个文件：主表去重、明细合并，失败只记录不中断。
+        """导入单个文件：读取一次、主表与明细复用，失败只记录不中断。
 
         先导入主表，主表成功后才尝试明细导入（避免对既非主表也非明细的
         文件产生两条重复错误）；明细导入失败仅记录调试日志，因为该文件
         可能就是纯主表文件，明细导入失败属预期路径。
+
+        性能 (2026-09-18 剖析修复): Excel/CSV 只读一次, 原始数据同时供
+        ImportService.import_data 与 DetailImporter.import_data 复用——
+        此前两侧各调 import_file 各读一遍, DLP 加密文件经 COM 读取成本
+        翻倍 (实测 1西安拓尔微 208s 中约 70s 是重复读取)。
+        PDF 无明细语义 (DetailImporter 对 PDF 返回空), 保持单次读取。
         """
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
+            try:
+                reports = ImportService(period).import_file(str(path))
+            except (
+                FileNotFoundError, FSAError, ValueError, OSError, ImportError,
+            ) as error:
+                errors.append(f"{path.name}: {error}")
+                return
+            except Exception as error:
+                logger.exception(f"「{path.name}」导入出现未预期异常")
+                errors.append(f"{path.name}: 导入出现未预期错误: {error}")
+                return
+            for report in reports:
+                if report.report_type not in reports_by_type:
+                    reports_by_type[report.report_type] = report
+            return
+
         try:
-            reports = ImportService(period).import_file(
-                str(path), com_session=self._shared_session()
-            )
-        except (FileNotFoundError, FSAError, ValueError, OSError, ImportError) as error:
+            raw_data = read_excel(str(path), com_session=self._shared_session())
+        except (
+            FileNotFoundError, FSAError, ValueError, OSError, ImportError,
+        ) as error:
             errors.append(f"{path.name}: {error}")
             return
         except Exception as error:
             # 兜底: 单文件未预期异常不得中断整批多主体校验 (2026-09-17
             # 实测: 文件夹内的 PDF 曾致整批中断); 记为该文件失败并继续
-            logger.exception(f"「{path.name}」导入出现未预期异常")
+            logger.exception(f"「{path.name}」读取出现未预期异常")
+            errors.append(f"{path.name}: 导入出现未预期错误: {error}")
+            return
+        try:
+            reports = ImportService(period).import_data(raw_data, str(path), suffix)
+        except (
+            FileNotFoundError, FSAError, ValueError, OSError, ImportError,
+        ) as error:
+            errors.append(f"{path.name}: {error}")
+            return
+        except Exception as error:
+            logger.exception(f"「{path.name}」主表导入出现未预期异常")
             errors.append(f"{path.name}: 导入出现未预期错误: {error}")
             return
         for report in reports:
             if report.report_type not in reports_by_type:
                 reports_by_type[report.report_type] = report
         try:
-            dataset.merge(
-                DetailImporter(period).import_file(
-                    str(path), com_session=self._shared_session()
-                )
-            )
-        except (FileNotFoundError, FSAError, ValueError, OSError, ImportError) as error:
+            dataset.merge(DetailImporter(period).import_data(raw_data))
+        except (
+            FileNotFoundError, FSAError, ValueError, OSError, ImportError,
+        ) as error:
             logger.debug(f"「{path.name}」明细导入失败，可能为纯主表文件: {error}")
         except Exception as error:
             logger.debug(f"「{path.name}」明细导入未预期异常 (忽略继续): {error}")

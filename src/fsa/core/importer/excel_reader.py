@@ -136,25 +136,35 @@ class _ExcelAppProtocol(Protocol):
 
 
 def _snapshot_excel_pids() -> set[int]:
-    """快照当前 EXCEL.EXE 进程 PID 集合 (tasklist 解析, 不引入 psutil)。"""
+    """快照当前 EXCEL.EXE 进程 PID 集合 (tasklist 解析, 不引入 psutil)。
+
+    编码鲁棒性: tasklist 在中文 Windows 输出 GBK (如"信息/控制台"); 进程
+    若运行于 UTF-8 模式 (-X utf8 / PYTHONUTF8=1 / 系统级 Beta UTF-8 设置),
+    text=True 按首选编码解码会在读取线程抛 UnicodeDecodeError 且 stdout
+    变 None (2026-09-18 实测: COM 会话启动失败, 全部文件导入秒失败)。
+    故按字节捕获、errors="ignore" 解码 —— PID 与 EXCEL.EXE 均为 ASCII,
+    非法字节被丢弃不影响解析。
+    """
     import subprocess
 
     try:
         completed = subprocess.run(  # noqa: S603 - 固定命令与参数
             ["tasklist", "/FI", "IMAGENAME eq EXCEL.EXE", "/FO", "CSV", "/NH"],
             capture_output=True,
-            text=True,
             timeout=15,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError):
         return set()
-    return _parse_tasklist_pids(completed.stdout)
+    raw = completed.stdout or b""
+    return _parse_tasklist_pids(raw.decode("utf-8", errors="ignore"))
 
 
-def _parse_tasklist_pids(output: str) -> set[int]:
-    """从 tasklist CSV 输出解析 PID 列 (与进程枚举解耦, 便于单测)。"""
+def _parse_tasklist_pids(output: str | None) -> set[int]:
+    """从 tasklist CSV 输出解析 PID 列 (与进程枚举解耦, 便于单测; None 安全)。"""
     pids: set[int] = set()
+    if not output:
+        return pids
     for line in output.splitlines():
         parts = [part.strip().strip('"') for part in line.split(",")]
         if len(parts) >= 2 and parts[1].isdigit():

@@ -24,12 +24,13 @@ _apply_import_result / _apply_validation_summary / _persist_multi_entity_results
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from loguru import logger
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QWidget
 from qfluentwidgets import IndeterminateProgressBar
 
@@ -72,6 +73,16 @@ class ImportPageTasksMixin(QWidget):
     """三条后台任务 (导入/校验/多主体批量) 的启动、取消与代际守卫 (继承 QWidget 以便作为信号桥 parent)。"""
 
     validate_enabled_changed: Signal
+
+    # 进度反馈状态 (mixin 自有; 计时器惰性创建, 见 _ensure_progress_timer)
+    _progress_base_text: str = ""
+    _progress_started_at: float | None = None
+    _progress_timer: QTimer | None = None
+    # 最近一次多主体结果与落库数 (供「上次批量结果」按钮回看)
+    _last_multi_result: object | None = None
+    _last_multi_saved_count: int | None = None
+    # 宿主 import_page._setup_ui 创建 (与 _import_status_label 等同批)
+    _last_multi_btn: QPushButton
 
     _state: AppState
     _import_status_label: QLabel
@@ -143,7 +154,7 @@ class ImportPageTasksMixin(QWidget):
         bridge.failed.connect(
             lambda message, gen=generation: self._on_background_import_failed(message, gen)
         )
-        bridge.progress.connect(self._import_status_label.setText)
+        bridge.progress.connect(self._set_progress_message)
         bridge.file_started.connect(self._on_file_started)
         bridge.file_completed.connect(self._on_file_completed)
         bridge.file_failed.connect(self._on_file_failed)
@@ -192,7 +203,7 @@ class ImportPageTasksMixin(QWidget):
         bridge.failed.connect(
             lambda message, gen=generation: self._on_background_import_failed(message, gen)
         )
-        bridge.progress.connect(self._import_status_label.setText)
+        bridge.progress.connect(self._set_progress_message)
         bridge.file_started.connect(self._on_file_started)
         bridge.file_completed.connect(self._on_file_completed)
         bridge.file_failed.connect(self._on_file_failed)
@@ -331,13 +342,74 @@ class ImportPageTasksMixin(QWidget):
         self._sync_progress_controls()
 
     def _sync_progress_controls(self) -> None:
-        """按任一后台任务运行状态刷新进度控件。"""
+        """按任一后台任务运行状态刷新进度控件 (含已用时长计时器)。"""
         running = self._import_cancel_event is not None or self._validation_running or self._multi_running
         self._progress.setVisible(running)
         self._cancel_import_btn.setVisible(running)
         self._import_status_label.setVisible(running)
-        if not running:
+        timer = self._ensure_progress_timer()
+        if running:
+            if self._progress_started_at is None:
+                self._progress_started_at = time.monotonic()
+            if not timer.isActive():
+                timer.start()
+        else:
+            timer.stop()
+            self._progress_started_at = None
+            self._progress_base_text = ""
             self._import_status_label.setText("")
+
+    def _set_progress_message(self, text: str) -> None:
+        """记录进度消息并立即显示 (已用时长后缀由 1s 计时器持续刷新)。
+
+        大文件 (如 72MB 计提表) 单次 COM 读取可达 50s+, 若状态栏只在
+        消息到达时更新, 用户会长时间盯着静止文本误以为卡死; 计时器每秒
+        刷新「已用 X 秒」后缀, 提供持续活动反馈 (2026-09-18 用户反馈)。
+        """
+        self._progress_base_text = text
+        if self._progress_started_at is None:
+            self._progress_started_at = time.monotonic()
+        self._refresh_progress_elapsed()
+
+    def _refresh_progress_elapsed(self) -> None:
+        """刷新状态栏文本: 基础消息 + 已用时长。"""
+        base = self._progress_base_text
+        if not base or self._progress_started_at is None:
+            self._import_status_label.setText(base)
+            return
+        elapsed = int(time.monotonic() - self._progress_started_at)
+        suffix = (
+            f"已用 {elapsed} 秒"
+            if elapsed < 60
+            else f"已用 {elapsed // 60} 分 {elapsed % 60} 秒"
+        )
+        self._import_status_label.setText(f"{base}（{suffix}）")
+
+    def _ensure_progress_timer(self) -> QTimer:
+        """惰性创建 1s 进度计时器。"""
+        timer = self._progress_timer
+        if timer is None:
+            timer = QTimer(self)
+            timer.setInterval(1000)
+            timer.timeout.connect(self._refresh_progress_elapsed)
+            self._progress_timer = timer
+        return timer
+
+    def _on_view_last_multi_result(self) -> None:
+        """重新打开最近一次多主体批量校验结果 (关闭对话框后仍可回看)。"""
+        result = self._last_multi_result
+        if result is None:
+            self._show_info("还没有多主体批量校验结果", "warning")
+            return
+        from fsa.gui.widgets.multi_entity_dialog import MultiEntityResultDialog
+        from fsa.services.multi_entity_service import MultiEntityResult
+
+        if not isinstance(result, MultiEntityResult):
+            return
+        dialog = MultiEntityResultDialog(
+            result, self, saved_count=self._last_multi_saved_count
+        )
+        dialog.show()
 
     def trigger_validate_async(self) -> None:
         """后台校验入口: 不阻塞界面, 可取消。"""
@@ -366,7 +438,7 @@ class ImportPageTasksMixin(QWidget):
         bridge.failed.connect(
             lambda message, gen=generation: self._on_background_validation_failed(message, gen)
         )
-        bridge.progress.connect(self._import_status_label.setText)
+        bridge.progress.connect(self._set_progress_message)
         self._validation_bridge = bridge
 
         def run() -> None:
@@ -454,7 +526,7 @@ class ImportPageTasksMixin(QWidget):
         bridge.failed.connect(
             lambda message, gen=generation: self._on_multi_entity_failed(message, gen)
         )
-        bridge.progress.connect(self._import_status_label.setText)
+        bridge.progress.connect(self._set_progress_message)
         self._multi_bridge = bridge
 
         def run() -> None:
@@ -484,6 +556,10 @@ class ImportPageTasksMixin(QWidget):
             self._show_info("批量校验结果无效，请重试", "error")
             return
         saved_count = self._persist_multi_entity_results(payload)
+        # 保留最近一次结果供「上次批量结果」按钮回看 (历史按主体分散保存)
+        self._last_multi_result = payload
+        self._last_multi_saved_count = saved_count
+        self._last_multi_btn.setVisible(True)
         dialog = MultiEntityResultDialog(payload, self, saved_count=saved_count)
         dialog.show()
 

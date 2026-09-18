@@ -321,6 +321,12 @@ class TestZombieExcelCleanup:
 
         assert _parse_tasklist_pids("INFO: No tasks are running which match the criteria.\n\n") == set()
 
+    def test_parse_tasklist_pids_none_returns_empty(self) -> None:
+        """None 输入安全返回空集合 (UTF-8 模式下读取线程解码失败的兜底)。"""
+        from fsa.core.importer.excel_reader import _parse_tasklist_pids
+
+        assert _parse_tasklist_pids(None) == set()  # type: ignore[arg-type]
+
     def test_cleanup_invisible_kills_only_invisible(self, monkeypatch) -> None:
         """清理只杀不可见实例, 可见 (用户) Excel 绝不动。"""
         import fsa.core.importer.excel_reader as reader
