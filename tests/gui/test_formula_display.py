@@ -46,3 +46,17 @@ class TestFormulaToChinese:
 
     def test_empty_formula(self) -> None:
         assert formula_to_chinese("") == ""
+
+    def test_threshold_token_translated(self) -> None:
+        """LR-* 公式的行业阈值变量译为「行业阈值」(导出中文口径需要)。"""
+        from fsa.core.engine.formula_display import (
+            formula_to_chinese as core_formula_to_chinese,
+        )
+
+        result = core_formula_to_chinese(
+            "liability_total / asset_total <= dar_threshold"
+        )
+        assert "行业阈值" in result
+        assert "dar_threshold" not in result
+        assert "负债合计" in result
+        assert "资产总计" in result

@@ -11,11 +11,15 @@ ValidationService 是业务编排层, 将 RuleRegistry + RuleRunner + Validation
 
 from __future__ import annotations
 
+import re
+
 from loguru import logger
 
+from fsa.core.engine.comparator import RelativeBaseZeroError
 from fsa.core.engine.registry import RuleRegistry
 from fsa.core.engine.runner import RuleRunner
 from fsa.core.exceptions import EvaluationError, FormulaParseError, FSAError
+from fsa.core.importer.name_mapper import get_name
 from fsa.core.models.report import Report, ReportType
 from fsa.core.models.result import (
     ValidationContext,
@@ -25,6 +29,28 @@ from fsa.core.models.result import (
 from fsa.core.models.rule import ReconciliationRule
 
 _NAME_TO_TYPE: dict[str, ReportType] = {rt.value: rt for rt in ReportType}
+
+# 缺失变量提取: EvaluationError 消息形如 "...(变量「total_revenue」未定义...)"
+_MISSING_VAR_RE = re.compile(r"变量「([a-zA-Z_][a-zA-Z0-9_]*)」")
+
+
+def _friendly_skip_reason(error: EvaluationError) -> str:
+    """把引擎的跳过原因转成财务用户可读的中文 (P4, 2026-09-18 用户反馈)。
+
+    原文如「表达式求值失败: 「公式」(变量「total_revenue」未定义...)」
+    对非技术用户不可读; 提取缺失科目并转为中文名, 给出明确指引。
+    """
+    if isinstance(error, RelativeBaseZeroError):
+        return "对比基准金额为 0，无法计算相对差异，本项自动跳过"
+    names: list[str] = []
+    for token in _MISSING_VAR_RE.findall(str(error)):
+        cn = get_name(token) or token
+        if cn not in names:
+            names.append(cn)
+    if names:
+        listed = "、".join(f"「{name}」" for name in names[:4])
+        return f"报表中缺少本项校验所需的数据（{listed}），本项自动跳过"
+    return "报表中缺少本项校验所需的数据，本项自动跳过"
 
 
 class ValidationService:
@@ -124,7 +150,7 @@ class ValidationService:
             return RuleRunner.run(rule, context, threshold_vars)
         except EvaluationError as e:
             logger.info(f"规则 {rule.rule_id} 跳过 (数据不足): {e}")
-            return ValidationResult.from_skip(rule, str(e))
+            return ValidationResult.from_skip(rule, _friendly_skip_reason(e))
         except FormulaParseError as e:
             logger.warning(f"规则 {rule.rule_id} 公式错误: {e}")
             return ValidationResult.from_error(rule, str(e))

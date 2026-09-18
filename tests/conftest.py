@@ -1,9 +1,13 @@
-"""共享测试 fixtures: 工厂函数创建测试数据。
+"""共享测试 fixtures: 工厂函数创建测试数据 + 全局数据库隔离。
 
 每个工厂函数返回标准测试对象，减少测试中的样板代码。
 """
 
 from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
 
 from fsa.core.models.report import Report, ReportItem, ReportType
 from fsa.core.models.result import ValidationContext
@@ -190,3 +194,17 @@ def make_context(
     ctx = ValidationContext(period="2024-12")
     ctx.add_report(bs)
     return ctx
+
+
+# ── 全局数据库隔离 (autouse) ──────────────────────────────────────────
+@pytest.fixture(autouse=True)
+def _isolate_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """所有测试的默认数据库一律重定向到临时目录, 绝不触碰真实 ~/.fsa/data.db。
+
+    根因 (2026-09-18): GUI 测试的 AppState() 直连真实库, 测试会话/消息被
+    写进用户数据, 表现为「清空后又出现很多测试会话」。任何无显式路径的
+    Database()/AppState() 构造都被本 fixture 拦截到 tmp_path。
+    """
+    from fsa.storage import database as db_module
+
+    monkeypatch.setattr(db_module, "_DEFAULT_DB_PATH", tmp_path / "test_isolated.db")

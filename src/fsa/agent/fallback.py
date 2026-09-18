@@ -80,7 +80,7 @@ def _try_rule_lookup(question: str, state: AppState) -> str | None:
     if rule is None:
         return f"规则库中不存在规则 {rule_id}，请检查编号是否正确。"
 
-    from fsa.gui.formula_display import formula_to_chinese
+    from fsa.core.engine.formula_display import formula_to_chinese
     lines = [
         f"规则 {rule.rule_id}: {rule.name}",
         "",

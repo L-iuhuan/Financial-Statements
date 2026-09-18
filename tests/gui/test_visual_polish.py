@@ -175,16 +175,16 @@ class TestDatePickerModern:
 class TestMultiEntityButtonStyle:
     """多主体批量校验按钮风格统一为次级按钮。"""
 
-    def test_multi_entity_button_is_secondary_with_fixed_height(
+    def test_multi_entity_button_is_secondary_with_min_height(
         self, qapp, qtbot, app_state,
     ) -> None:
-        """按钮对象名为 BtnSecondary 且高度固定 32px。"""
+        """按钮为 BtnSecondary 且最小高度 36px (最小高度而非固定, 高 DPI 不裁字)。"""
         window = MainWindow(app_state, initial_dark=False, theme_mode="light")
         qtbot.addWidget(window)
         btn = window._import_page._multi_entity_btn
         assert btn.objectName() == "BtnSecondary"
-        assert btn.minimumSize().height() == 32
-        assert btn.maximumSize().height() == 32
+        assert btn.minimumSize().height() == 36
+        assert btn.maximumHeight() > 36  # 不再固定高度, 允许随内容/DPI 增长
 
 
 class TestSettingsInfoBar:

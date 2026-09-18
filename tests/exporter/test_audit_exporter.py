@@ -463,7 +463,7 @@ class TestAuditExporter:
             assert headers[5] == "右侧值"
             assert headers[6] == "差额"
             assert headers[7] == "容差"
-            assert headers[8] == "公式"
+            assert headers[8] == "公式（中文）"
             assert headers[9] == "说明"
             wb.close()
         finally:

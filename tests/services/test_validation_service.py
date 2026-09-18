@@ -229,7 +229,8 @@ class TestRelativeBaseZero:
         assert result.skipped is True
         assert result.errored is False
         assert result.passed is True
-        assert "基准科目金额为 0" in result.message
+        # 2026-09-18 白话化: 跳过原因不再透出异常原文
+        assert "对比基准金额为 0" in result.message
         assert "跳过" in result.message
 
     def test_validate_relative_base_zero_both_zero_passes(self):
@@ -550,3 +551,36 @@ class TestIndustryThresholdInjection:
         )
 
         assert summary.results[0].passed is False  # 0.85 > 0.80 仍不通过
+
+
+class TestFriendlySkipReason:
+    """跳过原因白话化 (2026-09-18 用户反馈: 技术报文小白看不懂)。"""
+
+    def test_missing_variable_translated_to_chinese(self) -> None:
+        """缺失变量的技术报文转为中文科目名 + 明确指引。"""
+        from fsa.core.exceptions import EvaluationError
+        from fsa.services.validation_service import _friendly_skip_reason
+
+        error = EvaluationError(
+            "a == b", "变量「asset_total」未定义。请检查报表中是否包含该项目。"
+        )
+        reason = _friendly_skip_reason(error)
+        assert "报表中缺少本项校验所需的数据" in reason
+        assert "资产总计" in reason
+        assert "表达式求值失败" not in reason
+
+    def test_relative_base_zero_gets_dedicated_reason(self) -> None:
+        """相对容差基准为 0 使用专门文案。"""
+        from fsa.core.engine.comparator import RelativeBaseZeroError
+        from fsa.services.validation_service import _friendly_skip_reason
+
+        reason = _friendly_skip_reason(RelativeBaseZeroError())
+        assert "对比基准金额为 0" in reason
+
+    def test_unknown_error_falls_back_to_generic(self) -> None:
+        """无法提取变量时回退通用文案。"""
+        from fsa.core.exceptions import EvaluationError
+        from fsa.services.validation_service import _friendly_skip_reason
+
+        reason = _friendly_skip_reason(EvaluationError("a / b", "除零错误"))
+        assert reason == "报表中缺少本项校验所需的数据，本项自动跳过"

@@ -168,7 +168,8 @@ class TestWorkpaperValidation:
         """单体资产负债表无"归属于母公司权益"时应跳过 SCE-BAL-002, 不误报。"""
         result = next(r for r in validation_summary.results if r.rule_id == "SCE-BAL-002")
         assert result.skipped is True
-        assert "未定义" in result.message
+        # 2026-09-18 白话化: 跳过原因不再透出"未定义"技术报文
+        assert "报表中缺少本项校验所需的数据" in result.message
 
     def test_no_unexpected_failures(self, validation_summary) -> None:
         """除预埋的 BS-BAL-004 外, 不应出现其他未预期的不通过/异常。"""

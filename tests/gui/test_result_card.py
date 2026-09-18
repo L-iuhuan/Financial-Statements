@@ -228,3 +228,46 @@ class TestResultCardSkipped:
         ]
         assert name_labels
         assert name_labels[0].toolTip() == "表间勾稽规则"
+
+
+class TestHoverTooltip:
+    """悬停预览: 卡片 tooltip 显示结论摘要首段 (2026-09-18 用户反馈)。"""
+
+    def test_failed_card_tooltip_shows_reason_first_block(self, qapp, qtbot) -> None:
+        """不通过卡片悬停可见差额原因, 解读块不进 tooltip。"""
+        from fsa.core.models.result import ValidationResult
+        from fsa.core.models.rule import Severity
+        from fsa.gui.widgets.result_card import ResultCard
+
+        result = ValidationResult(
+            rule_id="BS-BAL-001", rule_name="资产=负债+所有者权益",
+            passed=False, severity=Severity.ERROR,
+            left_value=100.0, right_value=90.0, diff=10.0, tolerance=0.01,
+            formula="a == b",
+            message=(
+                "资产=负债+所有者权益: 校验不通过 [错误]\n  差额: 10.00 元"
+                "\n\n【级别说明】必须改正 — 会计基本勾稽关系被破坏。"
+            ),
+        )
+        card = ResultCard(result)
+        qtbot.addWidget(card)
+        tip = card.toolTip()
+        assert "差额: 10.00 元" in tip
+        assert "【级别说明】" not in tip  # 只显示首段事实, 解读块不进 tooltip
+
+    def test_passed_card_tooltip_shows_pass_summary(self, qapp, qtbot) -> None:
+        """通过卡片悬停显示通过摘要。"""
+        from fsa.core.models.result import ValidationResult
+        from fsa.core.models.rule import Severity
+        from fsa.gui.widgets.result_card import ResultCard
+
+        result = ValidationResult(
+            rule_id="BS-BAL-001", rule_name="资产=负债+所有者权益",
+            passed=True, severity=Severity.ERROR,
+            left_value=100.0, right_value=100.0, diff=0.0, tolerance=0.01,
+            formula="a == b",
+            message="资产=负债+所有者权益: 校验通过（差额 0.00 元，容差内）",
+        )
+        card = ResultCard(result)
+        qtbot.addWidget(card)
+        assert "校验通过" in card.toolTip()

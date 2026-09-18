@@ -63,6 +63,8 @@ class ResultCard(QFrame):
         self.setProperty("status", self._status)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._setup_ui()
+        # 悬停预览: 未展开即可看结论摘要 (2026-09-18 用户反馈)
+        self._apply_tooltip()
         # 注册主题监听并在控件销毁时注销, 防止死监听器累积泄漏
         bind_theme_listener(self, self._on_theme_changed)
 
@@ -83,6 +85,7 @@ class ResultCard(QFrame):
         self._status = self._get_status_key()
         self._apply_card_style()
         self._apply_status_style()
+        self._apply_tooltip()
 
         # 更新头部状态标签
         self._status_label.setText(_STATUS_TEXT[self._status])
@@ -113,6 +116,12 @@ class ResultCard(QFrame):
         for widget in (self._status_label, self._diff_label):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
+
+    def _apply_tooltip(self) -> None:
+        """悬停预览: 显示结论摘要首段, 免展开即可看不通过原因 (2026-09-18)。"""
+        first = self._result.message.split("\n\n")[0]
+        text = first[:800] + ("…" if len(first) > 800 else "")
+        self.setToolTip(text)
 
     def _clear_detail_contents(self) -> None:
         """清空详情区域的所有子控件 (隐藏详情时不保留 trace 表格等重控件)。"""

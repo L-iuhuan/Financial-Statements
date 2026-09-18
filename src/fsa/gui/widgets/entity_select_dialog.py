@@ -66,7 +66,8 @@ class EntitySelectDialog(QDialog):
         for btn in (select_all_btn, select_none_btn):
             btn.setObjectName("BtnSecondary")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(28)
+            # 最小高度而非固定高度: 高 DPI/字体缩放下固定像素会裁切文字
+            btn.setMinimumHeight(32)
         select_all_btn.clicked.connect(self._select_all)
         select_none_btn.clicked.connect(self._select_none)
         bottom.addWidget(select_all_btn)
@@ -84,9 +85,11 @@ class EntitySelectDialog(QDialog):
         ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
         ok_btn.setText("开始校验")
         ok_btn.setObjectName("BtnPrimary")
+        ok_btn.setMinimumHeight(32)
         cancel_btn = self._buttons.button(QDialogButtonBox.StandardButton.Cancel)
         cancel_btn.setText("取消")
         cancel_btn.setObjectName("BtnSecondary")
+        cancel_btn.setMinimumHeight(32)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)

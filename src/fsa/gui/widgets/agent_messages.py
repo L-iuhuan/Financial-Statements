@@ -445,6 +445,8 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         self._ai_bubbles = []
         self._user_bubbles = []
         self._welcome_items = []
+        # 欢迎区全部控件 (含建议按钮), 首条消息到达时统一隐藏 (2026-09-18)
+        self._welcome_widgets: list[QWidget] = []
         self._streaming_handle = None
         self._stream_dirty = False
         self._stick_bottom = True
@@ -478,6 +480,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self._style_welcome_label(title, "title")
         self._welcome_items.append((title, "title"))
+        self._welcome_widgets.append(title)
 
         desc = QLabel("针对校验差异做根因分析，解答勾稽与 CAS 准则问题")
         desc.setObjectName("AgentWelcomeDesc")
@@ -485,6 +488,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         desc.setWordWrap(True)
         self._style_welcome_label(desc, "desc")
         self._welcome_items.append((desc, "desc"))
+        self._welcome_widgets.append(desc)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
@@ -497,6 +501,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
             btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             btn.clicked.connect(lambda checked=False, t=text: self._quick_ask(t))
             btn_row.addWidget(btn)
+            self._welcome_widgets.append(btn)
         btn_row.addStretch()
 
         disclaim = QLabel("AI 输出仅供参考 · 不构成审计意见")
@@ -504,6 +509,7 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
         disclaim.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self._style_welcome_label(disclaim, "disclaim")
         self._welcome_items.append((disclaim, "disclaim"))
+        self._welcome_widgets.append(disclaim)
 
         welcome = QVBoxLayout()
         welcome.setSpacing(10)
@@ -584,10 +590,26 @@ class AgentMessageMixin(QFrame, _AgentDrawerContracts):
             return
         self._render_suggestions(suggestions)
 
+    def _dismiss_welcome(self) -> None:
+        """首条消息到达后移除欢迎占位区 (隐藏即不再约束容器最小宽度)。
+
+        根因 (2026-09-18): 空库 (新装机) 场景首条消息只是 append, 欢迎
+        区的建议按钮行把消息容器最小宽度钉在 ~426px, 抽屉缩窄后用户
+        气泡右对齐溢出视口。此前该缺陷被测试污染的真实库掩盖——开机
+        加载历史会话走 _rebuild_messages 重建 (不含欢迎区), 故未暴露。
+        """
+        if not self._welcome_widgets:
+            return
+        for widget in self._welcome_widgets:
+            widget.hide()
+        self._welcome_widgets = []
+        self._welcome_items = []
+
     def _add_message(
         self, role: str, text: str, time_str: str = ""
     ) -> None:
         """添加一条消息 (气泡 + 时间戳)。"""
+        self._dismiss_welcome()
         if not time_str:
             time_str = datetime.now().strftime("%H:%M")
         elif " " in time_str:

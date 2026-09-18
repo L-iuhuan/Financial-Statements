@@ -16,6 +16,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from fsa.core.engine.formula_display import formula_to_chinese
 from fsa.core.exporter._styles import (
     ALIGN_CENTER,
     ALIGN_LEFT,
@@ -190,7 +191,7 @@ class AuditExporter:
                 if summary.amount_unit_notes
                 else "未记录",
             ),
-            ("说明", "本底稿由勾稽规则引擎自动生成，公式列为规则公式文本，金额单位已统一为元。"),
+            ("说明", "本底稿由勾稽规则引擎自动生成，「公式（中文）」列为规则的中文校验口径（系统自动翻译），金额单位已统一为元。"),
             ("行号口径", "PDF 来源的原始行号为『第X页表内第N行』，N 含表头行。"),
             ("编制人", ""),
             ("复核人", ""),
@@ -259,7 +260,7 @@ class AuditExporter:
         """写入校验明细 sheet。"""
         headers = [
             "规则ID", "规则名称", "分类", "校验结果",
-            "左侧值", "右侧值", "差额", "容差", "公式", "说明",
+            "左侧值", "右侧值", "差额", "容差", "公式（中文）", "说明",
         ]
         self._write_header_row(ws, headers)
 
@@ -312,7 +313,7 @@ class AuditExporter:
             rv,
             dv,
             result.tolerance,
-            _safe_text(result.formula),
+            _safe_text(formula_to_chinese(result.formula)),
             _safe_text(result.message),
         ]
 
