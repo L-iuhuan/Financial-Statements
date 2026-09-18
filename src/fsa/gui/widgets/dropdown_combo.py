@@ -26,7 +26,7 @@ class DropdownCombo(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._items: list[tuple[str, object]] = []
+        self._items: list[tuple[str, object, str]] = []
         self._current = -1
         self._button = ArrowButton()
         self._button.setObjectName("DropdownButton")
@@ -35,15 +35,21 @@ class DropdownCombo(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._button)
 
-    def addItem(self, text: str, userData: object | None = None) -> None:
-        """追加一项; 首个选项默认选中。"""
-        self._items.append((text, userData))
+    def addItem(
+        self, text: str, userData: object | None = None, menu_text: str | None = None
+    ) -> None:
+        """追加一项; 首个选项默认选中。
+
+        menu_text: 菜单内展示文本, 可与按钮文本不同 (按钮短名/菜单全称,
+        2026-09-18 多主体配置场景); 缺省与 text 一致。
+        """
+        self._items.append((text, userData, menu_text or text))
         if self._current < 0:
             self.setCurrentIndex(0)
 
     def findData(self, data: object) -> int:
         """按用户数据查找索引, 不存在返回 -1。"""
-        for index, (_, item_data) in enumerate(self._items):
+        for index, (_, item_data, _menu_text) in enumerate(self._items):
             if item_data == data:
                 return index
         return -1
@@ -69,8 +75,8 @@ class DropdownCombo(QWidget):
     def _show_menu(self) -> None:
         """弹出选项菜单 (QMenu 走全局 QSS, 已验证可正常渲染)。"""
         menu = QMenu(self._button)
-        for index, (text, _) in enumerate(self._items):
-            action: QAction = menu.addAction(text)
+        for index, (_text, _data, menu_text) in enumerate(self._items):
+            action: QAction = menu.addAction(menu_text)
             action.setCheckable(True)
             action.setChecked(index == self._current)
             action.triggered.connect(

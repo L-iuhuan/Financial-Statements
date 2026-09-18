@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -543,16 +543,21 @@ def _add_entity_row(
         item = QTableWidgetItem(text)
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable)
         table.setItem(row, col, item)
-    combo = QComboBox()
+    # DropdownCombo 替代裸 QComboBox (2026-09-18 用户反馈"没有下拉按钮"):
+    # QComboBox 的 ::drop-down/::down-arrow QSS 在部分 Windows 环境不渲染,
+    # 本应用统一用按钮+自绘箭头+菜单的 DropdownCombo (见 widgets/dropdown_combo.py)
+    combo = DropdownCombo()
     for key, display in _ENTITY_CONFIG_INDUSTRIES:
         short = _ENTITY_CONFIG_INDUSTRY_SHORT.get(key, display)
-        combo.addItem(short, key)
-        combo.setItemData(combo.count() - 1, display, Qt.ItemDataRole.ToolTipRole)
+        combo.addItem(short, key, menu_text=display)
+    combo.setMinimumHeight(32)
     combo.setCurrentIndex(max(combo.findData(industry), 0))
     table.setCellWidget(row, 2, combo)
     edit = QLineEdit("" if tolerance is None else str(tolerance))
     edit.setObjectName("StyledInput")
-    edit.setPlaceholderText("0.01")
+    edit.setPlaceholderText("默认 0.01")
+    edit.setMinimumHeight(32)
+    edit.setValidator(QDoubleValidator(0.0, 1e12, 6))
     table.setCellWidget(row, 3, edit)
 
 
@@ -593,7 +598,7 @@ def _save_entity_configs(page: QWidget, table: QTableWidget, config_path: str | 
         alias_text = alias_item.text() if alias_item else ""
         aliases = tuple(a.strip() for a in alias_text.replace("，", ",").split(",") if a.strip())
         combo = table.cellWidget(row, 2)
-        if not isinstance(combo, QComboBox):
+        if not isinstance(combo, DropdownCombo):
             continue
         industry = str(combo.currentData())
         edit = table.cellWidget(row, 3)

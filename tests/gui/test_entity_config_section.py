@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import cast
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QLineEdit, QTableWidgetItem
+from PySide6.QtWidgets import QLineEdit, QTableWidgetItem
 
 from fsa.gui.pages.settings_page import SettingsPage
+from fsa.gui.widgets.arrow_button import ArrowButton
+from fsa.gui.widgets.dropdown_combo import DropdownCombo
 from fsa.services.entity_config import EntityConfig, load_entity_configs, save_entity_configs
 
 
@@ -41,7 +43,7 @@ class TestEntityConfigSection:
         table = page._entity_config_table
         assert table.rowCount() == 1
         cast(QTableWidgetItem, table.item(0, 1)).setText("杭州科技有限公司, 杭州科技")
-        combo = cast(QComboBox, table.cellWidget(0, 2))
+        combo = cast(DropdownCombo, table.cellWidget(0, 2))
         combo.setCurrentIndex(combo.findData("financial"))
         cast(QLineEdit, table.cellWidget(0, 3)).setText("0.03")
 
@@ -86,3 +88,33 @@ class TestEntityConfigSection:
         table.selectRow(1)
         qtbot.mouseClick(del_btn, Qt.MouseButton.LeftButton)
         assert table.rowCount() == 1
+
+    def test_industry_cell_uses_dropdown_combo_with_arrow(
+        self, qapp, qtbot, app_state, tmp_path
+    ) -> None:
+        """行业单元格用 DropdownCombo (自绘箭头), 修复"没有下拉按钮" (2026-09-18)。"""
+        path = tmp_path / "entity_config.json"
+        _write_sample_config(path)
+        page = SettingsPage(app_state, entity_config_path=path)
+        qtbot.addWidget(page)
+
+        combo = page._entity_config_table.cellWidget(0, 2)
+        assert isinstance(combo, DropdownCombo), "行业下拉必须是 DropdownCombo"
+        assert combo.findChild(ArrowButton) is not None, "自绘箭头按钮存在"
+
+    def test_industry_dropdown_short_button_full_menu(
+        self, qapp, qtbot, app_state, tmp_path
+    ) -> None:
+        """按钮显示短名、菜单显示全称 (下拉内容完整)。"""
+        path = tmp_path / "entity_config.json"
+        _write_sample_config(path)
+        page = SettingsPage(app_state, entity_config_path=path)
+        qtbot.addWidget(page)
+
+        combo = cast(DropdownCombo, page._entity_config_table.cellWidget(0, 2))
+        button_text = {data: text for text, data, _ in combo._items}
+        menu_text = {data: menu for _, data, menu in combo._items}
+        assert button_text["general"] == "通用"
+        assert menu_text["general"] == "通用（默认）"
+        assert button_text["cyclical"] == "周期性"
+        assert menu_text["cyclical"] == "周期性行业（钢铁/化工/航运等）"
