@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -516,6 +517,18 @@ def build_llm_section(
 _ENTITY_CONFIG_COLUMNS = ["主体标识", "别名（多个用逗号分隔）", "行业", "双边核对容差（元）"]
 _ENTITY_CONFIG_INDUSTRIES = [(k, INDUSTRY_DISPLAY_NAMES.get(k, k)) for k in KNOWN_INDUSTRIES]
 
+# 表格内行业下拉用短显示名 (完整名挂 tooltip): 「周期性行业（钢铁/化工/航运等）」
+# 这类长名会把下拉 sizeHint 撑到 ~265px, 挤压别名列 (2026-09-18 用户反馈"挤压")
+_ENTITY_CONFIG_INDUSTRY_SHORT = {
+    "general": "通用",
+    "financial": "金融",
+    "real_estate": "房地产",
+    "construction": "建筑/工程",
+    "retail": "零售",
+    "cyclical": "周期性",
+    "high_growth": "高增长",
+}
+
 
 def _add_entity_row(
     table: QTableWidget,
@@ -532,7 +545,9 @@ def _add_entity_row(
         table.setItem(row, col, item)
     combo = QComboBox()
     for key, display in _ENTITY_CONFIG_INDUSTRIES:
-        combo.addItem(display, key)
+        short = _ENTITY_CONFIG_INDUSTRY_SHORT.get(key, display)
+        combo.addItem(short, key)
+        combo.setItemData(combo.count() - 1, display, Qt.ItemDataRole.ToolTipRole)
     combo.setCurrentIndex(max(combo.findData(industry), 0))
     table.setCellWidget(row, 2, combo)
     edit = QLineEdit("" if tolerance is None else str(tolerance))
@@ -552,6 +567,17 @@ def _load_entity_configs(table: QTableWidget, config_path: str | Path | None) ->
     configs = load_entity_configs(config_path) if config_path else load_default_entity_configs()
     for entity_id, config in configs.items():
         _add_entity_row(table, entity_id, "， ".join(config.aliases), config.industry, config.bilateral_tolerance)
+    # 主体标识列按最长内容定宽 (110~220 之间, 字体度量自适应 DPI)
+    fm = table.fontMetrics()
+    texts = [
+        item.text()
+        for row in range(table.rowCount())
+        if (item := table.item(row, 0)) is not None
+    ]
+    longest = max(texts, key=fm.horizontalAdvance, default="")
+    table.horizontalHeader().resizeSection(
+        0, min(220, max(110, fm.horizontalAdvance(longest) + 28))
+    )
 
 
 def _save_entity_configs(page: QWidget, table: QTableWidget, config_path: str | Path | None) -> None:
@@ -614,7 +640,7 @@ def build_entity_config_section(
     _ = settings, state
     frame, layout = _section("多主体配置")
     desc = QLabel(
-        "主体标识 = 多主体批量校验中各公司子文件夹的名称；\n"
+        "主体标识 = 多主体批量校验中各公司子文件夹的名称；"
         "别名 = 该公司在其他公司报表中登记的名称（通常是公司全称），"
         "跨主体购销/现金流双边核对靠它匹配“对方单位”。"
     )
@@ -627,10 +653,32 @@ def build_entity_config_section(
     table.setHorizontalHeaderLabels(_ENTITY_CONFIG_COLUMNS)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setAlternatingRowColors(True)
-    table.horizontalHeader().setStretchLastSection(True)
-    table.setColumnWidth(0, 140)
-    table.setColumnWidth(1, 220)
-    table.setColumnWidth(2, 140)
+    # 列宽按字体度量计算 (DPI 自适应, 2026-09-18 用户反馈"挤压、混乱"):
+    # 别名列 Stretch 吃满剩余宽度; 其余列按内容/表头文本 + 边距定宽,
+    # 行业下拉用短显示名 (完整名挂 tooltip) 避免长名撑爆列宽
+    header = table.horizontalHeader()
+    header.setStretchLastSection(False)
+    header.setMinimumSectionSize(96)
+    fm = table.fontMetrics()
+    industry_w = max(
+        fm.horizontalAdvance(_ENTITY_CONFIG_INDUSTRY_SHORT.get(key, display))
+        for key, display in _ENTITY_CONFIG_INDUSTRIES
+    ) + 56  # 下拉箭头 + 框架边距
+    tolerance_w = fm.horizontalAdvance(_ENTITY_CONFIG_COLUMNS[3]) + 20
+    header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+    header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+    header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+    header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+    header.resizeSection(2, industry_w)
+    header.resizeSection(3, tolerance_w)
+    # 行高按单元格内容自适应 (含下拉框的行默认 30px 在高 DPI 下裁切)
+    table.verticalHeader().setSectionResizeMode(
+        QHeaderView.ResizeMode.ResizeToContents
+    )
+    # 高度上限: 主体多时表格内部滚动, 不把整个设置页拉超长 (避免内外
+    # 滚动条打架); 下限保证至少可见 4~5 行
+    table.setMinimumHeight(200)
+    table.setMaximumHeight(340)
     layout.addWidget(table)
 
     btn_row = QHBoxLayout()
@@ -638,7 +686,8 @@ def build_entity_config_section(
     del_btn = QPushButton("删除所选行")
     save_btn = QPushButton("保存")
     for btn in (add_btn, del_btn, save_btn):
-        btn.setFixedHeight(32)
+        # 最小高度而非固定: 高 DPI/字体缩放下不裁字 (与全应用口径一致)
+        btn.setMinimumHeight(32)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
     add_btn.setObjectName("BtnSecondary")
     del_btn.setObjectName("BtnSecondary")

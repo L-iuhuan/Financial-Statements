@@ -14,8 +14,8 @@ _INSTALLER = _PROJECT_ROOT / "installer.iss"
 
 
 def test_app_version_is_current_release() -> None:
-    """当前发布版本应为 0.4.14 (导出公式中文化+跳过白话化+结果卡悬停预览+按钮尺寸修复+测试库隔离)。"""
-    assert APP_VERSION == "0.4.14"
+    """当前发布版本应为 0.4.15 (设置页多主体配置区块布局重排: 列宽字体度量自适应+行业短名+别名弹性列)。"""
+    assert APP_VERSION == "0.4.15"
 
 
 def test_pyproject_version_matches_app_version() -> None:
